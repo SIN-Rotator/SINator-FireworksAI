@@ -53,6 +53,8 @@ import logging
 import re
 import asyncio
 import base64
+import json
+import subprocess
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 
@@ -92,8 +94,21 @@ class GmxService:
     #  CDP CONNECTION & IFRAME HELPERS
     # ═══════════════════════════════════════════════════════════════════════════════
 
-    async def _connect_to_browser(self, cdp_port: int) -> Tuple[CDPClient, str, str]:
-        """Erstellt eine CDP-Verbindung zum laufenden Browser."""
+    async def _connect_to_browser(self, cdp_port: int, validate_session: bool = True, attempt_recovery: bool = True) -> Tuple[CDPClient, str, str]:
+        """Erstellt eine CDP-Verbindung zum laufenden Browser.
+
+        Mit optionaler Session-Validierung und Auto-Recovery.
+        Wenn validate_session=True und die Session tot ist,
+        wird automatisch aus dem Master-Backup wiederhergestellt.
+
+        Args:
+            cdp_port: CDP Debugging Port
+            validate_session: Ob die GMX Session validiert werden soll
+            attempt_recovery: Ob Recovery aus Backup versucht werden soll
+
+        Returns:
+            (client, session_id, target_id)
+        """
         ws_url = await get_browser_ws_endpoint(cdp_port)
         client = CDPClient(ws_url)
         await client.connect()
@@ -106,7 +121,217 @@ class GmxService:
         await client.send_to_session(session_id, "Page.enable")
         await client.send_to_session(session_id, "Runtime.enable")
         logger.info(f"CDP Session bereit: target={target_id[:15]}...")
+
+        # ── SESSION VALIDATION & RECOVERY ───────────────────────────────────
+        if validate_session:
+            is_valid = await self._validate_gmx_session(client, session_id)
+            if not is_valid and attempt_recovery:
+                logger.warning("Session dead — attempting recovery from backup")
+                recovery_ok = await self._recover_gmx_session(client, session_id, cdp_port)
+                if recovery_ok:
+                    # Re-connect after recovery (browser was restarted)
+                    ws_url = await get_browser_ws_endpoint(cdp_port)
+                    client = CDPClient(ws_url)
+                    await client.connect()
+                    target = await get_page_target(client)
+                    if not target:
+                        raise RuntimeError("No target after recovery restart")
+                    target_id = target["targetId"]
+                    session_id = await client.attach_to_target(target_id)
+                    await client.send_to_session(session_id, "Page.enable")
+                    await client.send_to_session(session_id, "Runtime.enable")
+                else:
+                    logger.error("Session recovery failed — manual login required")
+                    # Don't raise here, let the caller handle it
+
         return client, session_id, target_id
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    #  SESSION RECOVERY & BACKUP PROTOCOL
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    async def _validate_gmx_session(self, client: CDPClient, session_id: str) -> bool:
+        """Prüft ob die GMX Session noch aktiv ist.
+
+        Strategie:
+        1. Navigate zu GMX Homepage
+        2. Click "E-Mail" Nav-Link
+        3. Prüfe ob URL zu bap.navigator.gmx.net/mail?sid=... redirectet
+
+        Returns:
+            True wenn Session aktiv (redirect zu mail mit sid), False sonst
+        """
+        try:
+            await client.navigate(session_id, GMX_HOME_URL)
+            await asyncio.sleep(3)
+
+            # Click E-Mail nav (JS click reicht für Validierung)
+            click_result = await client.evaluate(session_id, '''
+            (function(){
+                const els = Array.from(document.querySelectorAll("a, button, [role=link], nav a"));
+                const emailEl = els.find(e => (e.textContent||"").trim() === "E-Mail");
+                if (emailEl) { emailEl.click(); return true; }
+                return false;
+            })()''', return_by_value=True)
+            clicked = click_result.get("result", {}).get("value", False)
+
+            if not clicked:
+                # Fallback CDP click
+                await client.click_at(session_id, x=302, y=44)
+
+            await asyncio.sleep(5)
+
+            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            current_url = url_result.get("result", {}).get("value", "")
+
+            is_valid = "navigator.gmx.net/mail?sid=" in current_url
+            if is_valid:
+                logger.info("GMX Session VALID: %s", current_url[:80])
+            else:
+                logger.warning("GMX Session INVALID: %s", current_url[:80])
+            return is_valid
+
+        except Exception as e:
+            logger.error("Session validation error: %s", e)
+            return False
+
+    async def _recover_gmx_session(self, client: CDPClient, session_id: str, cdp_port: int) -> bool:
+        """Stellt GMX Session aus Backup wieder her.
+
+        REIHENFOLGE (laut AGENTS.md Session Recovery Protokoll):
+        1. Browser SOFORT beenden
+        2. Aktuelle (abgelaufene) Cookies löschen
+        3. Backup-Cookies aus backup/session/gmx-cookies-master.json laden
+        4. Chrome neu starten
+        5. Cookies injizieren
+        6. Session validieren
+
+        Returns:
+            True wenn Recovery erfolgreich, False sonst
+        """
+        logger.warning("🔄 SESSION RECOVERY initiated — restoring from backup")
+
+        master_backup = Path("backup/session/gmx-cookies-master.json")
+        working_cookies = Path("./data/gmx-cookies.json")
+
+        if not master_backup.exists():
+            logger.error("❌ Master backup NOT FOUND: %s", master_backup)
+            logger.error("   Run manual login + backup creation first!")
+            return False
+
+        # 1. Browser beenden
+        try:
+            subprocess.run(["pkill", "-9", "-f", "Google Chrome"], check=False, capture_output=True)
+            logger.info("Browser killed")
+            await asyncio.sleep(3)
+        except Exception as e:
+            logger.warning("Browser kill warning: %s", e)
+
+        # 2. Aktuelle Cookies löschen (wenn abgelaufen)
+        if working_cookies.exists():
+            working_cookies.unlink()
+            logger.info("Stale cookies deleted: %s", working_cookies)
+
+        # 3. Backup kopieren
+        import shutil
+        shutil.copy2(master_backup, working_cookies)
+        logger.info("Master backup copied to working cookies: %s", working_cookies)
+
+        # 4. Chrome neu starten (wird vom Caller erledigt, hier nur reconnect)
+        # Wir versuchen zuerst die Cookies zu injizieren im aktuellen Browser
+        # Wenn der Browser tot ist, müssen wir neu connecten
+        try:
+            await client.disconnect()
+        except:
+            pass
+
+        # Reconnect
+        ws_url = await get_browser_ws_endpoint(cdp_port)
+        client = CDPClient(ws_url)
+        await client.connect()
+        target = await get_page_target(client)
+        if not target:
+            logger.error("No browser target after restart")
+            return False
+        new_session = await client.attach_to_target(target["targetId"])
+        await client.send_to_session(new_session, "Page.enable")
+        await client.send_to_session(new_session, "Runtime.enable")
+        await client.send_to_session(new_session, "Network.enable")
+
+        # 5. Cookies injizieren
+        try:
+            with open(working_cookies, "r") as f:
+                cookies = json.load(f)
+        except Exception as e:
+            logger.error("Failed to load backup cookies: %s", e)
+            return False
+
+        injected = 0
+        for cookie in cookies:
+            try:
+                params = {
+                    "name": cookie.get("name"),
+                    "value": cookie.get("value"),
+                    "domain": cookie.get("domain"),
+                    "path": cookie.get("path", "/"),
+                    "secure": cookie.get("secure", False),
+                    "httpOnly": cookie.get("httpOnly", False),
+                }
+                same_site = cookie.get("sameSite")
+                if same_site and same_site != "None":
+                    params["sameSite"] = same_site
+                expires = cookie.get("expires", -1)
+                if expires and expires != -1:
+                    try:
+                        params["expires"] = float(expires)
+                    except (ValueError, TypeError):
+                        pass
+                result = await client.send_to_session(new_session, "Network.setCookie", params)
+                if result and not result.get("error"):
+                    injected += 1
+            except Exception as e:
+                logger.debug("Cookie injection failed for %s: %s", cookie.get("name"), e)
+
+        logger.info("Injected %d/%d cookies from backup", injected, len(cookies))
+
+        # 6. Session validieren
+        is_valid = await self._validate_gmx_session(client, new_session)
+        if is_valid:
+            logger.info("✅ SESSION RECOVERY SUCCESSFUL")
+            return True
+        else:
+            logger.error("❌ SESSION RECOVERY FAILED — backup cookies expired or invalid")
+            return False
+
+    async def _save_gmx_session_backup(self, client: CDPClient, session_id: str, label: str = "current") -> str:
+        """Extrahiert und speichert GMX-Cookies als Backup.
+
+        Args:
+            label: "current" für aktuellen Zustand, "master" für golden backup
+
+        Returns:
+            Pfad zur gespeicherten Datei
+        """
+        backup_dir = Path("backup/session")
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        # Extract all cookies via CDP
+        try:
+            result = await client.send_to_session(session_id, "Network.getAllCookies")
+            all_cookies = result.get("cookies", [])
+            gmx_cookies = [c for c in all_cookies if "gmx" in c.get("domain", "")]
+
+            # Save all cookies for completeness
+            filename = f"gmx-cookies-{label}.json"
+            filepath = backup_dir / filename
+            with open(filepath, "w") as f:
+                json.dump(gmx_cookies, f, indent=2)
+
+            logger.info("Session backup saved: %s (%d GMX cookies)", filepath, len(gmx_cookies))
+            return str(filepath)
+        except Exception as e:
+            logger.error("Failed to save session backup: %s", e)
+            return ""
 
     async def _get_iframe_frame_id(self, client: CDPClient, session_id: str) -> Optional[str]:
         """Findet die frameId des mail_settings iframes via Page.getFrameTree."""
