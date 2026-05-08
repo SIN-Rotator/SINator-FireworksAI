@@ -35,6 +35,7 @@ from agent_toolbox.api.routes.gmx import router as gmx_router
 from agent_toolbox.api.routes.fireworks import router as fireworks_router
 from agent_toolbox.api.routes.cookies import router as cookies_router
 from agent_toolbox.api.routes.pool import router as pool_router
+from agent_toolbox.api.routes.rotation import router as rotation_router
 
 # Logging konfigurieren
 logging.basicConfig(
@@ -92,6 +93,7 @@ app.include_router(gmx_router, prefix="/api/v1")
 app.include_router(fireworks_router, prefix="/api/v1")
 app.include_router(cookies_router, prefix="/api/v1")
 app.include_router(pool_router, prefix="/api/v1")
+app.include_router(rotation_router, prefix="/api/v1")
 
 
 @app.get("/", tags=["Health"])

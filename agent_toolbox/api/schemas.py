@@ -267,18 +267,20 @@ class PoolAddKeyResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class RotationRequest(BaseModel):
-    """Request für komplette Account-Rotation."""
-    profile_name: str = Field(default="Profile 73", description="Chrome Profil")
-    fireworks_password: str = Field(..., description="Fireworks Account-Passwort")
-    headless: bool = Field(default=False, description="Headless-Modus")
+    """Request für komplette Account-Rotation (GMX Alias + Fireworks Account + API-Key)."""
+    new_alias_name: Optional[str] = Field(default=None, description="Neuer GMX Alias-Name. Wenn None, wird generiert.")
+    fireworks_password: str = Field(..., description="Passwort für neuen Fireworks Account")
+    gmx_alias_name: Optional[str] = Field(default=None, description="GMX Alias-Name für Rotation (alt)")
     save_to_pool: bool = Field(default=True, description="API-Key im Pool speichern")
 
 
 class RotationResponse(BaseModel):
     """Response für komplette Account-Rotation."""
     status: str = Field(..., description="success | partial | failed | error")
-    alias_email: Optional[str] = Field(default=None, description="Erstellte GMX Alias-Email")
+    gmx_alias: Optional[str] = Field(default=None, description="Neue GMX Alias-Email")
+    fireworks_account: Optional[str] = Field(default=None, description="Registrierte Fireworks Email")
     api_key: Optional[str] = Field(default=None, description="Generierter Fireworks API-Key")
+    api_key_name: Optional[str] = Field(default=None, description="Name des API-Keys")
     steps_completed: List[str] = Field(default_factory=list, description="Erfolgreich abgeschlossene Schritte")
     steps_failed: List[str] = Field(default_factory=list, description="Fehlgeschlagene Schritte")
     execution_time: str = Field(..., description="Gesamtausführungszeit")
