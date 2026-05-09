@@ -52,7 +52,14 @@ class PoolManager:
         if self.pool_path.exists():
             try:
                 with open(self.pool_path, "r") as f:
-                    self.keys = json.load(f)
+                    raw = json.load(f)
+                # Handle both formats: {"accounts": [...]} (old) or [...] (new)
+                if isinstance(raw, list):
+                    self.keys = raw
+                elif isinstance(raw, dict) and "accounts" in raw:
+                    self.keys = raw["accounts"]
+                else:
+                    self.keys = []
                 logger.info(f"{len(self.keys)} API-Keys aus Pool geladen")
             except Exception as e:
                 logger.error(f"Pool-Laden fehlgeschlagen: {e}")

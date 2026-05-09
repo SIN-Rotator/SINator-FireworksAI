@@ -421,7 +421,7 @@ Falls Session tot: `curl -X POST http://localhost:8000/cookies/recover`
 
 ---
 
-## 🔧 SESSION RECOVERY PROTOKOLL
+## 🔧 BACKUP-STRUKTUR (für Session Recovery)
 
 ```
 backup/session/
@@ -436,7 +436,9 @@ backup/session/
 
 ### data/fireworksai-pool.json (PoolManager)
 
+PoolManager unterstützt BEIDE Formate: Legacy `{"accounts": [...]}` und neues `[{...}]`.
 ```json
+// Neues Format (empfohlen) — Plain Array
 [
   {
     "id": "uuid-8-stellig",
@@ -448,6 +450,9 @@ backup/session/
     "used_at": null
   }
 ]
+
+// Legacy Format (noch auf Disk: {"accounts": []})
+// PoolManager erkennt beide automatisch via _load()
 ```
 
 **PoolManager API:**
@@ -497,10 +502,13 @@ Nur GMX-relevante Cookies (domain enthält "gmx") werden injiziert.
 ### GMX
 | Methode | Endpoint | Request | Response |
 |---|---|---|---|
-| POST | `/gmx/session/validate` | `{navigate_to}` | `{status, current_url, session_active}` |
-| POST | `/gmx/alias/create` | `{alias_name, delete_existing}` | `{status, alias_email, alias_name}` |
+| POST | `/gmx/session/check` | — | `{status, current_url, session_active}` |
+| POST | `/gmx/email-addresses` | — | `{status, current_url, title}` |
 | POST | `/gmx/alias/delete` | — | `{status, deleted, alias}` |
 | POST | `/gmx/alias/rotate` | `{new_alias_name}` | `{status, deleted_alias, created_alias, steps_completed, steps_failed}` |
+| POST | `/gmx/alias/create` | `alias_name` (query param) | `{status, alias_email, alias_name}` |
+| POST | `/gmx/inbox/open` | — | `{status, current_url}` |
+| POST | `/gmx/otp/read` | `sender_filter, max_retries` | `{status, otp_url, email_subject}` |
 
 ### Fireworks
 | Methode | Endpoint | Request | Response |
@@ -623,7 +631,7 @@ await client.get_box_model(session_id, node_id)               # Element rect
 
 **Async helpers (standalone):**
 ```python
-ws_url = await get_browser_ws_endpoint(cdp_port=9222)  # IPv4/IPv6 dual probe
+ws_url = await get_browser_ws_endpoint(cdp_port=9222)  # urllib-basiert, zuverlässig
 target = await get_page_target(client, url_filter="gmx")  # Find tab by URL
 ```
 
