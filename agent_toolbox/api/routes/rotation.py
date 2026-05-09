@@ -6,28 +6,31 @@
 ║  ENDPOINT:                                                                    ║
 ║  POST /rotation/full         → Komplette Account-Rotation (GMX + Fireworks) ║
 ║                                                                              ║
-║  KOMPLETTER FLOW (in einem API-Call):                                        ║
-║  1. GMX Alias löschen (falls vorhanden)                                     ║
-║  2. GMX Alias erstellen (rotiert auf neuen Namen)                           ║
-║  3. Fireworks AI Account registrieren (mit neuer Alias-Email)              ║
-║  4. GMX Inbox pollinen nach Bestätigungs-URL (max 12 Versuche × 5s)        ║
-║  5. Fireworks Account bestätigen (OTP-URL öffnen)                          ║
-║  6. Fireworks API-Key erstellen                                             ║
-║  7. API-Key im Pool speichern (JSON)                                        ║
+║  FLOW (2 SCHRITTE — register() macht alles intern):                         ║
+║  1. GMX Alias löschen (falls vorhanden) + neuen Alias erstellen             ║
+║  2. Fireworks register() — 12-Phasen E2E:                                   ║
+║     • Fireworks Cookies + LocalStorage clearen                              ║
+║     • /signup Page → Cookie Banner dismissen                                ║
+║     • Email → Next → 2x Password → Create Account                          ║
+║     • GMX OTP Polling (12x5s = 60s)                                         ║
+║     • OTP URL öffnen → Account verifiziert                                  ║
+║     • Sign In Flow → Email/Password Login                                   ║
+║     • FirstName/LastName + Terms of Service                                 ║
+║     • Use Case Selection → $5 Credits Submit                                ║
+║     • Navigate zu API-Keys → Create + Generate Key                          ║
+║     • Key extrahieren (fw-... Pattern)                                       ║
+║  3. API-Key im Pool speichern (optional)                                     ║
 ║                                                                              ║
 ║  ALLE OPERATIONEN nutzen dieselbe Browser-Session:                           ║
-║  Chrome ist bereits gestartet mit GMX-Session.                               ║
-║  GMX-Inbox ist erreichbar. Fireworks wird im gleichen Tab geöffnet.         ║
+║  Chrome Profile 901, CDP Port 9222, gleicher Tab für GMX + Fireworks.       ║
 ║                                                                              ║
-║  TYPISCHE LAUFZEIT: ~3-5 minuten (GMX-Rotation ~45s,                         ║
-║  Fireworks-Registrierung ~10s, OTP-Polling variabel,                          ║
-║  Bestätigung ~10s, API-Key ~5s)                                              ║
+║  TYPISCHE LAUFZEIT: ~2-4 minuten                                             ║
+║  (GMX Alias ~45s, Fireworks 12-Phasen ~60-180s je nach Email-Delay)         ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 import time
 import logging
-import asyncio
 
 from fastapi import APIRouter, HTTPException
 
@@ -54,28 +57,37 @@ async def full_rotation(request: RotationRequest):
     """
     KOMPLETTE Account-Rotation in einem API-Call.
 
-    Dies ist der HAUPT-Endpunkt für die Agent Toolbox. Er orchestriert
-    den gesamten Flow von GMX Alias über Fireworks Registration bis
-    zum gespeicherten API-Key.
+    Das ist der HAUPT-Endpunkt. Er orchestriert GMX Alias + Fireworks E2E.
 
-    Beispiel:
-        curl -X POST http://localhost:8000/api/v1/rotation/full \\
-          -H "Content-Type: application/json" \\
-          -d '{"fireworks_password": "MeinPasswort123!"}'
+    register() macht jetzt 12 Phasen intern (siehe fireworks_service.py Doku):
+    1. Fireworks Cookies/LocalStorage clearen (nur Fireworks-Domain!)
+    2. /signup laden + Cookie Banner dismissen (CDP coordinate click)
+    3. Email eingeben + Next klicken
+    4. Password + Confirm-Password eingeben + Create Account klicken
+    5. GMX OTP Polling (12 retries × 5s)
+    6. OTP URL öffnen → Account verifiziert
+    7. Sign In Flow (Sign In → Email Login → Email+Password → Next)
+    8. FirstName/LastName + Terms of Service Checkbox
+    9. Use Case Checkboxes (Flexible capacity, Conversational AI)
+    10. "Submit to get $5 Credits" klicken
+    11. Loading polling (15s + 5×2s)
+    12. Navigate zu API-Keys → Create → Name → Generate → Key extrahieren
 
     Args:
         new_alias_name: Optionaler GMX Alias-Name. Wenn None → auto-generiert.
         fireworks_password: Passwort für neuen Fireworks Account (required).
-        gmx_alias_name: Optional → alter Alias-Name (wird vor Rotation gelöscht).
-        save_to_pool: Ob der API-Key im Pool gespeichert werden soll.
+        save_to_pool: Ob der API-Key im Pool gespeichert werden soll (default: true).
 
     Returns:
         status: "success" | "partial" | "failed" | "error"
         gmx_alias: Neue GMX Alias-Email
-        fireworks_account: Registrierte Fireworks Email
-        api_key: Generierter Fireworks API-Key
-        steps_completed: Alle erfolgreichen Schritte
+        fireworks_account: Registrierte Fireworks Email (= gmx_alias)
+        api_key: Generierter Fireworks API-Key (fw-...)
+        api_key_name: Name des API-Keys (erster Alias-Bestandteil)
+        steps_completed: Alle erfolgreichen Schritte (aus register())
         steps_failed: Fehlgeschlagene Schritte
+        execution_time: Gesamtdauer in Sekunden
+        error: Fehlermeldung falls status != "success"
     """
     t0 = time.time()
     cdp_port = _require_browser()
@@ -85,17 +97,169 @@ async def full_rotation(request: RotationRequest):
     gmx_alias = None
     fireworks_account = None
     api_key = None
-    api_key_name = "sinator-key"
+    api_key_name = None
 
     try:
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (delete old + create new)
+        #  STEP 1: GMX Alias Rotation
         # ════════════════════════════════════════════════════════════════════════
-        logger.info("=== STEP 1: GMX Alias Rotation ===")
+        #
+        # Lösche alten Alias (falls vorhanden) und erstelle einen neuen.
+        # rotate_alias() liefert den neuen Alias-Namen zurück.
+        #
+        # GMX FreeMail beschränkt: NUR EIN Alias gleichzeitig.
+        # → Alten Alias löschen bevor neuen erstellen.
+        #
+        # rotate_alias() intern:
+        # 1. Navigiere zu navigator.gmx.net/mail_settings/email_addresses
+        # 2. Lösche existierenden Alias (falls vorhanden, mit Bestätigungs-Dialog)
+        # 3. Generiere neuen Namen: {adjektiv}-{substantiv}-{3stellig}@gmx.de
+        # 4. Erstelle neuen Alias im Formular
+        # 5. Erfolg bestätigen
+        #
+        # Ergebnis: alias_result = {status, created_alias, ...}
+        #
+        logger.info("=== GMX Alias Rotation ===")
         gmx_svc = get_gmx_service()
         alias_result = await gmx_svc.rotate_alias(
             new_alias_name=request.new_alias_name,
             cdp_port=cdp_port,
+        )
+
+        if alias_result["status"] in ("success", "partial"):
+            gmx_alias = alias_result.get("created_alias")
+            steps_completed.append("gmx_alias_rotated")
+            if alias_result["status"] == "partial":
+                steps_failed.append("gmx_delete_failed")
+            logger.info(f"✅ GMX Alias: {gmx_alias} (status={alias_result['status']})")
+        else:
+            steps_failed.append("gmx_alias_rotation_failed")
+            return RotationResponse(
+                status="failed",
+                gmx_alias=None,
+                fireworks_account=None,
+                api_key=None,
+                api_key_name=None,
+                steps_completed=steps_completed,
+                steps_failed=steps_failed + alias_result.get("steps_failed", []),
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=alias_result.get("error") or "GMX Alias Rotation fehlgeschlagen",
+            )
+
+        # ════════════════════════════════════════════════════════════════════════
+        #  STEP 2: Fireworks E2E (register() — 12 Phasen intern)
+        # ════════════════════════════════════════════════════════════════════════
+        #
+        # Die neue register() Methode macht ALLES in einem Aufruf:
+        # - Account erstellen auf /signup
+        # - GMX OTP polling (findet Bestätigungs-URL in GMX-Inbox)
+        # - Account verifizieren (OTP URL öffnen)
+        # - Sign In Flow (einloggen mit frischem Account)
+        # - Account Setup (Name, ToS, Use Cases, $5 Credits)
+        # - API Key erstellen und extrahieren
+        #
+        # WICHTIG: gmx_password ist HARDCODED "ZOE.jerry2024" weil
+        # register() GMX-Inbox-Zugriff braucht (nicht für Fireworks-Login).
+        #
+        logger.info(f"=== Fireworks E2E Registration (alias={gmx_alias}) ===")
+        fw_svc = get_fireworks_service()
+        reg_result = await fw_svc.register(
+            email=gmx_alias,
+            password=request.fireworks_password,
+            gmx_password="ZOE.jerry2024",
+            cdp_port=cdp_port,
+        )
+
+        fireworks_account = gmx_alias
+        api_key = reg_result.get("api_key")
+        api_key_name = reg_result.get("api_key_name") or gmx_alias.split("-")[0] if "-" in gmx_alias else gmx_alias.split("@")[0]
+
+        if reg_result.get("status") == "success":
+            steps_completed.append("fireworks_e2e_complete")
+            logger.info(f"✅ Fireworks E2E: api_key={api_key[:12] if api_key else 'NONE'}...")
+        elif reg_result.get("status") == "partial":
+            if api_key:
+                steps_completed.append("fireworks_e2e_partial_with_key")
+                logger.warning(f"⚠️ Fireworks partial but key received: {api_key[:12]}...")
+            else:
+                steps_completed.append("fireworks_e2e_partial_no_key")
+                logger.warning("⚠️ Fireworks partial, no API key received")
+        else:
+            steps_failed.append("fireworks_e2e_failed")
+            return RotationResponse(
+                status="failed",
+                gmx_alias=gmx_alias,
+                fireworks_account=fireworks_account,
+                api_key=api_key,
+                api_key_name=api_key_name,
+                steps_completed=steps_completed,
+                steps_failed=steps_failed,
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=reg_result.get("error") or "Fireworks E2E Registration fehlgeschlagen",
+            )
+
+        # Merge register() steps into our steps list
+        steps_completed.extend(reg_result.get("steps_completed", []))
+        steps_failed.extend(reg_result.get("steps_failed", []))
+
+        # ════════════════════════════════════════════════════════════════════════
+        #  STEP 3: API-Key im Pool speichern
+        # ════════════════════════════════════════════════════════════════════════
+        #
+        # Nur speichern wenn:
+        # - save_to_pool=True (default)
+        # - api_key ist vorhanden und nicht None/empty
+        #
+        # Pool speichert: {api_key, alias_email, key_name, created_at}
+        #
+        if request.save_to_pool and api_key and len(api_key) > 20:
+            logger.info("=== Save API Key to Pool ===")
+            pool = get_pool_manager()
+            pool.add_key(
+                api_key=api_key,
+                alias_email=gmx_alias,
+                key_name=api_key_name,
+            )
+            steps_completed.append("api_key_saved_to_pool")
+            logger.info(f"✅ API-Key im Pool: {api_key[:12]}... für {gmx_alias}")
+        elif not api_key or len(str(api_key)) <= 20:
+            logger.warning("⚠️ API-Key nicht speicherbar (leer oder zu kurz)")
+            steps_failed.append("api_key_invalid")
+
+        elapsed = time.time() - t0
+        final_status = "success" if (api_key and len(str(api_key)) > 20) else "partial"
+
+        logger.info(
+            f"🎉 ROTATION COMPLETE — status={final_status}, "
+            f"gmx_alias={gmx_alias}, api_key={'YES' if api_key else 'NO'}, "
+            f"time={elapsed:.1f}s, steps_ok={len(steps_completed)}, "
+            f"steps_failed={len(steps_failed)}"
+        )
+
+        return RotationResponse(
+            status=final_status,
+            gmx_alias=gmx_alias,
+            fireworks_account=fireworks_account,
+            api_key=api_key,
+            api_key_name=api_key_name,
+            steps_completed=steps_completed,
+            steps_failed=steps_failed,
+            execution_time=f"{elapsed:.2f}s",
+        )
+
+    except Exception as e:
+        elapsed = time.time() - t0
+        logger.error(f"Rotation failed mit Exception: {e}")
+        return RotationResponse(
+            status="error",
+            gmx_alias=gmx_alias,
+            fireworks_account=fireworks_account,
+            api_key=None,
+            api_key_name=None,
+            steps_completed=steps_completed,
+            steps_failed=steps_failed,
+            execution_time=f"{elapsed:.2f}s",
+            error=str(e),
         )
 
         if alias_result["status"] == "success":
@@ -128,6 +292,7 @@ async def full_rotation(request: RotationRequest):
         reg_result = await fw_svc.register(
             email=gmx_alias,
             password=request.fireworks_password,
+            gmx_password="ZOE.jerry2024",
             cdp_port=cdp_port,
         )
 
