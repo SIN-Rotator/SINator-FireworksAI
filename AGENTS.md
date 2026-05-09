@@ -10,6 +10,51 @@ Automatisierte Erstellung von GMX E-Mail-Aliasen → Fireworks AI Account-Regist
 
 ---
 
+## 🚨 PROZESS-REGELN (LERNING aus Fehlschlägen)
+
+### 🔴 REGEL 1: DELETE WRONG IMMEDIATELY
+**Wenn ein Ansatz fehlschlägt → falsche Dateien SOFORT löschen.**
+
+```
+Nach einem Fehlschlag (z.B. "Email already taken", Bot-Detection, Crash):
+1. Alle Dateien/Ordner die den FEHLGESCHLAGENEN Ansatz enthalten → löschen
+2. NIE "vielleicht brauch ich das später" — es kostet nur Zeit beim nächsten Versuch
+3. Beispiel: src/stealth_survey/ war wrong → deleted. Weitermachen.
+
+NIE:
+- Falsche Dateien liegen lassen "für Debugging"
+- Kopien von failed approaches behalten
+- Alte Versionen als backup behalten
+```
+
+### 🔴 REGEL 2: ONCE VERIFIED = READ-ONLY
+**Ein funktionierender Command/Ansatz wird NICHT mehr angefasst.**
+
+```
+Wenn ein Code-Abschnitt/Command VERIFIED ist (funktioniert in Produktion):
+1. Als READ-ONLY markieren — nächster Agent darf ihn NICHT ändern
+2. NUR Änderungen wenn: Bug-Fix, Performance-Issue, neuer Use-Case
+3. Bei Unsicherheit: NEUE Datei erstellen, nicht existierende ändern
+4. Alle /commands//*.md Files sind READ-ONLY nach erfolgreichem Test
+```
+
+### 🔴 REGEL 3: FÜTTERE AGENTS.MD NACH JEDEM ERFOLG
+**Jedes neue Learning muss SOFORT in AGENTS.md.**
+
+```
+Nach jeder erfolgreichen Iteration:
+1. Was hat funktioniert? → AGENTS.md als "Known Fix" dokumentieren
+2. Was war der kritische Insight? → In die Zustandsmaschine einbauen
+3. Welche Koordinaten/Cookies/Patterns sind bewiesen? → Hardcodieren
+
+Prozedur:
+- Erfolg: AGENTS.md updaten (neue Fixes, bewiesene Koordinaten, Data Model Updates)
+- Fehlschlag: banned.md updaten (neue verbotene Methode + warum)
+- NIE: Learnings nur im Chat lassen — nächstes Mal fängt der Agent bei 0 an
+```
+
+---
+
 ## 🚨 ABSOLUTE REGELN — NIEMALS ÜBERTRETEN
 
 | VERBOTEN | WARUM |
@@ -71,8 +116,9 @@ kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### State: Rotation in Progress (Phasen)
+### State: Rotation in Progress (4 Flows)
 
+**Flow #1: GMX Alias Rotation** (`rotation.py` Step 1 → `gmx_service.rotate_alias()`)
 ```
 Phase 1: GMX Session validieren
          └─ GMX Homepage → "E-Mail" click → prüfe navigator.gmx.net/mail?sid=...
@@ -85,37 +131,52 @@ Phase 2: GMX Alias löschen (falls vorhanden)
 Phase 3: GMX Alias erstellen
          └─ {adjektiv}-{substantiv}@gmx.de (aus Namensgenerator)
          └─ Input[name*="localPart"] füllen + Hinzufügen-Button click
+         └─ → alias_result = {status, created_alias, ...}
+```
 
+**Flow #2: Fireworks E2E Registry** (`fireworks_service.register()`)
+```
 Phase 4: Fireworks Cookie-Clear (nur Fireworks-Domain!)
          └─ GMX-Cookies BLEIBEN (shared browser, Profile 901)
 
 Phase 5: Fireworks /signup laden + Cookie Banner dismissen
-         └─ Cookiebot: .cky-btn-accept per CDP coordinate click
-         └─ Button ist in DOM aber _find_element() findet ihn nicht
-         └─ Fix: direktes JS-Query + evaluate-basierte rect lookup
+         └─ Cookiebot: .cky-btn-accept per direct JS query + CDP coord click
 
 Phase 6: Email → Next → Password → Create Account
-         └─ URL muss zu /signup/verify wechseln (account_created)
-         └─ Wenn URL nicht wechselt → create_account_clicked aber account_created fehlt
+         └─ KRITISCH: _fill_input() muss nativeInputValueSetter verwenden
+         └─ URL muss zu /signup/verify wechseln (→ "account_created")
+         └─ → register() verwendet gmx_alias als email + ZOE.jerry2024 als gmx_password
 
-Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
-         └─ navigate(gmx.net) → "E-Mail" click → inbox
-         └─ Suche nach "fireworks" + "verif" im Email-Text
-         └─ Falls Email gefunden aber kein URL → Email klicken → Email-Page scrapen
-         └─ Timeout erhöhen von 60s auf 180s (Email-Delay kann 2-5min sein)
+Phase 7-8: GMX OTP Polling + Verification
+         └─ navigate(gmx.net) → "E-Mail" JS click → bap.navigator.gmx.net/mail?sid=...
+         └─ 30 retries × 6s = 180s (Email-Delay kann 2-5min sein)
+         └─ "needs_click" path: email found in list → click row → scrape email page
+         └─ OTP URL öffnen → Account verifiziert
+```
 
-Phase 8: OTP URL öffnen → Account verifiziert
+**Flow #3: GMX OTP Email Detection** (innerhalb Flow #2, Phase 7-8)
+```
+Herausforderung: GMX Emails sind im iframe (3c-bap.gmx.net/mail/client/start)
+Lösung: navigate(gmx.net) → JS click "E-Mail" → bap.navigator.gmx.net/mail?sid=...
+        OTP sucht im Main Frame DOM nach "fireworks" + "verif"
+        Falls Email gefunden aber kein URL → Row clicken → Email-Page scrapen
+        OTP URL Pattern: https://app.fireworks.ai/signup/verify?token=...
+```
 
-Phase 9-17: Login + Setup
-         └─ /login → "Sign In" → "Email Login" → Email+Password → Next
-         └─ FirstName/LastName (aus Alias extrahieren) + Terms Checkbox
-         └─ Use Case Checkboxes → "Submit to get $5 Credits"
-         └─ 15s + 5×2s Polling auf Credits-Aktivierung
-
-Phase 18-20: API Key
-         └─ navigate(/settings/workspace/api-keys)
-         └─ Create → Name eingeben → Generate → Key extrahieren (fw-... Pattern)
-         └─ Key speichern in data/fireworksai-pool.json
+**Flow #4: Fireworks Login + Setup** (innerhalb Flow #2, Phase 9-17)
+```
+Phase 9:  Navigate zu /login → "Sign In" Button klicken
+Phase 10: "Email Login" klicken
+Phase 11: Email + Password eingeben + "Next" klicken
+Phase 12: FirstName/LastName (aus Alias extrahieren, z.B. "swift-hawk" → Swift + Hawk)
+Phase 13: Checkbox "I agree to Terms of Service" per CDP click
+Phase 14: "Continue" Button klicken
+Phase 15: Checkbox "Flexible capacity for production" per CDP click
+Phase 16: Checkbox "Conversational AI" per CDP click
+Phase 17: "Submit to get $5 Credits" klicken
+Phase 18: 15s + 5×2s Polling auf Credits-Aktivierung
+Phase 19: Navigate zu /settings/workspace/api-keys
+Phase 20: "Create API Key" → Name eingeben → "Generate Key" → Key extrahieren (fw-... Pattern)
 ```
 
 ### State: Rotation Complete
