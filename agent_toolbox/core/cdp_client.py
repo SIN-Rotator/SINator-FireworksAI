@@ -445,32 +445,30 @@ async def get_browser_ws_endpoint(cdp_port: int = 9222, timeout: float = 15.0) -
     """
     Holt den Browser websocket endpoint vom CDP HTTP endpoint.
     
-    Chrome's CDP hat zwei Endpoints:
-    1. HTTP: http://127.0.0.1:9222/json/version  → gibt webSocketDebuggerUrl zurück
-    2. Websocket: ws://127.0.0.1:9222/devtools/browser/...  → der eigentliche endpoint
-    
-    Args:
-        cdp_port: Der remote-debugging-port
-        timeout: Max wait time
-        
-    Returns:
-        webSocketDebuggerUrl (z.B. "ws://127.0.0.1:9222/devtools/browser/...")
+    Chrome DevTools kann auf IPv4 (127.0.0.1) ODER IPv6 ([::1]) lauschen.
+    Probiere zuerst IPv6, dann IPv4.
     """
     import aiohttp
     
-    url = f"http://127.0.0.1:{cdp_port}/json/version"
-    logger.info(f"Hole CDP endpoint von {url}")
+    hosts = [f"http://[::1]:{cdp_port}", f"http://127.0.0.1:{cdp_port}"]
     
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"CDP HTTP endpoint returned {resp.status}")
-            data = await resp.json()
-            ws_url = data.get("webSocketDebuggerUrl")
-            if not ws_url:
-                raise RuntimeError("Kein webSocketDebuggerUrl in CDP response")
-            logger.info(f"CDP Endpoint gefunden: {ws_url[:50]}...")
-            return ws_url
+    for url in hosts:
+        try:
+            logger.info(f"Hole CDP endpoint von {url}")
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+                    if resp.status != 200:
+                        continue
+                    data = await resp.json()
+                    ws_url = data.get("webSocketDebuggerUrl")
+                    if ws_url:
+                        logger.info(f"CDP Endpoint gefunden: {ws_url[:60]}...")
+                        return ws_url
+        except Exception as e:
+            logger.debug(f"CDP probe auf {url} fehlgeschlagen: {e}")
+            continue
+    
+    raise RuntimeError(f"Chrome DevTools nicht erreichbar auf Port {cdp_port}")
 
 
 async def get_page_target(cdp_client: CDPClient, url_filter: str = "") -> Optional[Dict[str, Any]]:

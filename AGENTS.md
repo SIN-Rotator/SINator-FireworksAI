@@ -1,202 +1,198 @@
-# 📋 AGENTS.md — SINator Fireworks AI Rotator
+# AGENTS.md — SINator Fireworks AI Rotator
+
+## 🎯 PROJECT VISION
+
+Automatisierte Erstellung von GMX E-Mail-Aliasen → Fireworks AI Account-Registrierung → API-Key-Pool-Rotation.
+
+**Das Endprodukt:** Ein Pool von Fireworks AI API-Keys die via `POST /rotation/full` automatisch generiert werden. Jeder Key = ein neuer Account mit neuem GMX Alias.
+
+**Architektur:** Python + FastAPI + Raw CDP Websocket (kein Playwright — Playwright crashed bei GMX SPA frame detachment).
+
+---
 
 ## 🚨 ABSOLUTE REGELN — NIEMALS ÜBERTRETEN
 
-### 🚫 NIEMALS `git checkout -- .` AUSFÜHREN
-- **VERBOTEN:** `git checkout -- .` oder `git checkout -- <file>`
-- **VERBOTEN:** `git reset --hard`
-- **VERBOTEN:** `git clean -fd`
-- **WARUM:** Zerstört ALLE Arbeitsfortschritte unwiderruflich
-- **STATTDessen:** Nur `git diff` und `git status` zur Analyse verwenden
-
-### 🚫 NIEMALS Chrome-Profil ändern
-- **VERBOTEN:** `pkill -9 -f "Google Chrome"` (zerstört Session)
-- **VERBOTEN:** Andere User-Daten-Verzeichnisse verwenden
-- **VERBOTEN:** Temporäre Profile erstellen
+| VERBOTEN | WARUM |
+|---|---|
+| `git checkout -- .` / `git reset --hard` | Zerstört alle Arbeitsfortschritte |
+| `pkill -9 -f "Google Chrome"` | Zerstört unflushed SQLite → GMX Session tot |
+| Profil 901 nach /tmp kopieren | Cookies sind an Original-Pfad gebunden (macOS Keychain) → Session unbrauchbar |
+| `--user-data-dir=/tmp/...` | GMX-Session geht verloren |
+| `waitForNavigation()` bei GMX | GMX ist SPA — keine Page-Reloads → hängt ewig |
 
 ---
 
-## ⚠️ IMMUTABLE SYSTEM CONFIGURATION — NEVER DEVIATE
+## 🏗️ SYSTEM CONFIGURATION (IMMUTABLE)
 
-### Chrome Profile (ABSOLUTE TRUTH)
-- **User Data Dir:** `/Users/jeremy/Library/Application Support/Google Chrome`
-- **Active Profile:** `Profile 901` (NICHT 73!)
-- **Profile Owner:** jeremy (NICHT simoneschulze!)
-- **CDP Port:** `9222`
-- **Chrome Binary:** `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+### Chrome Profile
 
-### Chrome Start Command (DAS IST DER EINZIG RICHTIGE BEFEHL — ZEILE 1!)
-```bash
-rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" --profile-directory="Profile 901" --remote-debugging-port=9222 --no-first-run --no-default-browser-check > /tmp/chrome_sinator.log 2>&1 & sleep 6 && rtk curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print('Chrome OK')"
+```
+User Data Dir: /Users/jeremy/Library/Application Support/Google Chrome
+Profile:       Profile 901 ("SINator (Fireworks AI)")
+CDP Port:      9222
+Chrome Binary: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
 ```
 
-**KOMPONENTEN DES COMMANDS (JEDE EINZELNE IST PFLICHT):**
-- `nohup ... &` — Hintergrund-Prozess, kein Terminal-Blocking
-- `--user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome"` — Jeremy's Chrome Profile (NICHT simoneschulze!)
-- `--profile-directory="Profile 901"` — Profil-Ordner (Profile 73 ist VERBOTEN!)
-- `--remote-debugging-port=9222` — CDP Port (8888/9999 sind VERBOTEN!)
-- `--no-first-run` — Kein First-Run-Dialog
-- `--no-default-browser-check` — Kein Browser-Check
-- `> /tmp/chrome_sinator.log 2>&1` — Log-Output umleiten
-- `sleep 6` — WARTEN (nicht 5, nicht 3!)
-- `rtk curl ... | python3 -c "..."` — Verify dass Chrome läuft
+Chrome läuft unter User `simoneschulze` (macOS login profile). Profile 901 wurde von jeremy erstellt und enthält GMX-Sessions. Das ist normal — wichtig ist dass Profile 901 auf Port 9222 funktioniert.
 
-**DAS IST DER EINZIG RICHTIGE WEG CHROME ZU STARTEN. ES GIBT KEINEN ANDEREN.**
-- NIEMALS `osascript -e 'quit app "Google Chrome"'` verwenden (ZERSTÖRT SESSION!)
-- NIEMALS `pkill -9` verwenden (ZERSTÖRT unflushed SQLite = SESSION DEAD!)
-- NIEMALS `/tmp/sinator-chrome-*` Profile verwenden (KEINE COOKIES!)
-- NIEMALS `Profile 73` verwenden (OBSOLET!)
-- NIEMALS `/Users/simoneschulze/...` verwenden (FALSCHER USER!)
-- NIEMALS Port 8888 oder 9999 verwenden (FALSCHE PORTS!)
-- NIEMALS `--headless` verwenden (CDP funktioniert NICHT headless!)
-- NIEMALS Chrome ohne `--profile-directory="Profile 901"` starten!
+### Chrome Start (DER EINZIG RICHTIGE BEFEHL)
+
+```bash
+rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 901" \
+  --remote-debugging-port=9222 \
+  --no-first-run \
+  --no-default-browser-check \
+  > /tmp/chrome_sinator.log 2>&1 & \
+  sleep 6 && \
+  rtk curl -s http://127.0.0.1:9222/json/version \
+  | python3 -c "import sys,json; print('Chrome OK')"
+```
+
+### Chrome Beenden
+
+```bash
+kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
+```
+
+(SIGTERM — nicht SIGKILL. pkill -9 zerstört unflushed SQLite.)
 
 ---
 
-## 🔄 SESSION RECOVERY & BACKUP-PROTOKOLL
+## 🔄 ZUSTANDSMASCHINE — Rotation Flow
 
-### Warum?
-Wenn Chrome neu gestartet wird oder Cookies ablaufen, ist die GMX Session tot.
-Der Agent darf **NIEMALS** abgelaufene Cookies über funktionierende überschreiben.
+### State: Idle (Browser gestartet, Session valid)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│  POST /browser/start  → Browser läuft auf Port 9222                     │
+│  POST /rotation/full  → Vollständige Rotation startet                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### State: Rotation in Progress (Phasen)
+
+```
+Phase 1: GMX Session validieren
+         └─ GMX Homepage → "E-Mail" click → prüfe navigator.gmx.net/mail?sid=...
+         └─ Wenn tot → Session Recovery Protokoll ausführen
+
+Phase 2: GMX Alias löschen (falls vorhanden)
+         └─ navigate to allEmailAddresses
+         └─ Force-reveal hidden template → Delete-Icon click → OK
+
+Phase 3: GMX Alias erstellen
+         └─ {adjektiv}-{substantiv}@gmx.de (aus Namensgenerator)
+         └─ Input[name*="localPart"] füllen + Hinzufügen-Button click
+
+Phase 4: Fireworks Cookie-Clear (nur Fireworks-Domain!)
+         └─ GMX-Cookies BLEIBEN (shared browser, Profile 901)
+
+Phase 5: Fireworks /signup laden + Cookie Banner dismissen
+         └─ Cookiebot: .cky-btn-accept per CDP coordinate click
+         └─ Button ist in DOM aber _find_element() findet ihn nicht
+         └─ Fix: direktes JS-Query + evaluate-basierte rect lookup
+
+Phase 6: Email → Next → Password → Create Account
+         └─ URL muss zu /signup/verify wechseln (account_created)
+         └─ Wenn URL nicht wechselt → create_account_clicked aber account_created fehlt
+
+Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
+         └─ navigate(gmx.net) → "E-Mail" click → inbox
+         └─ Suche nach "fireworks" + "verif" im Email-Text
+         └─ Falls Email gefunden aber kein URL → Email klicken → Email-Page scrapen
+         └─ Timeout erhöhen von 60s auf 180s (Email-Delay kann 2-5min sein)
+
+Phase 8: OTP URL öffnen → Account verifiziert
+
+Phase 9-17: Login + Setup
+         └─ /login → "Sign In" → "Email Login" → Email+Password → Next
+         └─ FirstName/LastName (aus Alias extrahieren) + Terms Checkbox
+         └─ Use Case Checkboxes → "Submit to get $5 Credits"
+         └─ 15s + 5×2s Polling auf Credits-Aktivierung
+
+Phase 18-20: API Key
+         └─ navigate(/settings/workspace/api-keys)
+         └─ Create → Name eingeben → Generate → Key extrahieren (fw-... Pattern)
+         └─ Key speichern in data/fireworksai-pool.json
+```
+
+### State: Rotation Complete
+
+```
+Erfolg: API-Key in Pool, Account verifiziert, Credits aktiv
+Partial: Account erstellt aber OTP/Setup/Key fehlgeschlagen
+Failed: Account-Erstellung fehlgeschlagen (Email taken, Bot-Detection, etc.)
+```
+
+---
+
+## 🔧 SESSION RECOVERY PROTOKOLL
+
+### Wenn GMX Session TOT:
+
+```
+1. Browser SOFORT beenden: kill $(ps aux | grep "[c]hrome.*user-data-dir" ...)
+2. data/gmx-cookies.json LÖSCHEN (enthält abgelaufene Cookies)
+3. backup/session/gmx-cookies-master.json → data/gmx-cookies.json kopieren
+4. Chrome neu starten (siehe Chrome Start Befehl oben)
+5. Cookies via CDP injizieren (Network.setCookie)
+6. GMX Homepage → "E-Mail" click → navigator.gmx.net/mail?sid=... prüfen
+```
 
 ### Backup-Struktur
+
 ```
-backup/
-└── session/
-    ├── gmx-cookies-master.json     ← Goldener Master (READ-ONLY! chmod 444)
-    ├── gmx-cookies-current.json    ← Aktueller Zustand (vor/nach Operation)
-    └── last-known-good/            ← Kopie vor jeder Rotation
+backup/session/
+├── gmx-cookies-master.json  ← Goldener Master (chmod 444, READ-ONLY!)
+├── gmx-cookies-current.json ← Aktueller Zustand
+└── last-known-good/         ← Snapshot vor jeder Rotation
 ```
 
-### Protokoll (REIHENFOLGE EINHALTEN)
-1. **VOR jeder Operation:** Session validieren (GMX Homepage → "E-Mail" click → prüfen ob `navigator.gmx.net/mail?sid=...`)
-2. **Wenn Session TOT:**
-   - ❌ NICHTS speichern/extrahieren
-   - 🛑 Browser SOFORT beenden (`pkill -9 -f "Google Chrome"`)
-   - 🧹 `./data/gmx-cookies.json` LÖSCHEN (enthält abgelaufene Cookies)
-   - 📦 Backup aus `backup/session/gmx-cookies-master.json` nach `./data/gmx-cookies.json` kopieren
-   - 🔄 Chrome mit restored Cookies neu starten
-3. **NACH erfolgreicher Operation:**
-   - Cookies extrahieren → `./data/gmx-cookies.json` + `backup/session/gmx-cookies-current.json`
-   - Wenn Session bestätigt funktioniert → zusätzlich nach `backup/session/gmx-cookies-master.json` kopieren (nur wenn besser als vorher)
+### Session Validierung (IMMER VOR JEDER OPERATION)
 
-### Session Validierung (Code-Pattern)
 ```python
 async def _validate_gmx_session(client, session_id):
-    # 1. Navigate zu GMX Homepage
     await client.navigate(session_id, "https://www.gmx.net/")
     await asyncio.sleep(3)
-    # 2. Click "E-Mail"
-    await client.click_at(session_id, x=302, y=44)
+    await client.click_at(session_id, 302, 44)  # "E-Mail" Header
     await asyncio.sleep(5)
-    # 3. Prüfe URL
     url = await client.evaluate(session_id, "window.location.href")
     return "navigator.gmx.net/mail?sid=" in url
 ```
 
-### Master-Backup anlegen (einmalig)
-1. Chrome mit Profile 901 starten (siehe oben)
-2. Manuell bei GMX einloggen (oder funktionierende Cookies injizieren)
-3. Cookies extrahieren via CDP: `Network.getAllCookies`
-4. Nach `backup/session/gmx-cookies-master.json` speichern
-5. Datei als READ-ONLY markieren: `chmod 444 backup/session/gmx-cookies-master.json`
-
 ---
 
-## Projekt-Übersicht
-**Zweck:** Automatisierte Erstellung von GMX E-Mail-Aliasen → Fireworks AI Account-Registrierung → API-Key-Pool-Rotation.
+## 📁 DATENMODELL
 
-**Architektur:** Python + Raw CDP Websocket (Playwright ersetzt durch CDPClient wegen GMX SPA frame detachment crashes)
+### data/fireworksai-pool.json
 
----
-
-## 📁 Aktuelle Projekt-Struktur
-
-```
-SINator-fireworksai/
-├── AGENTS.md              ← Diese Datei (ARCHITEKTUR & SYSTEM-KONFIGURATION)
-├── banned.md              ← Verbotene Methoden & Patterns
-├── debug/                 ← Temporäre Debug-Skripte (nur zur Entwicklung)
-│   ├── debug_*.py         ← Experimente, nicht produktiv
-│   └── test_*.py         ← Test-Skripte
-├── data/
-│   ├── gmx-cookies.json   ← Aktuelle GMX-Cookies (Session-State)
-│   └── fireworksai-pool.json ← Generierte API-Keys
-├── backup/
-│   └── session/
-│       └── gmx-cookies-master.json ← GOLDENER MASTER (nur lesen!)
-└── agent_toolbox/
-    ├── core/
-    │   ├── cdp_client.py      ← Raw CDP Websocket Client
-    │   ├── gmx_service.py     ← GMX Service (Alias Rotation, OTP, Session Recovery)
-    │   ├── fireworks_service.py ← Fireworks Service (Registration, Login, API Key)
-    │   ├── cookie_manager.py  ← Cookie Management (legacy, wird durch CDP ersetzt)
-    │   └── browser_manager.py ← Browser Lifecycle Management
-    ├── api/
-    │   ├── routes/
-    │   │   ├── rotation.py    ← Full Rotation Orchestrator
-    │   │   ├── gmx.py         ← GMX API Endpoints
-    │   │   ├── fireworks.py   ← Fireworks API Endpoints
-    │   │   └── browser.py     ← Browser Management Endpoints
-    │   └── schemas.py         ← Pydantic Models
-    └── start_toolbox.py       ← FastAPI App Entry
+```json
+{
+  "accounts": [
+    {
+      "email": "swift-hawk@gmx.de",
+      "api_key": "fw-...",
+      "key_name": "alias-2026-05-09",
+      "created_at": "2026-05-09T12:00:00Z",
+      "used_count": 0
+    }
+  ]
+}
 ```
 
----
+### data/gmx-cookies.json
 
-## 🔑 Wichtige Pfade & Credentials
+429 Entries, Chrome CDP Export Format. Nur GMX-relevante Cookies (domain enthält "gmx") werden injiziert.
 
-| Item | Wert |
-|------|------|
-| Chrome Binary | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
-| **User Data Dir** | `/Users/jeremy/Library/Application Support/Google Chrome` |
-| **Profile** | `Profile 901` |
-| Local State | `/Users/jeremy/Library/Application Support/Google/Chrome/Local State` |
-| CDP Port | `9222` |
-| GMX Email | `zukunftsorientierte.energie@gmail.com` (Google-Login via GMX) |
-| GMX Password | `ZOE.jerry2024` |
-| GMX Alias Page | `https://navigator.gmx.net/mail_settings/email_addresses` |
-| GMX Inbox | `https://navigator.gmx.net/mail` |
-| Fireworks AI | `https://app.fireworks.ai` |
+### backup/session/gmx-cookies-master.json
+
+Goldener Master-Backup. Nach jeder erfolgreichen Rotation aktualisieren (nur wenn Session bestätigt funktioniert). chmod 444 setzen.
 
 ---
 
-## ⚠️ Bekannte Probleme & Workarounds
-
-### GMX Login CAPTCHA
-**Problem:** GMX zeigt nach Email-Eingabe im Login-Flow einen CAPTCHA.
-**Workaround:** Profil-Kopie + Cookie-Injektion → Session ist bereits aktiv → kein Login nötig. Siehe Session Recovery Protokoll oben.
-
-### auth.gmx.net JavaScript-Transitions
-**Problem:** `waitForNavigation()` funktioniert nicht (SPA, keine Page-Reloads).
-**Workaround:** Auf DOM-Elemente warten statt auf Navigation.
-
-### GMX FreeMail: Nur EIN Alias
-**Problem:** GMX FreeMail erlaubt nur einen Alias gleichzeitig.
-**Workaround:** Vor neuer Alias-Erstellung existierenden Alias löschen.
-
-### Cookie-Verschlüsselung (macOS Keychain)
-**Problem:** Cookies sind an `user-data-dir` Pfad gebunden.
-**Workaround:** Chrome IMMER mit dem exakten `--user-data-dir` starten (siehe Immutable Config oben). Keine Kopien, keine Temp-Dirs.
-
----
-
-## 🚀 Flow: Alias-Erstellung
-
-1. **Chrome starten** → Mit korrektem `--user-data-dir` + `--profile-directory="Profile 901"` + `--remote-debugging-port=9222`
-2. **Session validieren** → GMX Homepage → "E-Mail" click → prüfen ob `navigator.gmx.net/mail?sid=...`
-3. **Wenn Session tot:** Recovery-Protokoll ausführen (siehe oben)
-4. **CDP verbinden** → Raw Websocket zu `ws://127.0.0.1:9222/devtools/browser/...`
-5. **GMX öffnen** → `navigator.gmx.net/mail_settings/email_addresses` (bereits eingeloggt!)
-6. **Existierenden Alias löschen** (falls vorhanden)
-7. **Neuen Alias erstellen** → `{adjektiv}-{substantiv}@gmx.de`
-8. **Fireworks AI registrieren** → mit neuem Alias
-9. **API-Key speichern** → `./data/fireworksai-pool.json`
-10. **Cookies sichern** → Master-Backup aktualisieren (nur wenn Session bestätigt)
-
----
-
-## 📝 Namens-Generator Pattern
+## 🧠 NAMENS-GENERATOR
 
 ```javascript
 const ADJECTIVES = ['elron', 'dark', 'swift', 'iron', 'silver', ...]; // 32 Einträge
@@ -209,42 +205,109 @@ const NOUNS = ['vader', 'runner', 'hawk', 'wolf', 'fox', ...];        // 32 Eint
 
 ---
 
-## 🔍 Debugging
+## 📂 PROJEKT-STRUKTUR
 
-### Chrome startet nicht mit CDP?
-```bash
-# Prüfen ob Chrome bereits läuft:
-ps aux | grep -i "chrome" | grep -v grep
-
-# Falls ja: Beenden (hart)
-pkill -9 -f "Google Chrome"
-
-# Dann neu starten mit KORREKTEM Profil (siehe Immutable Config oben)
+```
+agent_toolbox/
+├── core/
+│   ├── cdp_client.py          ← Raw CDP Websocket Client (IMMER via CDP, nie Playwright)
+│   ├── gmx_service.py         ← GMX Session, Alias-Erstellung/Löschung
+│   ├── fireworks_service.py   ← Fireworks E2E Registrierung (20-Phasen Flow)
+│   ├── browser_manager.py     ← Singleton Browser Lifecycle
+│   └── pool_manager.py        ← API-Key Pool CRUD
+├── api/
+│   ├── routes/
+│   │   ├── rotation.py        ← POST /rotation/full (HAUPT-ENDPOINT)
+│   │   ├── gmx.py             ← POST /gmx/alias/create, /gmx/alias/delete
+│   │   ├── fireworks.py       ← Fireworks API Endpoints
+│   │   ├── browser.py         ← POST /browser/start, /browser/stop, /browser/status
+│   │   ├── cookies.py         ← POST /cookies/extract, /cookies/inject, /cookies/recover
+│   │   └── pool.py            ← GET /pool/stats, GET /pool/key, POST /pool/reset
+│   └── schemas.py             ← Pydantic Models
+└── start_toolbox.py           ← FastAPI App Entry
 ```
 
-### CDP-Port nicht erreichbar?
+**Start:** `python agent_toolbox/start_toolbox.py` oder `uvicorn agent_toolbox.start_toolbox:app --reload`
+
+---
+
+## 🐛 BEKANNTE PROBLEME & FIXES
+
+### Cookie Banner dismiss
+**Problem:** `_find_element()` findet `.cky-btn-accept` nicht (Shadow DOM). JS locator returned `found: false` obwohl Button in DOM existiert.
+**Fix:** Direktes JS-Query im `_dismiss_cookie_banner()` fallback-path. Button ist BEWIESEN an `(1113.7, 805.5)` — harte Koordinaten als Fallback.
+
+### `_fill_input` React Controlled Components
+**Problem:** Fireworks.ai verwendet React `useState` für alle Inputs. `input.value = ''` + `dispatchEvent(input)` dispatcht EIGENTLICH ein Event aber React's `onChange` Handler reagiert NICHT auf synthetische Events wenn `value` direkt gesetzt wird. Das Ergebnis: Input zeigt den Text aber React-State ist LEER → "Next" klicken hat keinen Effekt, Form advance nicht.
+**Fix:** `nativeInputValueSetter` — `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value)` umgeht das React synthetic event system und setzt den internen State direkt. Dazu `input.dispatchEvent(new Event('input', {bubbles: true, composed: true}))` für React.
+**Critical:** KeyEvents (`Input.dispatchKeyEvent`) funktionieren NICHT für React controlled inputs bei Sonderzeichen (`.`, `@`). Immer `nativeInputValueSetter` verwenden.
+
+### GMX SPA Navigation
+**Problem:** Direkte Navigation zu `navigator.gmx.net/mail` redirected zu `www.gmx.net/`.
+**Fix:** Navigate zu GMX Homepage → "E-Mail" Header-Button clicken → Warten → URL prüfen. Niemals `waitForNavigation()` verwenden (GMX ist SPA).
+
+### OTP Email Detection
+**Problem:** OTP Polling JS scannt den falschen DOM-Bereich (landet auf Homepage nach reload).
+**Fix:** Navigate zu GMX Homepage → "E-Mail" click → 3s warten → DOM scrapen. Bei "needs_click" → Email-Element finden und klicken → Email-Page scrapen.
+
+### Account Creation Redirect
+**Problem:** "Create Account" klicken aber URL wechselt nicht zu `/signup/verify`.
+**Fix:** FAIL-HARD — kein `/signup/verify` in URL = `account_creation_redirect_mismatch`. Account wurde NICHT erstellt. Chrome neu starten, Session recover, erneut versuchen.
+
+### GMX FreeMail: Nur EIN Alias
+**Problem:** GMX FreeMail erlaubt nur einen Alias gleichzeitig.
+**Fix:** Vor neuer Alias-Erstellung existierenden Alias löschen (Phase 2).
+
+---
+
+## 📡 API ENDPOINTS (ÜBERSICHT)
+
+| Methode | Endpoint | Beschreibung |
+|---|---|---|
+| POST | `/browser/start` | Chrome mit Profile 901 starten |
+| POST | `/browser/stop` | Chrome beenden (SIGTERM) |
+| GET | `/browser/status` | Browser-Status + CDP-Port prüfen |
+| POST | `/rotation/full` | Komplette Rotation: GMX Alias + Fireworks E2E |
+| POST | `/gmx/session/validate` | GMX Session validieren |
+| POST | `/gmx/alias/create` | GMX Alias erstellen |
+| POST | `/gmx/alias/delete` | GMX Alias löschen |
+| POST | `/cookies/extract` | Cookies aus aktuellem Chrome extrahieren |
+| POST | `/cookies/inject` | Cookies in Chrome injizieren |
+| POST | `/cookies/recover` | Session aus Master-Backup wiederherstellen |
+| GET | `/pool/stats` | Pool-Statistiken |
+| GET | `/pool/key` | Nächsten verfügbaren Key abrufen |
+
+---
+
+## 🔍 DEBUGGING
+
 ```bash
-# Port prüfen:
+# Chrome startet nicht?
+ps aux | grep -i "[c]hrome.*user-data-dir"
 lsof -i :9222
 
-# Falls belegt: Anderen Port verwenden
-# In .env: CDP_PORT=9223
+# CDP erreichbar?
+curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['webSocketDebuggerUrl'])"
+
+# GMX Session tot?
+# → Session Recovery Protokoll ausführen (siehe oben)
+
+# Cookie Banner bleibt?
+# → Mit CDP evaluate() rect prüfen: document.querySelector('.cky-btn-accept').getBoundingClientRect()
 ```
 
-### GMX Session abgelaufen?
-Siehe **Session Recovery & Backup-Protokoll** oben.
-
 ---
 
-## 📚 Referenzen
+## 📚 REFERENZEN
 
-- **banned.md** — Liste verbotener Methoden
-- **agent_toolbox/core/gmx_service.py** — Session Recovery, Alias-Management
-- **agent_toolbox/core/fireworks_service.py** — Fireworks AI Registrierung
-- **backup/session/gmx-cookies-master.json** — Goldener Session-Backup (chmod 444)
-
----
+| Thema | Datei |
+|---|---|
+| Verbannte Methoden | `banned.md` |
+| CDP Client API | `agent_toolbox/core/cdp_client.py:85` |
+| GMX Service (Session, Alias) | `agent_toolbox/core/gmx_service.py` |
+| Fireworks E2E Flow | `agent_toolbox/core/fireworks_service.py:875` |
+| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` |
+| Pool Manager | `agent_toolbox/core/pool_manager.py` |
+| Chrome Lifecycle | `agent_toolbox/core/browser_manager.py` |
 
 *Letzte Aktualisierung: 2026-05-09*
-*Profile: Profile 901 (jeremy)*
-*Chrome: /Users/jeremy/Library/Application Support/Google Chrome*

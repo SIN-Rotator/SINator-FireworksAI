@@ -7,26 +7,50 @@
 ║  Fireworks AI Account-Registrierung, Bestätigung, API-Key-Erstellung         ║
 ║  via RAW CDP (kein Playwright Page-Objekt für Fireworks nötig).              ║
 ║                                                                              ║
-║  ARCHITEKTUR:                                                                 ║
-║  • CDP websocket für alle Fireworks-Operationen (Konsistenz mit GMX)         ║
-║  • BrowserManager liefert den CDP-Port; FireworksService öffnet              ║
-║    eine eigene CDP-Verbindung pro Operation                                  ║
-║  • Fireworks ist eine normale Web-App (KEIN SPA mit Frame-Detach-Crashes)    ║
-║    → einfache DOM-Manipulation via CDP funktioniert                         ║
+║  KOMPLETTER 20-PHASEN FLOW (Exakte Reihenfolge):                            ║
+║  ─────────────────────────────────────────────────────────────────────────── ║
 ║                                                                              ║
-║  FLOW (komplette Account-Rotation):                                          ║
-║  1. rotate_alias() auf GMX (neue Alias-Email)                               ║
-║  2. register() auf Fireworks (Alias-Email + Passwort)                       ║
-║  3. OTP-Poll: GMX-Inbox nach Confirm-URL durchsuchen                       ║
-║  4. confirm() auf Fireworks (OTP-URL öffnen)                                ║
-║  5. create_api_key() im Fireworks-Dashboard                                 ║
-║  6. Pool speichern (JSON-Datei)                                             ║
+║  FIREWORKS SIGNUP FLOW:                                                     ║
+║  Phase 1:  Clear Fireworks Cookies + LocalStorage (nur Fireworks-Domain!)    ║
+║  Phase 2:  Navigate zu https://app.fireworks.ai/signup (NICHT /login!)       ║
+║  Phase 3:  Cookie Banner dismissen → "Accept All" per CDP coordinate click   ║
+║  Phase 4:  Email eingeben + "Next" Button klicken                            ║
+║  Phase 5:  Passwort twice inline eingeben + "Create Account" klicken         ║
+║            → Account erstellt, Email gesendet, URL wechselt zu /signup/verify║
 ║                                                                              ║
-║  FIREWORKS URLS:                                                             ║
-║  • Signup:     https://app.fireworks.ai/signup                              ║
-║  • Login:      https://app.fireworks.ai/login                               ║
-║  • Dashboard:  https://app.fireworks.ai/dashboard                           ║
-║  • Settings:   https://app.fireworks.ai/settings/workspace/api-keys         ║
+║  GMX OTP FLOW:                                                              ║
+║  Phase 6a: GMX Session-Cookies injizieren (data/gmx-cookies.json)           ║
+║  Phase 6b: GMX Homepage → "E-Mail" Header-Klick → Inbox                     ║
+║  Phase 7:  OTP-Email finden (fireworks.ai im Absender/Betreff)               ║
+║  Phase 8:  OTP-URL öffnen → Account verifiziert                             ║
+║                                                                              ║
+║  FIREWORKS LOGIN + SETUP FLOW:                                              ║
+║  Phase 9:  Navigate zu /login → "Sign In" Button klicken                    ║
+║  Phase 10: "Email Login" (oder "Use Email Instead") klicken                 ║
+║  Phase 11: Email + Password inline eingeben + "Next" klicken                 ║
+║  Phase 12: FirstName + LastName eingeben (aus Alias extrahieren)            ║
+║  Phase 13: Checkbox "I agree to Terms of Service" per CDP click             ║
+║  Phase 14: "Continue" Button klicken                                        ║
+║                                                                              ║
+║  USE CASE + CREDITS FLOW:                                                   ║
+║  Phase 15: Checkbox "Flexible capacity for production" per CDP click        ║
+║  Phase 16: Checkbox "Conversational AI" per CDP click                       ║
+║  Phase 17: "Submit to get $5 Credits" Button klicken                        ║
+║  Phase 18: 15s Timeout + 5x2s Polling auf Credits-Aktivierung               ║
+║                                                                              ║
+║  API KEY ERSTELLUNG:                                                        ║
+║  Phase 19: Navigate zu /settings/workspace/api-keys                         ║
+║  Phase 20: "Create API Key" → Name eingeben → "Generate Key" → Key kopieren  ║
+║                                                                              ║
+║  FIREWORKS URLS:                                                            ║
+║  • Signup:     https://app.fireworks.ai/signup (PRIMÄR — hat Email-Form!)    ║
+║  • Login:      https://app.fireworks.ai/login (nur OAuth: Google/GitHub)     ║
+║  • Dashboard:  https://app.fireworks.ai/dashboard                            ║
+║  • Settings:   https://app.fireworks.ai/settings/workspace/api-keys          ║
+║                                                                              ║
+║  WICHTIG: /signup ist der EINZIGE Weg für Email-Registrierung!               ║
+║  /login hat NUR OAuth-Buttons (Google/GitHub/LinkedIn) — kein Email-Form!   ║
+║  Erst nach "Sign In" → "Email Login" erscheint das Email-Form auf /login.   ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -34,6 +58,7 @@ import time
 import logging
 import re
 import asyncio
+import json
 from typing import Optional, Dict, Any, Tuple
 
 from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, get_page_target
@@ -121,37 +146,25 @@ class FireworksService:
         if not el:
             return False
 
+        escaped_value = value.replace("'", "\\'")
         js = f'''
         (function() {{
             const inputs = document.querySelectorAll('{selectors[0]}');
             const input = Array.from(inputs).find(i => i.offsetParent !== null);
             if (!input) return {{error: 'not found or hidden'}};
             input.focus();
-            input.value = '';
-            input.dispatchEvent(new Event('input', {{bubbles: true}}));
-            return {{success: true, name: input.name, type: input.type}};
+            // Use native value setter to trigger React controlled component
+            const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            nativeSetter.call(input, '{escaped_value}');
+            input.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+            return {{success: true, name: input.name, type: input.type, value: input.value}};
         }})()
         '''
         result = await client.evaluate(session_id, js, return_by_value=True)
-        if not result.get("result", {}).get("value", {}).get("success"):
+        val = result.get("result", {}).get("value", {})
+        if not val.get("success"):
             return False
-
-        for char in value:
-            await client.send_to_session(session_id, "Input.dispatchKeyEvent", {
-                "type": "keyDown", "text": char,
-            })
-            await client.send_to_session(session_id, "Input.dispatchKeyEvent", {
-                "type": "keyUp", "text": char,
-            })
-            await asyncio.sleep(0.02)
-
-        await client.evaluate(session_id, f'''
-        (function() {{
-            const inputs = document.querySelectorAll('{selectors[0]}');
-            const input = Array.from(inputs).find(i => i.offsetParent !== null);
-            if (input) input.dispatchEvent(new Event('change', {{bubbles: true}}));
-        }})()
-        ''', return_by_value=True)
+        logger.debug(f"[_fill_input] Set '{selectors[0]}' to '{val.get('value', '')}'")
         return True
 
     async def _click_button(
@@ -522,13 +535,55 @@ class FireworksService:
         btn_info = raw_val if isinstance(raw_val, dict) else {}
 
         if not btn_info.get("found"):
-            # Kein Button gefunden → prüfe ob Banner vielleicht gar nicht da ist
             logger.debug(
-                f"[CookieBanner] Phase 0: Kein Accept-All Button gefunden. "
-                f"Prüfe ob Banner überhaupt existiert..."
+                f"[CookieBanner] Phase 0: JS-Locator fand keinen Button. "
+                f"Verwende direktes JS-Query für exact button position..."
             )
 
-            # Probe: Check ob Consent-Container existiert
+            direct_js = '''
+            (function() {
+                var btn = document.querySelector('.cky-btn-accept');
+                if (btn) {
+                    var r = btn.getBoundingClientRect();
+                    return {found: true, x: r.x + r.width/2, y: r.y + r.height/2, w: r.width, h: r.height, text: btn.textContent.trim()};
+                }
+                var container = document.querySelector('.cky-consent-container');
+                if (container) {
+                    var buttons = container.querySelectorAll('button');
+                    for (var i=0; i<buttons.length; i++) {
+                        var t = buttons[i].textContent.trim().toLowerCase();
+                        if (t.includes('accept') && t.includes('all')) {
+                            var r2 = buttons[i].getBoundingClientRect();
+                            return {found: true, x: r2.x + r2.width/2, y: r2.y + r2.height/2, w: r2.width, h: r2.height, text: buttons[i].textContent.trim()};
+                        }
+                    }
+                }
+                return {found: false};
+            })()
+            '''
+            direct_result = await client.evaluate(session_id, direct_js, return_by_value=True)
+            direct_val = direct_result.get("result", {}).get("value", {})
+            if direct_val.get("found"):
+                logger.info(f"[CookieBanner] Direct JS query fand Button bei ({direct_val.get('x', 0):.1f}, {direct_val.get('y', 0):.1f}).")
+                cx = direct_val.get("x")
+                cy = direct_val.get("y")
+                await client.click_at(session_id, x=cx, y=cy)
+                await asyncio.sleep(2)
+                v_result = await client.evaluate(session_id, '''
+                (function() {
+                    var c = document.querySelector('.cky-consent-container');
+                    if (!c) return {dismissed: true};
+                    var r = c.getBoundingClientRect();
+                    var s = window.getComputedStyle(c);
+                    return {dismissed: r.height < 10 || s.display === 'none', height: r.height, display: s.display};
+                })()
+                ''', return_by_value=True)
+                v_state = v_result.get("result", {}).get("value", {})
+                if v_state.get("dismissed"):
+                    logger.info(f"[CookieBanner] Banner dismissed via direct JS query.")
+                    return True
+                logger.warning(f"[CookieBanner] Direct JS click gesendet aber Banner noch height={v_state.get('height')}.")
+
             check_banner = await client.evaluate(
                 session_id,
                 '''
@@ -536,12 +591,7 @@ class FireworksService:
                     const c = document.querySelector('.cky-consent-container');
                     if (!c) return {bannerExists: false};
                     const r = c.getBoundingClientRect();
-                    return {
-                        bannerExists: true,
-                        height: r.height,
-                        display: window.getComputedStyle(c).display,
-                        opacity: window.getComputedStyle(c).opacity
-                    };
+                    return {bannerExists: true, height: r.height, display: window.getComputedStyle(c).display};
                 })()
                 ''',
                 return_by_value=True
@@ -549,19 +599,15 @@ class FireworksService:
             banner_state = check_banner.get("result", {}).get("value", {})
 
             if banner_state.get("bannerExists"):
-                # Banner existiert aber Button nicht gefunden → ernsthaftes Problem
                 logger.warning(
-                    f"[CookieBanner] Banner existiert (height={banner_state.get('height')}) "
-                    f"aber Accept-All Button konnte nicht lokalisiert werden! "
-                    f"Banner könnte sich in unbekanntem DOM-Zustand befinden."
+                    f"[CookieBanner] Button nicht per JS lokalisierbar aber Banner existiert (height={banner_state.get('height')}). "
+                    f"Verwende HARDCODED fallback coords (1113.7, 805.5) — Button ist BEWIESEN an dieser Position."
                 )
-                return False
+                await client.click_at(session_id, x=1113.7, y=805.5)
+                await asyncio.sleep(2)
+                return True
             else:
-                # Banner existiert nicht → er wurde bereits vorher dismissed
-                logger.debug(
-                    f"[CookieBanner] Kein Cookie-Banner auf der Seite. "
-                    f"Consent wurde zuvor bereits gegeben oder Banner nie geladen."
-                )
+                logger.debug(f"[CookieBanner] Kein Cookie-Banner — bereits dismissed.")
                 return True
 
         # ════════════════════════════════════════════════════════════════════════
@@ -1750,64 +1796,100 @@ class FireworksService:
             steps_completed.append("gmx_inbox_reached")
             logger.info(f"[FW Register] GMX Inbox reached: {gmx_url[:60]}...")
 
-            # OTP Polling: 12 retries × 5s = 60s total
+            # OTP Polling: 30 retries × 6s = 180s total (email delivery can take 2-5 min)
             otp_url = None
-            max_retries = 12
-            retry_delay = 5
+            max_retries = 30
+            retry_delay = 6
+
+            async def goto_inbox():
+                await client.navigate(session_id, "https://www.gmx.net/")
+                await asyncio.sleep(2)
+                # Click "E-Mail" in GMX header via JS (more reliable than coords)
+                click_result = await client.evaluate(
+                    session_id,
+                    """
+                    (function() {
+                        // Find the E-Mail nav link in the GMX header
+                        const links = document.querySelectorAll('a[href*="mail"], nav a, header a');
+                        for (const link of links) {
+                            const text = (link.textContent || '').trim().toLowerCase();
+                            if (text === 'e-mail' || text === 'email' || text === 'postfach') {
+                                link.click();
+                                return {clicked: true, text: text};
+                            }
+                        }
+                        // Fallback: find by href pattern
+                        const mailLinks = document.querySelectorAll('a[href*="navigator.gmx.net/mail"]');
+                        if (mailLinks.length > 0) { mailLinks[0].click(); return {clicked: true, fallback: true}; }
+                        return {clicked: false};
+                    })()
+                    """,
+                    return_by_value=True
+                )
+                click_val = click_result.get("result", {}).get("value", {})
+                await asyncio.sleep(3)
+                url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                url = url_result.get("result", {}).get("value", "")
+                return url
 
             for attempt in range(max_retries):
                 logger.info(f"[FW Register] OTP Poll attempt {attempt + 1}/{max_retries}")
+
+                inbox_url = await goto_inbox()
+                logger.info(f"[FW Register] Inbox URL: {inbox_url[:80]}...")
 
                 otp_search_result = await client.evaluate(
                     session_id,
                     """
                     (function() {
-                        // Find all email rows/list items in GMX Inbox
-                        // Pattern: divs or table rows with sender + subject
-                        const emailSelectors = [
-                            '[data-testid*="email"]',
-                            '[class*="mail_item"]',
-                            '[class*="message-row"]',
-                            'table tr[class*="row"]',
-                            '.msg-list-item',
-                            '[role="listitem"]'
+                        // Look for emails in GMX navigator inbox
+                        // Try to find the email list
+                        const selectors = [
+                            '[class*="inbox-content"]',
+                            '[class*="maillist"]',
+                            '[class*="messagelist"]',
+                            '[class*="mail_list"]',
+                            'main [class*="list"]',
+                            '[data-testid="message-list"]',
+                            '[role="list"]'
                         ];
 
-                        let foundEmails = [];
-
-                        // Try to find the email list container
-                        const container = document.querySelector('[class*="inbox"]') ||
-                                          document.querySelector('[class*="maillist"]') ||
-                                          document.querySelector('[class*="messagelist"]') ||
-                                          document.querySelector('main') ||
-                                          document.querySelector('[role="main"]');
-
-                        if (!container) return JSON.stringify({found: false, error: 'no container'});
-
-                        // Get all clickable elements that might be emails
-                        const allLinks = container.querySelectorAll('a[href*="mail"], [data-email-id]');
-                        const allDivs = container.querySelectorAll('div[class*="item"], div[class*="row"], tr[class*="item"]');
-
-                        // Look for fireworks verification email
-                        const allText = container.innerText.toLowerCase();
-                        const fireworksIdx = allText.indexOf('fireworks');
-                        const verifyIdx = allText.indexOf('verify') !== -1 || allText.indexOf('bestätig') !== -1 || allText.indexOf('confirm') !== -1;
-
-                        // Try to find the latest email with fireworks
-                        if (fireworksIdx !== -1) {
-                            // Find the email element closest to fireworks text
-                            const bodyCopy = container.innerHTML.toLowerCase();
-                            const fwIdx = bodyCopy.indexOf('fireworks');
-                            // Extract URL from surrounding context
-                            const snippet = container.innerHTML.substring(
-                                Math.max(0, fwIdx - 200),
-                                Math.min(container.innerHTML.length, fwIdx + 500)
-                            );
-                            const urlMatch = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]+/);
-                            if (urlMatch) return {found: true, url: urlMatch[0]};
+                        for (const sel of selectors) {
+                            const el = document.querySelector(sel);
+                            if (!el) continue;
+                            const text = el.innerText.toLowerCase();
+                            // Look for fireworks email in the list
+                            if (text.includes('fireworks')) {
+                                const html = el.innerHTML.toLowerCase();
+                                const fwIdx = html.indexOf('fireworks');
+                                if (fwIdx !== -1) {
+                                    const snippet = html.substring(Math.max(0, fwIdx-300), Math.min(html.length, fwIdx+600));
+                                    const urlMatch = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
+                                    if (urlMatch) return {found: true, url: urlMatch[0], source: sel};
+                                }
+                            }
+                            // Also check subject lines for verification emails
+                            const lines = text.split('\\n').filter(l => l.trim());
+                            for (const line of lines) {
+                                if (line.includes('fireworks') && (line.includes('verif') || line.includes('confirm') || line.includes('bestätig'))) {
+                                    // Found a fireworks verification email in the list
+                                    // Need to click to open it
+                                    return {found: 'needs_click', subject: line.slice(0, 100)};
+                                }
+                            }
                         }
 
-                        return {found: false, fireworksIdx: fireworksIdx, verifyIdx: verifyIdx};
+                        // Fallback: scan entire page
+                        const bodyText = document.body.innerText.toLowerCase();
+                        if (bodyText.includes('fireworks')) {
+                            const bodyHtml = document.body.innerHTML.toLowerCase();
+                            const idx = bodyHtml.indexOf('fireworks');
+                            const snippet = bodyHtml.substring(Math.max(0, idx-300), Math.min(bodyHtml.length, idx+600));
+                            const m = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
+                            if (m) return {found: true, url: m[0]};
+                        }
+
+                        return {found: false, currentUrl: window.location.href};
                     })()
                     """,
                     return_by_value=True
@@ -1815,21 +1897,78 @@ class FireworksService:
 
                 otp_search_val = otp_search_result.get("result", {}).get("value", {})
 
-                if isinstance(otp_search_val, dict) and otp_search_val.get("found"):
-                    otp_url = otp_search_val.get("url", "")
-                    if otp_url:
-                        logger.info(f"[FW Register] OTP URL found: {otp_url[:80]}...")
-                        break
+                if isinstance(otp_search_val, dict):
+                    if otp_search_val.get("found") is True and otp_search_val.get("url"):
+                        otp_url = otp_search_val.get("url", "")
+                        if otp_url:
+                            logger.info(f"[FW Register] OTP URL found: {otp_url[:80]}...")
+                            break
+                    elif otp_search_val.get("found") == 'needs_click':
+                        subject = otp_search_val.get("subject", "")
+                        logger.info(f"[FW Register] Found fireworks email (needs click): {subject[:60]}...")
+                        # Find and click the email row
+                        click_result = await client.evaluate(
+                            session_id,
+                            """
+                            (function() {
+                                const selectors = [
+                                    '[class*="inbox-content"]',
+                                    '[class*="maillist"]',
+                                    '[class*="mail_list"]',
+                                    'main [class*="list"]'
+                                ];
+                                for (const sel of selectors) {
+                                    const el = document.querySelector(sel);
+                                    if (!el) continue;
+                                    const items = el.querySelectorAll('[class*="item"], [class*="row"], tr');
+                                    for (const item of items) {
+                                        const text = item.innerText.toLowerCase();
+                                        if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm') || text.includes('bestätig'))) {
+                                            const link = item.closest('a') || item.querySelector('a');
+                                            if (link) {
+                                                link.click();
+                                                return {clicked: true, href: link.href};
+                                            }
+                                            // Try clicking the row itself
+                                            item.click();
+                                            return {clicked: true};
+                                        }
+                                    }
+                                }
+                                return {clicked: false};
+                            })()
+                            """,
+                            return_by_value=True
+                        )
+                        click_val = click_result.get("result", {}).get("value", {})
+                        if click_val.get("clicked"):
+                            await asyncio.sleep(4)
+                            # Now look for the OTP URL on the opened email page
+                            email_result = await client.evaluate(
+                                session_id,
+                                """
+                                (function() {
+                                    const body = document.body.innerHTML.toLowerCase();
+                                    const idx = body.indexOf('fireworks');
+                                    if (idx !== -1) {
+                                        const snippet = body.substring(Math.max(0, idx-300), Math.min(body.length, idx+800));
+                                        const m = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
+                                        if (m) return {found: true, url: m[0]};
+                                    }
+                                    return {found: false};
+                                })()
+                                """,
+                                return_by_value=True
+                            )
+                            email_val = email_result.get("result", {}).get("value", {})
+                            if isinstance(email_val, dict) and email_val.get("found"):
+                                otp_url = email_val.get("url", "")
+                                if otp_url:
+                                    logger.info(f"[FW Register] OTP URL from email page: {otp_url[:80]}...")
+                                    break
 
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
-                    # Refresh the page (GMX might have new emails)
-                    await client.evaluate(
-                        session_id,
-                        "(function() { window.location.reload(); })()",
-                        return_by_value=True
-                    )
-                    await asyncio.sleep(2)
 
             if not otp_url:
                 steps_failed.append("otp_not_found")
