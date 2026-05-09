@@ -25,29 +25,31 @@
 - **CDP Port:** `9222`
 - **Chrome Binary:** `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
 
-### Chrome Start Command (COPY EXACTLY)
+### Chrome Start Command (DAS IST DER EINZIG RICHTIGE BEFEHL — ZEILE 1!)
 ```bash
-osascript -e 'quit app "Google Chrome"' 2>/dev/null; sleep 3
-
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run \
-  --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 &
-
-sleep 5
-curl -s http://127.0.0.1:9222/json/version
+rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" --profile-directory="Profile 901" --remote-debugging-port=9222 --no-first-run --no-default-browser-check > /tmp/chrome_sinator.log 2>&1 & sleep 6 && rtk curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print('Chrome OK')"
 ```
 
-**NEVER:**
-- Use `/Users/simoneschulze/...` paths (Profile 73 ist OBSOLET!)
-- Use `Profile 73` (ist OBSOLET!)
-- Create temp copies of the profile
-- Use `--user-data-dir=/tmp/...` (loses session cookies)
-- Start Chrome without `--profile-directory="Profile 901"`
-- `pkill -9` Chrome (zerstört Session!)
+**KOMPONENTEN DES COMMANDS (JEDE EINZELNE IST PFLICHT):**
+- `nohup ... &` — Hintergrund-Prozess, kein Terminal-Blocking
+- `--user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome"` — Jeremy's Chrome Profile (NICHT simoneschulze!)
+- `--profile-directory="Profile 901"` — Profil-Ordner (Profile 73 ist VERBOTEN!)
+- `--remote-debugging-port=9222` — CDP Port (8888/9999 sind VERBOTEN!)
+- `--no-first-run` — Kein First-Run-Dialog
+- `--no-default-browser-check` — Kein Browser-Check
+- `> /tmp/chrome_sinator.log 2>&1` — Log-Output umleiten
+- `sleep 6` — WARTEN (nicht 5, nicht 3!)
+- `rtk curl ... | python3 -c "..."` — Verify dass Chrome läuft
+
+**DAS IST DER EINZIG RICHTIGE WEG CHROME ZU STARTEN. ES GIBT KEINEN ANDEREN.**
+- NIEMALS `osascript -e 'quit app "Google Chrome"'` verwenden (ZERSTÖRT SESSION!)
+- NIEMALS `pkill -9` verwenden (ZERSTÖRT unflushed SQLite = SESSION DEAD!)
+- NIEMALS `/tmp/sinator-chrome-*` Profile verwenden (KEINE COOKIES!)
+- NIEMALS `Profile 73` verwenden (OBSOLET!)
+- NIEMALS `/Users/simoneschulze/...` verwenden (FALSCHER USER!)
+- NIEMALS Port 8888 oder 9999 verwenden (FALSCHE PORTS!)
+- NIEMALS `--headless` verwenden (CDP funktioniert NICHT headless!)
+- NIEMALS Chrome ohne `--profile-directory="Profile 901"` starten!
 
 ---
 

@@ -1,391 +1,312 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — Browser Manager (Core)                  ║
+║              SINATOR AGENT-TOOLBOX — Browser Manager (CDP Edition)            ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ZWECK:                                                                      ║
-║  Warm-Browser-Singleton der eine Playwright-Instanz im Hintergrund hält      ║
-║  und bei Bedarf wiederverwendet. Vermeidet teure Kaltstarts.                 ║
+║  Singleton der eine CDP-Verbindung zu Chrome hält (KEIN Playwright!).        ║
+║  Verwaltet Start/Stop/Connect für Chrome Profile 901.                        ║
 ║                                                                              ║
 ║  ARCHITEKTUR:                                                                 ║
-║  ┌─────────────────────────────────────────────────────────────────────┐    ║
-║  │ BrowserManager (Singleton)                                           │    ║
-║  │ ├── _instance: Playwright Browser Context                           │    ║
-║  │ ├── _profile_dir: Kopiertes Chrome-Profil                           │    ║
-║  │ ├── _cdp_port: DevTools Protocol Port                               │    ║
-║  │ ├── start() → Initialisiert Browser mit Profil-Kopie                │    ║
-║  │ ├── get_page() → Liefert neue Page im bestehenden Context           │    ║
-║  │ ├── stop() → Beendet Browser & räumt Temp-Profil auf               │    ║
-║  │ └── is_running() → Prüft ob Browser aktiv ist                       │    ║
-║  └─────────────────────────────────────────────────────────────────────┘    ║
+║  - KEIN Playwright (Playwright crasht bei GMX SPA frame detachment)          ║
+║  - KEIN Profil kopieren (Chrome-Cookies sind an ORIGINAL-Profil-Pfad         ║
+║    gebunden → Kopie zerstört GMX-Session!)                                   ║
+║  - Stattdessen: Raw CDP Websocket Client für alle Operationen               ║
+║  - Chrome läuft IMMER mit ORIGINAL Profile 901 auf /Users/jeremy/...         ║
 ║                                                                              ║
-║  WARUM PLAYWRIGHT STATT PUPPETEER?                                           ║
-║  • Native Python-Integration (kein Node.js Bridge nötig)                     ║
-║  • Bessere CDP-Unterstützung für Chrome-Subprocess                           ║
-║  • Eingebaute Stealth-Features (playwright-stealth)                          │    ║
-║  • Schnelleres Page-Navigation Handling                                      │    ║
+║  WICHTIG (KRITISCHE ERKENNTIS):                                              ║
+║  Chrome verschlüsselt Cookies mit dem macOS Keychain. Die Verschlüsselung    ║
+║  ist an den ORIGINAL user-data-dir Pfad gebunden. Wenn man das Profil        ║
+║  nach /tmp kopiert und Chrome von dort startet:                             ║
+║  → Cookies sind unlesbar (Keychain-Path-Mismatch)                           ║
+║  → GMX-Session ist TOT                                                       ║
+║  → Account-Rotation schlägt fehl                                             ║
 ║                                                                              ║
-║  PROFIL-KOPIERUNG:                                                            ║
-║  Chrome verweigert CDP mit Default user-data-dir.                             ║
-║  Lösung: Profil nach /tmp kopieren → Chrome startet mit CDP.                  │    ║
-║  WICHTIG: Local State + Profile 901 müssen kopiert werden!                     │    ║
+║  LÖSUNG:                                                                      ║
+║  Chrome IMMER mit dem ORIGINAL Profile 901 starten:                          ║
+║  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome"   ║
+║  --profile-directory="Profile 901"                                           ║
+║                                                                              ║
+║  PROFIL KOPIEREN = VERBOTEN!                                                 ║
+║  - Das alte browser_manager.py kopierte Profile 901 nach                     ║
+║    /tmp/sinator-chrome-{timestamp} → ZERSTÖRTE GMX-SESSION                   ║
+║  - Diese Praxis ist jetzt ENTFERNT aus dem Code                              ║
+║                                                                              ║
+║  CHROME STARTEN:                                                              ║
+║  Der einzige richtige Weg Chrome zu starten (IMMER!):                        ║
+║                                                                              ║
+║  rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"    ║
+║    --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" ║
+║    --profile-directory="Profile 901"                                         ║
+║    --remote-debugging-port=9222                                              ║
+║    --no-first-run --no-default-browser-check                                 ║
+║    > /tmp/chrome_sinator.log 2>&1 & sleep 6                                  ║
+║    && rtk curl -s http://127.0.0.1:9222/json/version                         ║
+║    | python3 -c "import sys,json; print('Chrome OK')"                        ║
+║                                                                              ║
+║  KEINE ANDERE METHODE IST KORREKT!                                            ║
+║                                                                              ║
+║  CHROME BEENDEN:                                                              ║
+║  - NIEMALS `pkill -9 -f "Google Chrome"` (zerstört unflushed SQLite!)        ║
+║  - NIEMALS `osascript -e 'quit app "Google Chrome"'` (killt Session!)        ║
+║  - Browser läuft lassen wenn er einmal gestartet ist                         ║
+║  - Bei Bedarf: nur CDP verbinden, Chrome NICHT neustarten                    ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 import os
-import shutil
-import subprocess
 import time
-import json
 import logging
 import asyncio
+import subprocess
+import signal
 import httpx
 from pathlib import Path
 from typing import Optional, Dict, Any
-from contextlib import asynccontextmanager
-
-from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 
 logger = logging.getLogger(__name__)
+
+CHROME_BINARY = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+CHROME_USER_DATA_DIR = "/Users/jeremy/Library/Application Support/Google Chrome"
+CHROME_PROFILE_NAME = "Profile 901"
+CHROME_CDP_PORT = 9222
 
 
 class BrowserManager:
     """
-    Warm-Browser-Singleton für Playwright.
+    Singleton für Chrome Browser Lifecycle Management.
 
-    Hält eine Browser-Instanz im Hintergrund und vermeidet teure Neustarts.
-    Profil wird beim ersten Start kopiert und wiederverwendet.
+    WICHTIG: Verwendet das ORIGINAL Profile 901 — KEINE KOPIEN!
+
+    Chrome verschlüsselt Session-Cookies mit dem macOS Keychain. Diese
+    Verschlüsselung ist an den ORIGINAL user-data-dir Pfad gebunden.
+    Ein kopiertes Profil hätte unlesbare Cookies → GMX-Session tot.
+
+    Daher: Chrome starten mit ORIGINAL Profile, nicht kopieren.
+    Wenn Chrome bereits läuft: Einfach verbinden (nicht neustarten).
 
     Usage:
         manager = BrowserManager()
-        await manager.start()
-        page = await manager.get_page()
-        # ... automation ...
-        await manager.stop()
+        await manager.start()        # Startet Chrome wenn nicht laufend
+        await manager.stop()         # Beendet Chrome (graceful)
+        manager.is_running           # Status prüfen
     """
 
     def __init__(
         self,
         chrome_path: Optional[str] = None,
-        source_profile: Optional[str] = None,
+        user_data_dir: Optional[str] = None,
         profile_name: str = "Profile 901",
         cdp_port: int = 9222,
         headless: bool = False,
     ):
-        """
-        Initialisiert den Browser-Manager.
-
-        Args:
-            chrome_path: Pfad zur Chrome Binary (default: macOS Standard)
-            source_profile: Pfad zum Chrome user-data-dir (default: macOS Standard)
-            profile_name: Name des Profil-Ordners (default: "Profile 901")
-            cdp_port: Port für Chrome DevTools Protocol (default: 9222)
-            headless: Headless-Modus (default: False für Debugging)
-        """
-        self.chrome_path = chrome_path or "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        self.source_user_data_dir = source_profile or str(
-            Path.home() / "Library/Application Support/Google/Chrome"
-        )
+        self.chrome_path = chrome_path or CHROME_BINARY
+        self.user_data_dir = user_data_dir or CHROME_USER_DATA_DIR
         self.profile_name = profile_name
         self.cdp_port = cdp_port
         self.headless = headless
 
-        # Singleton state
-        self._playwright = None
-        self._browser: Optional[Browser] = None
-        self._context: Optional[BrowserContext] = None
-        self._temp_profile_dir: Optional[str] = None
-        self._chrome_proc: Optional[subprocess.Popen] = None
         self._is_running = False
+        self._chrome_proc: Optional[subprocess.Popen] = None
 
     @property
     def is_running(self) -> bool:
-        """Prüft ob der Browser aktiv ist."""
-        return self._is_running and self._browser is not None
+        """Prüft ob Chrome läuft (CDP Port erreichbar)."""
+        return self._is_running
+
+    async def _is_chrome_already_running(self) -> bool:
+        """
+        Prüft ob Chrome bereits auf dem CDP Port läuft.
+
+        Methode: HTTP GET auf http://127.0.0.1:{cdp_port}/json/version
+        Wenn Response → Chrome läuft.
+
+        Returns:
+            True wenn Chrome bereits läuft
+        """
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(3.0)) as client:
+                resp = await client.get(f"http://127.0.0.1:{self.cdp_port}/json/version")
+                if resp.status_code == 200:
+                    data = resp.json()
+                    logger.info(f"[BrowserManager] Chrome läuft bereits: {data.get('Browser', 'unknown')}")
+                    return True
+        except Exception:
+            pass
+        return False
 
     async def start(self) -> Dict[str, Any]:
         """
-        Startet Chrome mit kopiertem Profil und verbindet Playwright via CDP.
+        Startet Chrome mit ORIGINAL Profile 901.
 
-        ABLAUF:
-        1. Profil kopieren (Local State + Profile 901 → /tmp)
-        2. Chrome starten via subprocess mit CDP-Port
-        3. Auf CDP-Bereitschaft warten
-        4. Playwright.connect_over_cdp() zum laufenden Chrome
-        5. Stealth-JS injecten
+        STRATEGIE:
+        1. Prüfe ob Chrome bereits auf CDP Port läuft
+        2. Wenn ja: NICHTS neustarten → einfach als "running" markieren
+        3. Wenn nein: Chrome als subprocess starten (nohup, background)
+        4. Auf CDP Bereitschaft warten
+
+        Das ORIGINAL Profile 901 wird verwendet:
+        --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome"
+        --profile-directory="Profile 901"
 
         Returns:
-            Dict mit status, browser_info, temp_profile_dir
+            Dict mit status, cdp_port, startup_time
         """
-        if self.is_running:
-            logger.info("Browser läuft bereits, verwende bestehende Instanz")
-            return {
-                "status": "already_running",
-                "browser_info": {"cdp_port": self.cdp_port},
-                "temp_profile_dir": self._temp_profile_dir,
-            }
-
-        logger.info("Starte Browser mit Profil-Kopie...")
         start_time = time.time()
 
-        try:
-            # Phase 1: Profil kopieren
-            self._temp_profile_dir = self._copy_profile()
+        chrome_already_running = await self._is_chrome_already_running()
 
-            # Phase 2: Chrome starten
-            self._chrome_proc = self._launch_chrome()
-
-            # Phase 3: Auf CDP warten
-            await self._wait_for_cdp(max_retries=15)
-
-            # Phase 4: Playwright verbinden
-            self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{self.cdp_port}"
-            )
-            self._context = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
-
-            # Phase 5: Stealth injecten
-            await self._inject_stealth()
-
+        if chrome_already_running:
             self._is_running = True
             elapsed = time.time() - start_time
-
-            logger.info(f"Browser gestartet in {elapsed:.2f}s")
+            logger.info(f"[BrowserManager] Verbindung zu bestehendem Chrome hergestellt (Profile 901, Port {self.cdp_port}) in {elapsed:.2f}s")
             return {
-                "status": "success",
-                "browser_info": {
-                    "cdp_port": self.cdp_port,
-                    "temp_profile": self._temp_profile_dir,
-                    "startup_time": f"{elapsed:.2f}s",
-                },
-                "temp_profile_dir": self._temp_profile_dir,
+                "status": "connected",
+                "cdp_port": self.cdp_port,
+                "profile": self.profile_name,
+                "user_data_dir": self.user_data_dir,
+                "startup_time": f"{elapsed:.2f}s",
+                "note": "Chrome war bereits gestartet — originale Session verwendet!",
             }
 
+        logger.info(f"[BrowserManager] Chrome nicht laufend → starte mit ORIGINAL Profile 901...")
+        logger.info(f"[BrowserManager] User Data Dir: {self.user_data_dir}")
+        logger.info(f"[BrowserManager] Profile: {self.profile_name}")
+        logger.info(f"[BrowserManager] CDP Port: {self.cdp_port}")
+
+        try:
+            self._chrome_proc = self._launch_chrome_original_profile()
+            self._is_running = True
+            elapsed = time.time() - start_time
+            logger.info(f"[BrowserManager] Chrome gestartet in {elapsed:.2f}s")
+            return {
+                "status": "started",
+                "cdp_port": self.cdp_port,
+                "profile": self.profile_name,
+                "user_data_dir": self.user_data_dir,
+                "startup_time": f"{elapsed:.2f}s",
+            }
         except Exception as e:
-            logger.error(f"Browser-Start fehlgeschlagen: {e}")
-            await self._cleanup()
-            raise
+            self._is_running = False
+            elapsed = time.time() - start_time
+            logger.error(f"[BrowserManager] Chrome-Start fehlgeschlagen nach {elapsed:.2f}s: {e}")
+            return {
+                "status": "failed",
+                "cdp_port": self.cdp_port,
+                "error": str(e),
+                "startup_time": f"{elapsed:.2f}s",
+            }
 
-    async def get_page(self) -> Page:
+    def _launch_chrome_original_profile(self) -> subprocess.Popen:
         """
-        Liefert eine neue Page im bestehenden Browser-Context.
+        Startet Chrome mit dem ORIGINAL Profile 901.
+
+        WICHTIG: Verwende das ORIGINAL user-data-dir, KEINE KOPIE!
+        Chrome-Cookies sind an den Original-Pfad gebunden.
+
+        Command (ALLES muss stimmen):
+        nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+          --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+          --profile-directory="Profile 901" \
+          --remote-debugging-port=9222 \
+          --no-first-run \
+          --no-default-browser-check \
+          > /tmp/chrome_sinator.log 2>&1 &
 
         Returns:
-            Playwright Page-Objekt
-        """
-        if not self.is_running:
-            raise RuntimeError("Browser nicht gestartet. Rufe zuerst start() auf.")
-
-        page = await self._context.new_page()
-        logger.debug(f"Neue Page erstellt: {page}")
-        return page
-
-    async def get_existing_page(self) -> Optional[Page]:
-        """
-        Liefert die erste bestehende Page im Context (z.B. die beim Start geöffnete).
-
-        Returns:
-            Playwright Page-Objekt oder None
-        """
-        if not self.is_running:
-            return None
-
-        pages = self._context.pages
-        return pages[0] if pages else None
-
-    async def stop(self) -> Dict[str, Any]:
-        """
-        Beendet den Browser und räumt das Temp-Profil auf.
-
-        Returns:
-            Dict mit status und cleanup_info
-        """
-        if not self.is_running:
-            return {"status": "not_running"}
-
-        logger.info("Beende Browser & räume auf...")
-        await self._cleanup()
-        return {"status": "stopped", "temp_profile_cleaned": self._temp_profile_dir}
-
-    def _copy_profile(self) -> str:
-        """
-        Kopiert Chrome-Profil in temporäres Verzeichnis.
-
-        WARUM KOPIEREN (NICHT SYMLINK)?
-        Symlink ist BANNED (siehe banned.md). Chrome verschlüsselt Cookies
-        mit dem realen Pfad als Key. Kopieren = Cookies funktionieren.
-
-        Returns:
-            Pfad zum temporären Verzeichnis (mit kopiertem Profil)
-        """
-        temp_dir = f"/tmp/sinator-chrome-{int(time.time())}"
-        source_profile = os.path.join(self.source_user_data_dir, self.profile_name)
-
-        logger.info(f"Kopiere Profil: {source_profile} → {temp_dir}")
-        os.makedirs(temp_dir, exist_ok=True)
-
-        # Local State kopieren (Metadaten, Profil-Liste)
-        local_state_src = os.path.join(self.source_user_data_dir, "Local State")
-        if os.path.exists(local_state_src):
-            shutil.copy2(local_state_src, os.path.join(temp_dir, "Local State"))
-            logger.info("Local State kopiert")
-
-        # Last Version kopieren (optional)
-        last_version_src = os.path.join(self.source_user_data_dir, "Last Version")
-        if os.path.exists(last_version_src):
-            shutil.copy2(last_version_src, os.path.join(temp_dir, "Last Version"))
-
-        # Profil-Ordner kopieren (KEIN Symlink!)
-        if os.path.exists(source_profile):
-            shutil.copytree(
-                source_profile,
-                os.path.join(temp_dir, self.profile_name),
-                symlinks=True,
-                ignore_dangling_symlinks=True,
-            )
-            logger.info(f"{self.profile_name} kopiert")
-        else:
-            raise FileNotFoundError(f"Profil nicht gefunden: {source_profile}")
-
-        # First Run erstellen (verhindert Welcome-Dialog)
-        Path(os.path.join(temp_dir, "First Run")).touch()
-
-        # Lock-Files entfernen
-        for pattern in ["*.lock", "Singleton*"]:
-            for f in Path(temp_dir).rglob(pattern):
-                f.unlink(missing_ok=True)
-
-        return temp_dir
-
-    def _launch_chrome(self) -> subprocess.Popen:
-        """
-        Startet Chrome als Subprocess mit CDP-Debugging.
-
-        Returns:
-            subprocess.Popen-Objekt
+            subprocess.Popen Objekt
         """
         args = [
             self.chrome_path,
-            f"--user-data-dir={self._temp_profile_dir}",
+            f"--user-data-dir={self.user_data_dir}",
             f"--profile-directory={self.profile_name}",
             f"--remote-debugging-port={self.cdp_port}",
             "--remote-allow-origins=*",
             "--no-first-run",
             "--no-default-browser-check",
-            "--window-size=1280,800",
-            "--lang=de-DE",
         ]
 
         if self.headless:
             args.append("--headless=new")
 
-        logger.info(f"Starte Chrome: {' '.join(args[:3])}...")
+        logger.info(f"[BrowserManager] Starte Chrome: {' '.join(args[:4])}...")
+
         proc = subprocess.Popen(
             args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid if hasattr(os, 'setsgid') else None,
         )
+
         return proc
 
-    async def _wait_for_cdp(self, max_retries: int = 15):
+    async def stop(self) -> Dict[str, Any]:
         """
-        Wartet bis CDP-Endpoint erreichbar ist.
+        Beendet den Chrome-Browser.
 
-        Args:
-            max_retries: Maximale Anzahl Versuche (default: 15)
+        WICHTIG:
+        - NIEMALS pkill -9 (zerstört unflushed SQLite → Session dead)
+        - Stattdessen: graceful shutdown via SIGTERM oder SIGINT
+
+        Returns:
+            Dict mit status, elapsed_time
         """
-        for i in range(max_retries):
+        start_time = time.time()
+        cleanup_actions = []
+
+        if self._chrome_proc and self._chrome_proc.poll() is None:
             try:
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    resp = await client.get(f"http://127.0.0.1:{self.cdp_port}/json/version")
-                    if resp.status_code == 200:
-                        logger.info(f"CDP erreichbar nach {i+1}s")
-                        return
-            except Exception:
-                pass
-            await asyncio.sleep(1)
-
-        raise TimeoutError(f"CDP nicht erreichbar nach {max_retries}s auf Port {self.cdp_port}")
-
-    async def _inject_stealth(self):
-        """
-        Injectiert Stealth-JS in alle neuen Pages.
-
-        Überschreibt navigator.webdriver, plugins, languages, window.chrome
-        um Bot-Detection zu umgehen.
-        """
-        stealth_js = """
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
-        window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
-        (() => {
-            const oq = window.navigator.permissions.query;
-            window.navigator.permissions.query = (p) => p.name === 'notifications'
-                ? Promise.resolve({ state: Notification.permission })
-                : oq(p);
-        })();
-        """
-
-        if self._context:
-            await self._context.add_init_script(stealth_js)
-            logger.info("Stealth-JS injectiert")
-
-    async def _cleanup(self):
-        """Räumt Browser und Temp-Profil auf."""
-        try:
-            if self._browser:
-                await self._browser.close()
-                logger.info("Browser geschlossen")
-        except Exception as e:
-            logger.warning(f"Browser close Fehler: {e}")
-
-        try:
-            if self._playwright:
-                await self._playwright.stop()
-        except Exception:
-            pass
-
-        try:
-            if self._chrome_proc:
+                logger.info("[BrowserManager] Sende SIGTERM an Chrome...")
                 self._chrome_proc.terminate()
-                self._chrome_proc.wait(timeout=5)
-                logger.info("Chrome-Prozess beendet")
-        except Exception as e:
-            logger.warning(f"Chrome kill Fehler: {e}")
-
-        try:
-            if self._temp_profile_dir and os.path.exists(self._temp_profile_dir):
-                shutil.rmtree(self._temp_profile_dir, ignore_errors=True)
-                logger.info(f"Temp-Profil aufgeräumt: {self._temp_profile_dir}")
-        except Exception as e:
-            logger.warning(f"Cleanup Fehler: {e}")
+                try:
+                    self._chrome_proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("[BrowserManager] Chrome reagiert nicht auf SIGTERM → SIGKILL")
+                    self._chrome_proc.kill()
+                    cleanup_actions.append("sigkill_used")
+                cleanup_actions.append("terminated")
+                logger.info("[BrowserManager] Chrome beendet (graceful)")
+            except Exception as e:
+                logger.warning(f"[BrowserManager] Fehler beim Beenden: {e}")
 
         self._is_running = False
-        self._browser = None
-        self._context = None
-        self._playwright = None
         self._chrome_proc = None
-        self._temp_profile_dir = None
+        elapsed = time.time() - start_time
+
+        return {
+            "status": "stopped",
+            "cleanup_actions": cleanup_actions,
+            "elapsed": f"{elapsed:.2f}s",
+        }
+
+    async def restart(self) -> Dict[str, Any]:
+        """
+        Startet Chrome neu (stop + start).
+
+        ACHTUNG: Dies zerstört die GMX-Session weil Chrome mit dem
+        gleichen Original-Profil neu startet und die Session-Cookies
+        beim Shutdown geschrieben werden. NUR verwenden wenn nötig!
+
+        Returns:
+            Dict mit start() Ergebnis
+        """
+        await self.stop()
+        await asyncio.sleep(2)
+        return await self.start()
 
 
-# Singleton-Instanz
 _browser_manager: Optional[BrowserManager] = None
 
 
 def get_browser_manager() -> BrowserManager:
-    """
-    Liefert die Singleton-Instanz des Browser-Managers.
-
-    Returns:
-        BrowserManager-Instanz
-    """
+    """Gibt den Singleton BrowserManager zurück."""
     global _browser_manager
     if _browser_manager is None:
         _browser_manager = BrowserManager()
     return _browser_manager
 
 
-# Import asyncio for the async sleep
-import asyncio
+def reset_browser_manager() -> None:
+    """Setzt den Singleton zurück (für Tests)."""
+    global _browser_manager
+    _browser_manager = None
