@@ -2,56 +2,31 @@
 
 ## 🎯 PROJECT VISION
 
-Automatisierte Erstellung von GMX E-Mail-Aliasen → Fireworks AI Account-Registrierung → API-Key-Pool-Rotation.
+**Ziel:** Automatisierte Erstellung von Fireworks AI API-Keys via GMX Alias → Fireworks Account → OTP Verification → API-Key Pool.
 
-**Das Endprodukt:** Ein Pool von Fireworks AI API-Keys die via `POST /rotation/full` automatisch generiert werden. Jeder Key = ein neuer Account mit neuem GMX Alias.
+**Endprodukt:** `POST /rotation/full` liefert einen `fw-...` API-Key. Jeder Key = ein neuer GMX Alias + ein neuer Fireworks Account + $5 Credits.
 
-**Architektur:** Python + FastAPI + Raw CDP Websocket (kein Playwright — Playwright crashed bei GMX SPA frame detachment).
+**Stack:** Python + FastAPI + Raw CDP Websocket (KEIN Playwright — Playwright crashed bei GMX SPA frame detachment).
+
+**Start:** `python agent_toolbox/start_toolbox.py` → `http://localhost:8000/docs`
 
 ---
 
-## 🚨 PROZESS-REGELN (LERNING aus Fehlschlägen)
+## 🚨 PROZESS-REGELN (aus Fehlschlägen gelernt)
 
-### 🔴 REGEL 1: DELETE WRONG IMMEDIATELY
-**Wenn ein Ansatz fehlschlägt → falsche Dateien SOFORT löschen.**
+### REGEL 1: DELETE WRONG IMMEDIATELY
+Nach einem Fehlschlag: **SOFORT** Dateien/Ordner löschen die den failed approach enthalten.
+NIE: "vielleicht brauch ich das später" — es kostet nur Zeit beim nächsten Versuch.
 
-```
-Nach einem Fehlschlag (z.B. "Email already taken", Bot-Detection, Crash):
-1. Alle Dateien/Ordner die den FEHLGESCHLAGENEN Ansatz enthalten → löschen
-2. NIE "vielleicht brauch ich das später" — es kostet nur Zeit beim nächsten Versuch
-3. Beispiel: src/stealth_survey/ war wrong → deleted. Weitermachen.
+### REGEL 2: ONCE VERIFIED = READ-ONLY
+Ein funktionierender Code-Abschnitt wird NICHT mehr angefasst. NUR Änderungen für:
+Bug-Fix, Performance-Issue, neuer Use-Case. Bei Unsicherheit: NEUE Datei, nicht existierende ändern.
 
-NIE:
-- Falsche Dateien liegen lassen "für Debugging"
-- Kopien von failed approaches behalten
-- Alte Versionen als backup behalten
-```
-
-### 🔴 REGEL 2: ONCE VERIFIED = READ-ONLY
-**Ein funktionierender Command/Ansatz wird NICHT mehr angefasst.**
-
-```
-Wenn ein Code-Abschnitt/Command VERIFIED ist (funktioniert in Produktion):
-1. Als READ-ONLY markieren — nächster Agent darf ihn NICHT ändern
-2. NUR Änderungen wenn: Bug-Fix, Performance-Issue, neuer Use-Case
-3. Bei Unsicherheit: NEUE Datei erstellen, nicht existierende ändern
-4. Alle /commands//*.md Files sind READ-ONLY nach erfolgreichem Test
-```
-
-### 🔴 REGEL 3: FÜTTERE AGENTS.MD NACH JEDEM ERFOLG
-**Jedes neue Learning muss SOFORT in AGENTS.md.**
-
-```
-Nach jeder erfolgreichen Iteration:
-1. Was hat funktioniert? → AGENTS.md als "Known Fix" dokumentieren
-2. Was war der kritische Insight? → In die Zustandsmaschine einbauen
-3. Welche Koordinaten/Cookies/Patterns sind bewiesen? → Hardcodieren
-
-Prozedur:
-- Erfolg: AGENTS.md updaten (neue Fixes, bewiesene Koordinaten, Data Model Updates)
-- Fehlschlag: banned.md updaten (neue verbotene Methode + warum)
-- NIE: Learnings nur im Chat lassen — nächstes Mal fängt der Agent bei 0 an
-```
+### REGEL 3: FÜTTERE AGENTS.MD NACH JEDEM ERFOLG
+Neue Learnings → SOFORT in AGENTS.md. Prozedur:
+- Erfolg → AGENTS.md updaten (bewiesene Fixes, Koordinaten, Data Models)
+- Fehlschlag → banned.md updaten (verbotene Methode + warum)
+- Learnings NIE nur im Chat lassen
 
 ---
 
@@ -61,7 +36,7 @@ Prozedur:
 |---|---|
 | `git checkout -- .` / `git reset --hard` | Zerstört alle Arbeitsfortschritte |
 | `pkill -9 -f "Google Chrome"` | Zerstört unflushed SQLite → GMX Session tot |
-| Profil 901 nach /tmp kopieren | Cookies sind an Original-Pfad gebunden (macOS Keychain) → Session unbrauchbar |
+| Profil 901 nach /tmp kopieren | Cookies an Original-Pfad gebunden (macOS Keychain) → Session unbrauchbar |
 | `--user-data-dir=/tmp/...` | GMX-Session geht verloren |
 | `waitForNavigation()` bei GMX | GMX ist SPA — keine Page-Reloads → hängt ewig |
 
@@ -69,122 +44,266 @@ Prozedur:
 
 ## 🏗️ SYSTEM CONFIGURATION (IMMUTABLE)
 
-### Chrome Profile
-
 ```
-User Data Dir: /Users/jeremy/Library/Application Support/Google Chrome
-Profile:       Profile 901 ("SINator (Fireworks AI)")
-CDP Port:      9222
-Chrome Binary: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+Chrome Binary:     /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+User Data Dir:     /Users/jeremy/Library/Application Support/Google Chrome
+Profile:           Profile 901 ("SINator (Fireworks AI)")
+CDP Port:          9222
+Chrome User:       simoneschulze (macOS login profile)
+CDP Endpoint:      ws://127.0.0.1:9222/devtools/browser/...
 ```
 
-Chrome läuft unter User `simoneschulze` (macOS login profile). Profile 901 wurde von jeremy erstellt und enthält GMX-Sessions. Das ist normal — wichtig ist dass Profile 901 auf Port 9222 funktioniert.
-
-### Chrome Start (DER EINZIG RICHTIGE BEFEHL)
-
+**Chrome Start (DER EINZIG RICHTIGE WEG):**
 ```bash
 rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 901" \
   --remote-debugging-port=9222 \
-  --no-first-run \
-  --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 & \
-  sleep 6 && \
-  rtk curl -s http://127.0.0.1:9222/json/version \
-  | python3 -c "import sys,json; print('Chrome OK')"
+  --no-first-run --no-default-browser-check \
+  > /tmp/chrome_sinator.log 2>&1 &
+sleep 6 && curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print('Chrome OK')"
 ```
 
-### Chrome Beenden
-
+**Chrome Beenden (SIGTERM, nicht SIGKILL):**
 ```bash
 kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 ```
 
-(SIGTERM — nicht SIGKILL. pkill -9 zerstört unflushed SQLite.)
+---
+
+## 📂 PROJEKT-STRUKTUR
+
+```
+SINator-fireworksai/
+├── agent_toolbox/
+│   ├── start_toolbox.py           FastAPI Entrypoint (uvicorn)
+│   ├── core/
+│   │   ├── cdp_client.py          Raw CDP Websocket Client (KEIN Playwright)
+│   │   ├── gmx_service.py         GMX: Session, Alias rotate/delete/create
+│   │   ├── fireworks_service.py   Fireworks: E2E 20-Phasen Flow
+│   │   ├── browser_manager.py     Browser Lifecycle (Singleton)
+│   │   ├── pool_manager.py        API-Key Pool CRUD
+│   │   └── cookie_manager.py      Cookie Management (legacy)
+│   └── api/
+│       ├── schemas.py             Pydantic Request/Response Models
+│       └── routes/
+│           ├── rotation.py        POST /rotation/full  ← HAUPT-ENDPOINT
+│           ├── gmx.py             GMX Alias Endpoints
+│           ├── fireworks.py       Fireworks Standalone Endpoints
+│           ├── browser.py         Browser Start/Stop/Status
+│           ├── cookies.py         Cookie Extract/Inject/Recover
+│           └── pool.py            Pool Stats/Key/Get
+├── data/
+│   ├── fireworksai-pool.json      API-Key Pool (JSON)
+│   └── gmx-cookies.json           GMX Session Cookies (429 Entries)
+├── backup/session/
+│   └── gmx-cookies-master.json    Goldener Session-Backup (chmod 444)
+├── AGENTS.md                      ← DIESE DATEI (Single Source of Truth)
+└── banned.md                      Verbotene Methoden
+```
+
+**Starten:** `python agent_toolbox/start_toolbox.py`
+**API Docs:** `http://localhost:8000/docs`
 
 ---
 
-## 🔄 ZUSTANDSMASCHINE — Rotation Flow
+## 🔄 ZUSTANDSMASCHINE — KOMPLETTER ROTATION FLOW
 
-### State: Idle (Browser gestartet, Session valid)
+### POST /rotation/full (HAUPT-ENDPOINT)
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  POST /browser/start  → Browser läuft auf Port 9222                     │
-│  POST /rotation/full  → Vollständige Rotation startet                   │
-└─────────────────────────────────────────────────────────────────────────┘
+Request:
+{
+  "new_alias_name": null,           // Optional: eigener Name, sonst auto-generiert
+  "fireworks_password": "Passwort!", // Passwort für neuen FW Account (required)
+  "save_to_pool": true              // Key in Pool speichern (default: true)
+}
+
+Response:
+{
+  "status": "success|partial|failed|error",
+  "gmx_alias": "swift-hawk-842@gmx.de",
+  "fireworks_account": "swift-hawk-842@gmx.de",
+  "api_key": "fw-...",
+  "api_key_name": "swift",
+  "steps_completed": [...],
+  "steps_failed": [...],
+  "execution_time": "187.32s",
+  "error": null
+}
 ```
 
-### State: Rotation in Progress (4 Flows)
+---
 
-**Flow #1: GMX Alias Rotation** (`rotation.py` Step 1 → `gmx_service.rotate_alias()`)
+### Flow #1: GMX Alias Rotation (rotation.py → gmx_service.rotate_alias())
+
+**Methode:** `GmxService.rotate_alias(new_alias_name=None, cdp_port=9222)`
+
 ```
 Phase 1: GMX Session validieren
-         └─ GMX Homepage → "E-Mail" click → prüfe navigator.gmx.net/mail?sid=...
-         └─ Wenn tot → Session Recovery Protokoll ausführen
+         └─ _connect_to_browser(cdp_port) → client, session_id
+         └─ GMX Homepage → "E-Mail" click (coords 235, 33)
+         └─ Prüfe: bap.navigator.gmx.net/mail?sid=... → OK
+         └─ Wenn tot → Session Recovery (siehe unten)
 
 Phase 2: GMX Alias löschen (falls vorhanden)
-         └─ navigate to allEmailAddresses
-         └─ Force-reveal hidden template → Delete-Icon click → OK
+         └─ _navigate_to_all_email_addresses()
+           → navigate(gmx.net/mail_settings/email_addresses)
+           → Wicket SPA: Click "E-Mail-Adressen" im Header
+         └─ _delete_existing_alias()
+           → JS: .js-template.is-hidden.removeClass('is-hidden') → style.display=block
+           → Delete-Icon: a[title="E-Mail-Adresse löschen"] klicken
+           → OK-Button im Bestätigungs-Dialog
+           → Erfolg: "Ihr Eintrag wurde erfolgreich gelöscht"
 
 Phase 3: GMX Alias erstellen
-         └─ {adjektiv}-{substantiv}@gmx.de (aus Namensgenerator)
-         └─ Input[name*="localPart"] füllen + Hinzufügen-Button click
-         └─ → alias_result = {status, created_alias, ...}
+         └─ generate_alias_name() → "{adj}-{noun}-{3digits}" (z.B. "elron-vader-412")
+         └─ _fill_alias_input(client, session_id, alias_name)
+           → Input[name*="localPart"] füllen via CDP
+           → Events: input, change, blur
+         └─ _find_hinzufuegen_button() → Button finden
+         └─ _click_button_via_cdp(client, session_id, btn)
+           → CDP Input.dispatchMouseEvent (mousePressed + mouseReleased)
+         └─ _check_creation_success(client, session_id, alias_name)
+           → Alias in .table_body-row?
+           → "wurde erfolgreich angelegt"?
+           → Falls "nicht verfügbar" → neuer Name, max 3 Versuche
+         └─ Return: {status, created_alias, alias_name, steps_completed}
+
+Alias-Generator (32 Adjektive × 32 Nouns × 999 Suffix = ~1M Kombinationen):
+  ADJECTIVES: elron, dark, swift, iron, silver, golden, crystal, shadow,
+              storm, frost, blaze, thunder, cosmic, neon, cyber, quantum,
+              alpha, beta, delta, omega, zenith, nexus, vortex, pulse,
+              echo, phantom, spectra, turbo, hyper, ultra, mega, super
+  NOUNS:      vader, runner, hawk, wolf, fox, tiger, eagle, shark,
+              dragon, phoenix, falcon, panther, cobra, lynx, raven, jaguar,
+              bear, lion, whale, dolphin, puma, cheetah, otter, badger,
+              wolverine, raptor, condor, scorpion, spider, mantis, beetle
 ```
 
-**Flow #2: Fireworks E2E Registry** (`fireworks_service.register()`)
+---
+
+### Flow #2: Fireworks E2E Registry (fireworks_service.register())
+
+**Methode:** `FireworksService.register(email, password, gmx_password, cdp_port=9222)`
+
 ```
-Phase 4: Fireworks Cookie-Clear (nur Fireworks-Domain!)
+Phase 4: Fireworks Domain Cleanup (nur Fireworks-Cookies!)
+         └─ Network.getAllCookies → alle Cookies
+         └─ Network.deleteCookies für domain="app.fireworks.ai" oder "fireworks"
          └─ GMX-Cookies BLEIBEN (shared browser, Profile 901)
+         └─ LocalStorage: fireworks.ai cleared
 
-Phase 5: Fireworks /signup laden + Cookie Banner dismissen
-         └─ Cookiebot: .cky-btn-accept per direct JS query + CDP coord click
+Phase 5: Cookie Banner dismissen
+         └─ navigate("https://app.fireworks.ai/signup")
+         └─ _dismiss_cookie_banner(client, session_id):
+           → JS querySelector('.cky-btn-accept') → rect → center
+           → Falls not found → direktes JS-Query im Container
+           → Falls still not found → hardcoded fallback coords (1113.7, 805.5)
+           → CDP click_at() → mousePressed + mouseReleased
+           → Validierung: .cky-consent-container height=0 oder display=none
+           → Wait 2s
 
 Phase 6: Email → Next → Password → Create Account
-         └─ KRITISCH: _fill_input() muss nativeInputValueSetter verwenden
-         └─ URL muss zu /signup/verify wechseln (→ "account_created")
-         └─ → register() verwendet gmx_alias als email + ZOE.jerry2024 als gmx_password
+         └─ _fill_input(client, session_id, ['#email-display'], email)
+           → KRITISCH: nativeInputValueSetter verwenden!
+           → Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set
+           → Plus: Event('input', {bubbles: true, composed: true})
+           → KeyEvents funktionieren NICHT für React controlled inputs!
+         └─ _click_button(client, session_id, ['button:contains("Next")'])
+           → JS text matching: (btn.textContent||'').trim().toLowerCase() === 'next'
+           → CDP click_at() an Button-Center
+           → Wait 3s
+         └─ URL wechselt zu Step 2 (Password)
+         └─ _fill_input(client, session_id, ['input#password'], password)
+         └─ _fill_input(client, session_id, ['input#confirm-password'], password)
+         └─ _click_button(client, session_id, ['button:contains("Create Account")'])
+           → URL MUSS zu /signup/verify wechseln
+           → Wenn nicht → FAIL-HARD: return {status: "partial", steps_failed: ["account_creation_redirect_mismatch"]}
 
-Phase 7-8: GMX OTP Polling + Verification
-         └─ navigate(gmx.net) → "E-Mail" JS click → bap.navigator.gmx.net/mail?sid=...
-         └─ 30 retries × 6s = 180s (Email-Delay kann 2-5min sein)
-         └─ "needs_click" path: email found in list → click row → scrape email page
-         └─ OTP URL öffnen → Account verifiziert
+Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
+         └─ goto_inbox():
+           → navigate(gmx.net) → JS click "E-Mail" im Header
+           → Wait 3s → URL = bap.navigator.gmx.net/mail?sid=...
+         └─ OTP suchen im Main Frame DOM:
+           → selectors: inbox-content, maillist, mail_list, main [class*="list"]
+           → Suche nach "fireworks" + "verif" im innerText
+           → Falls Email gefunden aber kein URL → "needs_click" path
+           → Email row clicken → Email-Page scrapen für OTP URL
+           → URL Pattern: https://app.fireworks.ai/signup/verify?token=...
+         └─ Falls timeout: return {status: "partial", steps_failed: ["otp_not_found"]}
+         └─ Email-Delay kann 2-5min dauern → 180s ist nötig
 ```
 
-**Flow #3: GMX OTP Email Detection** (innerhalb Flow #2, Phase 7-8)
+---
+
+### Flow #3: GMX OTP Email Detection (innerhalb Phase 7)
+
 ```
 Herausforderung: GMX Emails sind im iframe (3c-bap.gmx.net/mail/client/start)
+                 Main Frame zeigt nur den Navigator-Frame mit iframe-URL
+                 OTP sucht im Main Frame → findet keine Emails
+
 Lösung: navigate(gmx.net) → JS click "E-Mail" → bap.navigator.gmx.net/mail?sid=...
         OTP sucht im Main Frame DOM nach "fireworks" + "verif"
-        Falls Email gefunden aber kein URL → Row clicken → Email-Page scrapen
-        OTP URL Pattern: https://app.fireworks.ai/signup/verify?token=...
+        GMX Inbox URL ist: https://bap.navigator.gmx.net/mail?sid={sid}
+        Email-Liste ist im iframe aber der SID-Token reicht für HTTP-Zugriff
+
+GMX SPA Navigation (KRITISCH):
+  ❌ navigate("navigator.gmx.net/mail") → redirected zu www.gmx.net/
+  ✅ navigate("www.gmx.net/") → JS click "E-Mail" bei (235, 33) → Inbox URL erreicht
+
+Falls "needs_click":
+  → Email row finden: [class*="item"], [class*="row"], tr
+  → Row clicken → Email-Page öffnet sich
+  → Email-Page scrapen: innerHTML contains "fireworks.ai/signup/verify?token="
 ```
 
-**Flow #4: Fireworks Login + Setup** (innerhalb Flow #2, Phase 9-17)
+---
+
+### Flow #4: Fireworks Login + Setup (Phase 9-17)
+
 ```
 Phase 9:  Navigate zu /login → "Sign In" Button klicken
-Phase 10: "Email Login" klicken
+         → URL: https://app.fireworks.ai/login
+         → Button "Sign In" bei coords ~(942, 398)
+
+Phase 10: "Email Login" oder "Use Email Instead" klicken
+         → Auf /login erscheint ein Email-Formular nach dem OAuth-Link
+
 Phase 11: Email + Password eingeben + "Next" klicken
-Phase 12: FirstName/LastName (aus Alias extrahieren, z.B. "swift-hawk" → Swift + Hawk)
+         → _fill_input() mit nativeInputValueSetter
+
+Phase 12: FirstName/LastName eingeben
+         → Aus Alias extrahieren: "swift-hawk" → Swift + Hawk
+         → nativeInputValueSetter verwenden
+
 Phase 13: Checkbox "I agree to Terms of Service" per CDP click
+         → Find via: checkbox, [type="checkbox"], label containing "Terms"
+
 Phase 14: "Continue" Button klicken
+
 Phase 15: Checkbox "Flexible capacity for production" per CDP click
+
 Phase 16: Checkbox "Conversational AI" per CDP click
+
 Phase 17: "Submit to get $5 Credits" klicken
-Phase 18: 15s + 5×2s Polling auf Credits-Aktivierung
+         → Find via: button text containing "$5 Credits"
+
+Phase 18: Credits-Aktivierung abwarten
+         → 15s initial wait
+         → 5×2s Polling: Seite scannen nach "credits" oder "activated"
+         → Falls Credits nicht aktiv: continue anyway (partial)
+
 Phase 19: Navigate zu /settings/workspace/api-keys
-Phase 20: "Create API Key" → Name eingeben → "Generate Key" → Key extrahieren (fw-... Pattern)
-```
+         → URL: https://app.fireworks.ai/settings/workspace/api-keys
 
-### State: Rotation Complete
-
-```
-Erfolg: API-Key in Pool, Account verifiziert, Credits aktiv
-Partial: Account erstellt aber OTP/Setup/Key fehlgeschlagen
-Failed: Account-Erstellung fehlgeschlagen (Email taken, Bot-Detection, etc.)
+Phase 20: API Key erstellen
+         → "Create API Key" Button klicken
+         → Name eingeben: alias-YYYY-MM-DD
+         → "Generate Key" Button klicken
+         → Key extrahieren:fw-[a-zA-Z0-9]{32,} Pattern
+         → Key speichern in data/fireworksai-pool.json via pool_manager.add_key()
 ```
 
 ---
@@ -194,15 +313,29 @@ Failed: Account-Erstellung fehlgeschlagen (Email taken, Bot-Detection, etc.)
 ### Wenn GMX Session TOT:
 
 ```
-1. Browser SOFORT beenden: kill $(ps aux | grep "[c]hrome.*user-data-dir" ...)
+1. Browser beenden: kill $(ps aux | grep "[c]hrome.*user-data-dir" ...)
 2. data/gmx-cookies.json LÖSCHEN (enthält abgelaufene Cookies)
 3. backup/session/gmx-cookies-master.json → data/gmx-cookies.json kopieren
-4. Chrome neu starten (siehe Chrome Start Befehl oben)
-5. Cookies via CDP injizieren (Network.setCookie)
+4. Chrome neu starten (Chrome Start Befehl)
+5. Cookies via CDP injizieren:
+   → GmxService._inject_saved_cookies(client, session_id)
+   → Network.setCookie für alle Cookies aus gmx-cookies.json
 6. GMX Homepage → "E-Mail" click → navigator.gmx.net/mail?sid=... prüfen
 ```
 
-### Backup-Struktur
+### Session Validierung (IMMER VOR JEDER OPERATION):
+
+```python
+async def _validate_gmx_session(client, session_id):
+    await client.navigate(session_id, "https://www.gmx.net/")
+    await asyncio.sleep(3)
+    await client.click_at(session_id, 235, 33)  # "E-Mail" Header
+    await asyncio.sleep(5)
+    url = await client.evaluate(session_id, "window.location.href")
+    return "navigator.gmx.net/mail?sid=" in url or "bap.navigator.gmx.net/mail?sid=" in url
+```
+
+### Backup-Struktur:
 
 ```
 backup/session/
@@ -211,164 +344,259 @@ backup/session/
 └── last-known-good/         ← Snapshot vor jeder Rotation
 ```
 
-### Session Validierung (IMMER VOR JEDER OPERATION)
-
-```python
-async def _validate_gmx_session(client, session_id):
-    await client.navigate(session_id, "https://www.gmx.net/")
-    await asyncio.sleep(3)
-    await client.click_at(session_id, 302, 44)  # "E-Mail" Header
-    await asyncio.sleep(5)
-    url = await client.evaluate(session_id, "window.location.href")
-    return "navigator.gmx.net/mail?sid=" in url
-```
-
 ---
 
 ## 📁 DATENMODELL
 
-### data/fireworksai-pool.json
+### data/fireworksai-pool.json (PoolManager)
 
 ```json
-{
-  "accounts": [
-    {
-      "email": "swift-hawk@gmx.de",
-      "api_key": "fw-...",
-      "key_name": "alias-2026-05-09",
-      "created_at": "2026-05-09T12:00:00Z",
-      "used_count": 0
-    }
-  ]
-}
+[
+  {
+    "id": "uuid-8-stellig",
+    "api_key": "fw-Za4b8C2d1E9f0G3h...",
+    "alias_email": "swift-hawk-842@gmx.de",
+    "key_name": "swift-hawk",
+    "created_at": "2026-05-09T12:00:00Z",
+    "used": false,
+    "used_at": null
+  }
+]
 ```
+
+**PoolManager API:**
+- `add_key(api_key, alias_email, key_name)` → {status, key_id}
+- `get_available_key()` → {api_key, alias_email, key_name, ...} oder None
+- `mark_used(key_id)` → True/False
+- `get_stats()` → {total, used, available, keys: [...]}
+- `save()` → schreibt pool.json
 
 ### data/gmx-cookies.json
 
-429 Entries, Chrome CDP Export Format. Nur GMX-relevante Cookies (domain enthält "gmx") werden injiziert.
+429 Entries, Chrome CDP Export Format:
+```json
+[
+  {
+    "name": "SID",
+    "value": "abc123...",
+    "domain": ".gmx.net",
+    "path": "/",
+    "expires": -1,
+    "size": 256,
+    "httpOnly": true,
+    "secure": true,
+    "session": true,
+    "sameSite": "none",
+    "priority": "medium",
+    "sourceScheme": "Secure",
+    "sourcePort": 443,
+    "partitionKey": null
+  }
+]
+```
 
-### backup/session/gmx-cookies-master.json
-
-Goldener Master-Backup. Nach jeder erfolgreichen Rotation aktualisieren (nur wenn Session bestätigt funktioniert). chmod 444 setzen.
+Nur GMX-relevante Cookies (domain enthält "gmx") werden injiziert.
 
 ---
 
-## 🧠 NAMENS-GENERATOR
+## 📡 API ENDPOINTS (VOLLSTÄNDIG)
 
+### Browser
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| POST | `/browser/start` | `{profile_name, cdp_port, headless}` | `{status, browser_info, execution_time}` |
+| POST | `/browser/stop` | — | `{status, cleanup_info, execution_time}` |
+| GET | `/browser/status` | — | `{is_running, cdp_port, page_count}` |
+
+### GMX
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| POST | `/gmx/session/validate` | `{navigate_to}` | `{status, current_url, session_active}` |
+| POST | `/gmx/alias/create` | `{alias_name, delete_existing}` | `{status, alias_email, alias_name}` |
+| POST | `/gmx/alias/delete` | — | `{status, deleted, alias}` |
+| POST | `/gmx/alias/rotate` | `{new_alias_name}` | `{status, deleted_alias, created_alias, steps_completed, steps_failed}` |
+
+### Fireworks
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| POST | `/fireworks/register` | `{email, password}` | `{status, account_email}` |
+| POST | `/fireworks/confirm` | `{confirm_url, email, password}` | `{status, account_confirmed}` |
+| POST | `/fireworks/api-key` | `{key_name}` | `{status, api_key, key_name}` |
+
+### Cookies
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| POST | `/cookies/extract` | `{domain_filter, save_to_file}` | `{status, cookie_count, saved_to}` |
+| POST | `/cookies/inject` | `{filename, verify_session}` | `{status, injected_count, session_active}` |
+| POST | `/cookies/recover` | — | `{status, session_active}` |
+| POST | `/cookies/backup` | — | `{status, backup_path}` |
+
+### Pool
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| GET | `/pool/stats` | — | `{status, total, used, available, keys}` |
+| GET | `/pool/key` | — | `{api_key, alias_email, key_name}` oder `{status: "empty"}` |
+| POST | `/pool/key/use` | `{key_id}` | `{status, key_id}` |
+| POST | `/pool/add` | `{api_key, alias_email, key_name}` | `{status, key_id}` |
+
+### Rotation (HAUPT)
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| POST | `/rotation/full` | `{new_alias_name, fireworks_password, save_to_pool}` | `{status, gmx_alias, fireworks_account, api_key, api_key_name, steps_completed, steps_failed}` |
+
+---
+
+## 🐛 BEKANNTE PROBLEME & FIXES (KRITISCH)
+
+### `_fill_input` React Controlled Components ← WICHTIGSTER FIX
+**Problem:** Fireworks.ai verwendet React `useState` für alle Inputs.
+`input.value = 'text'` setzt den DOM-Wert aber React-State bleibt LEER →
+"Next" klicken hat keinen Effekt, Form advance nicht.
+
+**Fix:** `nativeInputValueSetter` — exakt dieser Code:
 ```javascript
-const ADJECTIVES = ['elron', 'dark', 'swift', 'iron', 'silver', ...]; // 32 Einträge
-const NOUNS = ['vader', 'runner', 'hawk', 'wolf', 'fox', ...];        // 32 Einträge
-
-// Pattern: {adjektiv}-{substantiv}@gmx.de
-// Beispiel: elron-vader@gmx.de, swift-hawk@gmx.de
-// Total: 32 × 32 = 1.024 mögliche Kombinationen
+const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+nativeSetter.call(input, 'test@gmx.de');
+input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
 ```
 
----
-
-## 📂 PROJEKT-STRUKTUR
-
-```
-agent_toolbox/
-├── core/
-│   ├── cdp_client.py          ← Raw CDP Websocket Client (IMMER via CDP, nie Playwright)
-│   ├── gmx_service.py         ← GMX Session, Alias-Erstellung/Löschung
-│   ├── fireworks_service.py   ← Fireworks E2E Registrierung (20-Phasen Flow)
-│   ├── browser_manager.py     ← Singleton Browser Lifecycle
-│   └── pool_manager.py        ← API-Key Pool CRUD
-├── api/
-│   ├── routes/
-│   │   ├── rotation.py        ← POST /rotation/full (HAUPT-ENDPOINT)
-│   │   ├── gmx.py             ← POST /gmx/alias/create, /gmx/alias/delete
-│   │   ├── fireworks.py       ← Fireworks API Endpoints
-│   │   ├── browser.py         ← POST /browser/start, /browser/stop, /browser/status
-│   │   ├── cookies.py         ← POST /cookies/extract, /cookies/inject, /cookies/recover
-│   │   └── pool.py            ← GET /pool/stats, GET /pool/key, POST /pool/reset
-│   └── schemas.py             ← Pydantic Models
-└── start_toolbox.py           ← FastAPI App Entry
-```
-
-**Start:** `python agent_toolbox/start_toolbox.py` oder `uvicorn agent_toolbox.start_toolbox:app --reload`
-
----
-
-## 🐛 BEKANNTE PROBLEME & FIXES
+**KeyEvents (`Input.dispatchKeyEvent`) funktionieren NICHT für Sonderzeichen
+(`.`, `@`, `!`). KeyEvents nur für einfache alphanumerische Strings.
 
 ### Cookie Banner dismiss
-**Problem:** `_find_element()` findet `.cky-btn-accept` nicht (Shadow DOM). JS locator returned `found: false` obwohl Button in DOM existiert.
-**Fix:** Direktes JS-Query im `_dismiss_cookie_banner()` fallback-path. Button ist BEWIESEN an `(1113.7, 805.5)` — harte Koordinaten als Fallback.
+**Problem:** `_find_element()` findet `.cky-btn-accept` nicht (Shadow DOM).
+Button ist in DOM aber nicht per CDP querySelector erreichbar.
 
-### `_fill_input` React Controlled Components
-**Problem:** Fireworks.ai verwendet React `useState` für alle Inputs. `input.value = ''` + `dispatchEvent(input)` dispatcht EIGENTLICH ein Event aber React's `onChange` Handler reagiert NICHT auf synthetische Events wenn `value` direkt gesetzt wird. Das Ergebnis: Input zeigt den Text aber React-State ist LEER → "Next" klicken hat keinen Effekt, Form advance nicht.
-**Fix:** `nativeInputValueSetter` — `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value)` umgeht das React synthetic event system und setzt den internen State direkt. Dazu `input.dispatchEvent(new Event('input', {bubbles: true, composed: true}))` für React.
-**Critical:** KeyEvents (`Input.dispatchKeyEvent`) funktionieren NICHT für React controlled inputs bei Sonderzeichen (`.`, `@`). Immer `nativeInputValueSetter` verwenden.
+**Fix:** Direktes JS-Query + Fallback auf hardcoded coords (1113.7, 805.5).
+Button rect ist BEWIESEN: top=785.5, left=1052.5, w=122.5, h=40.0.
 
 ### GMX SPA Navigation
-**Problem:** Direkte Navigation zu `navigator.gmx.net/mail` redirected zu `www.gmx.net/`.
-**Fix:** Navigate zu GMX Homepage → "E-Mail" Header-Button clicken → Warten → URL prüfen. Niemals `waitForNavigation()` verwenden (GMX ist SPA).
+**Problem:** `navigate("navigator.gmx.net/mail")` redirected zu `www.gmx.net/`.
+
+**Fix:** `navigate(gmx.net)` → `click_at(235, 33)` → wait → URL prüfen.
+NIEMALS `waitForNavigation()` verwenden (GMX ist SPA).
 
 ### OTP Email Detection
-**Problem:** OTP Polling JS scannt den falschen DOM-Bereich (landet auf Homepage nach reload).
-**Fix:** Navigate zu GMX Homepage → "E-Mail" click → 3s warten → DOM scrapen. Bei "needs_click" → Email-Element finden und klicken → Email-Page scrapen.
+**Problem:** OTP Polling sucht im Main Frame DOM aber GMX Emails sind im iframe.
+
+**Fix:** navigate(gmx.net) → JS click "E-Mail" → inbox URL = bap.navigator.gmx.net/mail?sid=...
+Im Main Frame nach "fireworks" + "verif" suchen.
+"needs_click" path: Email row clicken → Email-Page scrapen → OTP URL finden.
 
 ### Account Creation Redirect
 **Problem:** "Create Account" klicken aber URL wechselt nicht zu `/signup/verify`.
-**Fix:** FAIL-HARD — kein `/signup/verify` in URL = `account_creation_redirect_mismatch`. Account wurde NICHT erstellt. Chrome neu starten, Session recover, erneut versuchen.
+
+**Fix:** FAIL-HARD. Kein `/signup/verify` in URL = `account_creation_redirect_mismatch`.
+Account wurde NICHT erstellt. Session recover und erneut versuchen.
 
 ### GMX FreeMail: Nur EIN Alias
 **Problem:** GMX FreeMail erlaubt nur einen Alias gleichzeitig.
+
 **Fix:** Vor neuer Alias-Erstellung existierenden Alias löschen (Phase 2).
+Falls delete fehlschlägt → trotzdem neuen erstellen (partial success).
+
+### GMX Session bei Chrome-Neustart
+**Problem:** Nach Chrome-Neustart sind GMX-Session-Cookies weg.
+
+**Fix:** `_inject_saved_cookies()` lädt gmx-cookies.json und injiziert alle
+Cookies via `Network.setCookie`. GMX-Session wird wiederhergestellt ohne Login.
 
 ---
 
-## 📡 API ENDPOINTS (ÜBERSICHT)
+## 🔧 CDP CLIENT API
 
-| Methode | Endpoint | Beschreibung |
-|---|---|---|
-| POST | `/browser/start` | Chrome mit Profile 901 starten |
-| POST | `/browser/stop` | Chrome beenden (SIGTERM) |
-| GET | `/browser/status` | Browser-Status + CDP-Port prüfen |
-| POST | `/rotation/full` | Komplette Rotation: GMX Alias + Fireworks E2E |
-| POST | `/gmx/session/validate` | GMX Session validieren |
-| POST | `/gmx/alias/create` | GMX Alias erstellen |
-| POST | `/gmx/alias/delete` | GMX Alias löschen |
-| POST | `/cookies/extract` | Cookies aus aktuellem Chrome extrahieren |
-| POST | `/cookies/inject` | Cookies in Chrome injizieren |
-| POST | `/cookies/recover` | Session aus Master-Backup wiederherstellen |
-| GET | `/pool/stats` | Pool-Statistiken |
-| GET | `/pool/key` | Nächsten verfügbaren Key abrufen |
+**CDPClient** (connected mit ws_url):
+```python
+client = CDPClient("ws://127.0.0.1:9222/devtools/browser/...")
+await client.connect()
+
+# Session management
+targets = await client.get_targets()            # Alle Tabs
+session_id = await client.attach_to_target(target_id)  # An Tab attachen
+await client.disconnect()
+
+# Navigation
+await client.navigate(session_id, "https://...")        # Page.navigate
+await client.click_at(session_id, x, y)                  # Input.dispatchMouseEvent
+
+# JS Execution
+result = await client.evaluate(session_id, "document.body.innerText", return_by_value=True)
+# → {"result": {"type": "object", "value": {...actual data...}}}
+
+# Low-level CDP
+await client.send(session_id, "Page.screenshot", {"format": "png"})
+await client.send_to_session(session_id, "Network.getAllCookies")
+await client.send_to_session(session_id, "Network.deleteCookies", {"name": "...", "domain": "..."})
+
+# Helpers
+await client.screenshot(session_id, path="/tmp/screen.png")  # Full page screenshot
+await client.get_document(session_id)                          # DOM snapshot
+await client.query_selector(session_id, selector, root_id)    # Find element
+await client.get_box_model(session_id, node_id)               # Element rect
+```
+
+**Async helpers (standalone):**
+```python
+ws_url = await get_browser_ws_endpoint(cdp_port=9222)  # IPv4/IPv6 dual probe
+target = await get_page_target(client, url_filter="gmx")  # Find tab by URL
+```
 
 ---
 
-## 🔍 DEBUGGING
+## 🔍 DEBUGGING COMMANDS
 
 ```bash
-# Chrome startet nicht?
-ps aux | grep -i "[c]hrome.*user-data-dir"
-lsof -i :9222
+# Chrome Prozess?
+ps aux | grep -i "[c]hrome.*user-data-dir" | head -3
 
-# CDP erreichbar?
+# CDP Port erreichbar?
 curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['webSocketDebuggerUrl'])"
 
-# GMX Session tot?
-# → Session Recovery Protokoll ausführen (siehe oben)
+# GMX Session validieren (Python)?
+python3 - << 'PYEOF'
+import asyncio, sys
+sys.path.insert(0, '/Users/jeremy/dev/SINator-fireworksai/agent_toolbox/core')
+from cdp_client import CDPClient, get_browser_ws_endpoint
+async def validate():
+    ws = await get_browser_ws_endpoint(9222)
+    c = CDPClient(ws)
+    await c.connect()
+    targets = await c.get_targets()
+    sid = await c.attach_to_target(targets[0]['targetId'])
+    await c.navigate(sid, "https://www.gmx.net/")
+    await asyncio.sleep(3)
+    await c.click_at(sid, 235, 33)
+    await asyncio.sleep(5)
+    url = await c.evaluate(sid, "window.location.href")
+    print(f"URL: {url.get('result',{}).get('value')}")
+    print(f"Session OK: {'navigator.gmx.net/mail?sid=' in url.get('result',{}).get('value','')}")
+    await c.disconnect()
+asyncio.run(validate())
+PYEOF
 
-# Cookie Banner bleibt?
-# → Mit CDP evaluate() rect prüfen: document.querySelector('.cky-btn-accept').getBoundingClientRect()
+# Cookie Banner prüfen?
+python3 - << 'PYEOF'
+# Navigate zu FW signup → evaluate: document.querySelector('.cky-btn-accept').getBoundingClientRect()
+PYEOF
+
+# Pool Stats?
+curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 ```
 
 ---
 
 ## 📚 REFERENZEN
 
-| Thema | Datei |
-|---|---|
-| Verbannte Methoden | `banned.md` |
-| CDP Client API | `agent_toolbox/core/cdp_client.py:85` |
-| GMX Service (Session, Alias) | `agent_toolbox/core/gmx_service.py` |
-| Fireworks E2E Flow | `agent_toolbox/core/fireworks_service.py:875` |
-| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` |
-| Pool Manager | `agent_toolbox/core/pool_manager.py` |
-| Chrome Lifecycle | `agent_toolbox/core/browser_manager.py` |
+| Thema | Datei | Key Methods |
+|---|---|---|
+| Verbannte Methoden | `banned.md` | — |
+| CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session |
+| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | rotate_alias, create_alias, delete_alias, _inject_saved_cookies |
+| Fireworks E2E | `agent_toolbox/core/fireworks_service.py:875` | register(email, password, gmx_password) |
+| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` | POST /rotation/full |
+| Pool Manager | `agent_toolbox/core/pool_manager.py:33` | add_key, get_available_key, mark_used, get_stats |
+| Browser Lifecycle | `agent_toolbox/core/browser_manager.py:75` | start, stop, is_running |
+| API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, RotationResponse, alle Models |
+| FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app registration |
 
 *Letzte Aktualisierung: 2026-05-09*
