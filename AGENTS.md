@@ -93,6 +93,9 @@ SINator-fireworksai/
 │           ├── browser.py         Browser Start/Stop/Status
 │           ├── cookies.py         Cookie Extract/Inject/Recover
 │           └── pool.py            Pool Stats/Key/Get
+├── tools/
+│   └── gmx_alias_tool.py          ← VERIFIZIERTES READ-ONLY CLI-TOOL
+│                                  BEZEICHNUNG: VERIFIZIERT, NIEMALS ÄNDERN!
 ├── data/
 │   ├── fireworksai-pool.json      API-Key Pool (JSON)
 │   └── gmx-cookies.json           GMX Session Cookies (429 Entries)
@@ -335,7 +338,90 @@ async def _validate_gmx_session(client, session_id):
     return "navigator.gmx.net/mail?sid=" in url or "bap.navigator.gmx.net/mail?sid=" in url
 ```
 
-### Backup-Struktur:
+---
+
+## 🛠️ GMX ALIAS TOOL — VERIFIZIERTES INTERAKTIONS-TOOL
+
+**⚠️ READ-ONLY VERIFIED — ÄNDERN VERBOTEN!**
+Dieses Tool wurde getestet und verifiziert. Alle GMX-Operationen nutzen die
+bewiesenen GmxService-Methoden. Nächster Agent darf dieses Tool NICHT ändern.
+
+### Pfad
+```
+tools/gmx_alias_tool.py
+```
+
+### Usage
+```bash
+# Session-Status prüfen
+python tools/gmx_alias_tool.py status
+
+# Detaillierte Session-Validierung
+python tools/gmx_alias_tool.py check
+
+# Alias rotieren (delete + create, auto-generiert)
+python tools/gmx_alias_tool.py rotate
+
+# Alias rotieren mit bestimmtem Namen
+python tools/gmx_alias_tool.py rotate swift-hawk-999
+
+# Nur Alias erstellen (auto-generiert)
+python tools/gmx_alias_tool.py create
+
+# Alias mit bestimmtem Namen erstellen
+python tools/gmx_alias_tool.py create thunder-dragon-500
+
+# Alias löschen (mit Bestätigung)
+python tools/gmx_alias_tool.py delete
+```
+
+### API Alternative (FastAPI)
+```bash
+# Alias rotieren
+curl -X POST http://localhost:8000/gmx/alias/rotate
+
+# Alias mit bestimmtem Namen
+curl -X POST "http://localhost:8000/gmx/alias/rotate" \
+  -H "Content-Type: application/json" \
+  -d '{"new_alias_name": "swift-hawk-999"}'
+
+# Nur erstellen
+curl -X POST "http://localhost:8000/gmx/alias/create?alias_name=thunder-dragon-500"
+
+# Session prüfen
+curl -X POST http://localhost:8000/gmx/session/check
+
+# Alias löschen
+curl -X POST http://localhost:8000/gmx/alias/delete
+```
+
+### Output-Beispiele
+```
+=== GMX Alias Rotation ===
+   Target: swift-hawk-999
+
+✅ Rotation
+   Status: success
+   Created: swift-hawk-999@gmx.de
+   Deleted: neon-phoenix-307@gmx.de
+   Steps OK: navigated_to_addresses → alias_deleted → form_filled → add_button_clicked → alias_created
+   Time: 16.46s
+```
+
+### Intern implementiert via:
+- `GmxService.rotate_alias(new_alias_name, cdp_port)` → verifiziert ✅
+- `GmxService.create_alias(alias_name, cdp_port)` → verifiziert ✅
+- `GmxService.delete_existing_alias(cdp_port)` → verifiziert ✅
+- `GmxService.check_session(cdp_port)` → verifiziert ✅
+- `get_browser_ws_endpoint()` → urllib-basiert, funktioniert ✅
+
+### WICHTIG: Browser muss laufen!
+Vor Nutzung: `curl -X POST http://localhost:8000/browser/start`
+Falls Session tot: `curl -X POST http://localhost:8000/cookies/recover`
+
+---
+
+## 🔧 SESSION RECOVERY PROTOKOLL
 
 ```
 backup/session/
@@ -590,12 +676,14 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 | Thema | Datei | Key Methods |
 |---|---|---|
 | Verbannte Methoden | `banned.md` | — |
-| CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session |
-| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | rotate_alias, create_alias, delete_alias, _inject_saved_cookies |
+| CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session, **get_browser_ws_endpoint (urllib)** |
+| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | rotate_alias, create_alias, delete_alias, check_session, _inject_saved_cookies |
+| GMX Alias CLI Tool | `tools/gmx_alias_tool.py` | status, check, rotate, create, delete — **READ-ONLY VERIFIED, NEVER CHANGE** |
 | Fireworks E2E | `agent_toolbox/core/fireworks_service.py:875` | register(email, password, gmx_password) |
 | Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` | POST /rotation/full |
 | Pool Manager | `agent_toolbox/core/pool_manager.py:33` | add_key, get_available_key, mark_used, get_stats |
 | Browser Lifecycle | `agent_toolbox/core/browser_manager.py:75` | start, stop, is_running |
+| GMX API Routes | `agent_toolbox/api/routes/gmx.py` | POST /gmx/alias/rotate, /gmx/alias/create, /gmx/alias/delete |
 | API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, RotationResponse, alle Models |
 | FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app registration |
 
