@@ -89,6 +89,27 @@ chrome --user-data-dir=/tmp/chrome-profile --remote-debugging-port=9222
 
 ---
 
+## ❌ BANNED: READ-ONLY Code ändern (Flow #1, #2, #3)
+
+```python
+# FALSCH — READ-ONLY Code anfassen!
+# Flow #1 (gmx_service.py), Flow #2 (fireworks_service.py), Flow #3 (OTP extraction)
+# sind VERIFIED und funktionieren. NIE ändern außer es gibt einen konkreten Bug-Report.
+
+# Breaked am 2026-05-10: Agent versuchte "DOM exploration" für Shadow-DOM input
+# → rewrite _navigate_to_all_email_addresses mit 75-line PFAD-Navigation
+# → Flow #1 komplett gebrochen
+# → 11 files reverted auf commit cf146a6 (alles verloren!)
+```
+
+**Symptom:** Nach Änderung funktioniert die Navigation nicht mehr. GMX-Session geht verloren, Alias-Rotation schlägt fehl, "Input nicht gefunden" Fehler.
+
+**Warum gebannt:** Flow #1, #2, #3 wurden mühsam getestet und verifiziert. Jede Änderung — selbst "kleine Verbesserungen" — kann den funktionierenden Flow brechen. Der Agent verlor am 2026-05-10 6 Tage Arbeit durch einen Rewrite-Versuch.
+
+**Regel:** ONCE VERIFIED = READ-ONLY. Nur ändern wenn: (a) konkreter Bug-Report, (b) GMX die UI ändert, (c) neue Use-Case erfordert es.
+
+---
+
 ## ✅ KORREKTE METHODE (siehe AGENTS.md für Details)
 
 ```bash

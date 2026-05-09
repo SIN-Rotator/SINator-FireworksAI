@@ -138,7 +138,17 @@ Response:
 
 ---
 
-### Flow #1: GMX Alias Rotation (rotation.py → gmx_service.rotate_alias())
+### ⚠️⚠️⚠️ Flow #1: GMX Alias Rotation — READ-ONLY VERIFIED (2026-05-10) ⚠️⚠️⚠️
+
+**STATUS: READ-ONLY — NIEMALS ÄNDERN!**
+
+**Breakdown-Recovery (2026-05-10):** Agent attempted "DOM exploration" to find Shadow-DOM input → rewrote `_navigate_to_all_email_addresses` with 75-line PFAD-based navigation → broke Flow #1 completely. **All 11 files reverted to commit `cf146a6`**. This proved Flow #1 works perfectly as-is — DO NOT touch.
+
+**File:** `agent_toolbox/core/gmx_service.py` (NIEMALS ändern!)
+**Verified at:** `cf146a6 fix: pool_manager dual-format support + AGENTS.md 5 factual corrections`
+**Last working:** 2026-05-09 — 29s per rotation, elron-runner-701@gmx.de created
+
+**Methode:** `GmxService.rotate_alias(new_alias_name=None, cdp_port=9222)`
 
 **Methode:** `GmxService.rotate_alias(new_alias_name=None, cdp_port=9222)`
 
@@ -695,4 +705,31 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 | API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, RotationResponse, alle Models |
 | FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app registration |
 
-*Letzte Aktualisierung: 2026-05-09*
+---
+
+## 🏛️ INCIDENT LOG — Niemals wiederholen!
+
+### 2026-05-10: Flow #1 Breakdown (VERHINDERT)
+
+**Was passiert ist:**
+Agent versuchte "DOM exploration" für GMX Shadow-DOM Input → rewrite `_navigate_to_all_email_addresses` mit 75-line PFAD-Navigation → Flow #1 komplett gebrochen. **11 Dateien reverted auf commit `cf146a6`.**
+
+**Files die gebrochen wurden:**
+- `agent_toolbox/core/gmx_service.py` — Rewrite mit neuer Navigation (PFAD A/B/C)
+- `agent_toolbox/core/cdp_client.py`, `browser_manager.py`, `fireworks_service.py`, `pool_manager.py`
+- `agent_toolbox/api/routes/cookies.py`, `rotation.py`
+- `tools/gmx_alias_tool.py`, `AGENTS.md`, `banned.md`
+
+**Symptom:** `gmx_alias_tool.py status` → "Playwright: No alias input found. All inputs: []"
+
+**Recovery:** `git checkout -- .` (alle 11 files reverted) → `gmx_alias_tool.py check` ✅ → `rotate` ✅ in 29s
+
+**Root Cause:** Agent verletzte "ONCE VERIFIED = READ-ONLY". Flow #1 war VERIFIED am 2026-05-09 (29s rotation, elron-runner-701@gmx.de erstellt). Agent versuchte es zu "verbessern" ohne konkreten Bug.
+
+**Verhindern:**
+1. ⚠️ Flow #1, #2, #3 sind READ-ONLY — NIEMALS ändern außer es gibt konkreten Bug-Report
+2. Debuggen JA, Umschreiben NEIN
+3. Neuer Ansatz = Neue Datei (debug/), nicht existierende Dateien ändern
+4. IMMER zuerst backup/branch erstellen bevor irgendetwas geändert wird
+
+*Letzte Aktualisierung: 2026-05-10*
