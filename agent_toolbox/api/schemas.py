@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 
 class BrowserStartRequest(BaseModel):
     """Request für Browser-Start."""
-    profile_name: str = Field(default="Profile 73", description="Chrome Profil-Name")
+    profile_name: str = Field(default="Profile 901", description="Chrome Profil-Name")
     cdp_port: int = Field(default=9222, ge=1024, le=65535, description="CDP Debug-Port")
     headless: bool = Field(default=False, description="Headless-Modus")
     chrome_path: Optional[str] = Field(default=None, description="Pfad zur Chrome Binary")

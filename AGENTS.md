@@ -1,21 +1,37 @@
 # 📋 AGENTS.md — SINator Fireworks AI Rotator
 
+## 🚨 ABSOLUTE REGELN — NIEMALS ÜBERTRETEN
+
+### 🚫 NIEMALS `git checkout -- .` AUSFÜHREN
+- **VERBOTEN:** `git checkout -- .` oder `git checkout -- <file>`
+- **VERBOTEN:** `git reset --hard`
+- **VERBOTEN:** `git clean -fd`
+- **WARUM:** Zerstört ALLE Arbeitsfortschritte unwiderruflich
+- **STATTDessen:** Nur `git diff` und `git status` zur Analyse verwenden
+
+### 🚫 NIEMALS Chrome-Profil ändern
+- **VERBOTEN:** `pkill -9 -f "Google Chrome"` (zerstört Session)
+- **VERBOTEN:** Andere User-Daten-Verzeichnisse verwenden
+- **VERBOTEN:** Temporäre Profile erstellen
+
+---
+
 ## ⚠️ IMMUTABLE SYSTEM CONFIGURATION — NEVER DEVIATE
 
 ### Chrome Profile (ABSOLUTE TRUTH)
-- **User Data Dir:** `/Users/simoneschulze/Library/Application Support/Google Chrome`
-- **Active Profile:** `Profile 73`
-- **Profile Owner:** simoneschulze (NOT jeremy!)
+- **User Data Dir:** `/Users/jeremy/Library/Application Support/Google Chrome`
+- **Active Profile:** `Profile 901` (NICHT 73!)
+- **Profile Owner:** jeremy (NICHT simoneschulze!)
 - **CDP Port:** `9222`
 - **Chrome Binary:** `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
 
 ### Chrome Start Command (COPY EXACTLY)
 ```bash
-pkill -9 -f "Google Chrome" 2>/dev/null; sleep 2
+osascript -e 'quit app "Google Chrome"' 2>/dev/null; sleep 3
 
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/simoneschulze/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 73" \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 901" \
   --remote-debugging-port=9222 \
   --no-first-run \
   --no-default-browser-check \
@@ -26,10 +42,12 @@ curl -s http://127.0.0.1:9222/json/version
 ```
 
 **NEVER:**
-- Use `/Users/jeremy/...` paths (wrong user!)
+- Use `/Users/simoneschulze/...` paths (Profile 73 ist OBSOLET!)
+- Use `Profile 73` (ist OBSOLET!)
 - Create temp copies of the profile
 - Use `--user-data-dir=/tmp/...` (loses session cookies)
-- Start Chrome without `--profile-directory="Profile 73"`
+- Start Chrome without `--profile-directory="Profile 901"`
+- `pkill -9` Chrome (zerstört Session!)
 
 ---
 
@@ -75,7 +93,7 @@ async def _validate_gmx_session(client, session_id):
 ```
 
 ### Master-Backup anlegen (einmalig)
-1. Chrome mit Profile 73 starten (siehe oben)
+1. Chrome mit Profile 901 starten (siehe oben)
 2. Manuell bei GMX einloggen (oder funktionierende Cookies injizieren)
 3. Cookies extrahieren via CDP: `Network.getAllCookies`
 4. Nach `backup/session/gmx-cookies-master.json` speichern
@@ -129,9 +147,9 @@ SINator-fireworksai/
 | Item | Wert |
 |------|------|
 | Chrome Binary | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
-| **User Data Dir** | `/Users/simoneschulze/Library/Application Support/Google Chrome` |
-| **Profile** | `Profile 73` |
-| Local State | `/Users/simoneschulze/Library/Application Support/Google/Chrome/Local State` |
+| **User Data Dir** | `/Users/jeremy/Library/Application Support/Google Chrome` |
+| **Profile** | `Profile 901` |
+| Local State | `/Users/jeremy/Library/Application Support/Google/Chrome/Local State` |
 | CDP Port | `9222` |
 | GMX Email | `zukunftsorientierte.energie@gmail.com` (Google-Login via GMX) |
 | GMX Password | `ZOE.jerry2024` |
@@ -163,7 +181,7 @@ SINator-fireworksai/
 
 ## 🚀 Flow: Alias-Erstellung
 
-1. **Chrome starten** → Mit korrektem `--user-data-dir` + `--profile-directory="Profile 73"` + `--remote-debugging-port=9222`
+1. **Chrome starten** → Mit korrektem `--user-data-dir` + `--profile-directory="Profile 901"` + `--remote-debugging-port=9222`
 2. **Session validieren** → GMX Homepage → "E-Mail" click → prüfen ob `navigator.gmx.net/mail?sid=...`
 3. **Wenn Session tot:** Recovery-Protokoll ausführen (siehe oben)
 4. **CDP verbinden** → Raw Websocket zu `ws://127.0.0.1:9222/devtools/browser/...`
@@ -225,6 +243,6 @@ Siehe **Session Recovery & Backup-Protokoll** oben.
 
 ---
 
-*Letzte Aktualisierung: 2026-05-08*
-*Profile: Profile 73 (simoneschulze)*
-*Chrome: /Users/simoneschulze/Library/Application Support/Google Chrome*
+*Letzte Aktualisierung: 2026-05-09*
+*Profile: Profile 901 (jeremy)*
+*Chrome: /Users/jeremy/Library/Application Support/Google Chrome*

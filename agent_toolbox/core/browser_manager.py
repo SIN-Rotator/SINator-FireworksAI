@@ -28,7 +28,7 @@
 ║  PROFIL-KOPIERUNG:                                                            ║
 ║  Chrome verweigert CDP mit Default user-data-dir.                             ║
 ║  Lösung: Profil nach /tmp kopieren → Chrome startet mit CDP.                  │    ║
-║  WICHTIG: Local State + Profile 73 müssen kopiert werden!                     │    ║
+║  WICHTIG: Local State + Profile 901 müssen kopiert werden!                     │    ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -68,7 +68,7 @@ class BrowserManager:
         self,
         chrome_path: Optional[str] = None,
         source_profile: Optional[str] = None,
-        profile_name: str = "Profile 73",
+        profile_name: str = "Profile 901",
         cdp_port: int = 9222,
         headless: bool = False,
     ):
@@ -78,7 +78,7 @@ class BrowserManager:
         Args:
             chrome_path: Pfad zur Chrome Binary (default: macOS Standard)
             source_profile: Pfad zum Chrome user-data-dir (default: macOS Standard)
-            profile_name: Name des Profil-Ordners (default: "Profile 73")
+            profile_name: Name des Profil-Ordners (default: "Profile 901")
             cdp_port: Port für Chrome DevTools Protocol (default: 9222)
             headless: Headless-Modus (default: False für Debugging)
         """
@@ -108,7 +108,7 @@ class BrowserManager:
         Startet Chrome mit kopiertem Profil und verbindet Playwright via CDP.
 
         ABLAUF:
-        1. Profil kopieren (Local State + Profile 73 → /tmp)
+        1. Profil kopieren (Local State + Profile 901 → /tmp)
         2. Chrome starten via subprocess mit CDP-Port
         3. Auf CDP-Bereitschaft warten
         4. Playwright.connect_over_cdp() zum laufenden Chrome

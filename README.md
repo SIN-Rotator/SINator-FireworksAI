@@ -149,8 +149,8 @@ Automation flow:
 ```python
 TEMP_DIR = f"/tmp/sinator-chrome-{timestamp}"
 shutil.copy(LocalState_path, TEMP_DIR)
-shutil.copytree(Profile73_path, f"{TEMP_DIR}/Profile 73")
-Chrome --user-data-dir=TEMP_DIR --profile-directory="Profile 73" --remote-debugging-port=9222
+shutil.copytree(Profile73_path, f"{TEMP_DIR}/Profile 901")
+Chrome --user-data-dir=TEMP_DIR --profile-directory="Profile 901" --remote-debugging-port=9222
 ```
 
 ---

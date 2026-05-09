@@ -41,7 +41,7 @@
 ║  • Python 3.10+                                                               ║
 ║  • FastAPI, Uvicorn, Playwright, python-dotenv, pydantic                      ║
 ║  • Google Chrome installiert                                                  ║
-║  • GMX-Profil mit aktiver Session (Profile 73)                                ║
+║  • GMX-Profil mit aktiver Session (Profile 901)                                ║
 ║                                                                              ║
 ║  START:                                                                       ║
 ║  1. pip install -r requirements.txt                                           ║

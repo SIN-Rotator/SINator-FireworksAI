@@ -23,8 +23,8 @@ DevTools remote debugging requires a non-default data directory.
 ## ❌ BANNED: Nur Profil-Subfolder kopieren (ohne Local State)
 
 ```bash
-# FALSCH — Chrome erstellt ein NEUES Profil statt Profile 73 zu verwenden!
-cp -R "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 73" /tmp/my-profile
+# FALSCH — Chrome erstellt ein NEUES Profil statt Profile 901 zu verwenden!
+cp -R "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 901" /tmp/my-profile
 chrome --user-data-dir=/tmp/my-profile --remote-debugging-port=9222
 ```
 
@@ -79,7 +79,7 @@ await page.waitForNavigation(); // Hängt ewig!
 
 ```bash
 # FALSCH — Symlink bricht Cookie-Entschlüsselung!
-ln -s "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 73" /tmp/chrome-profile
+ln -s "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 901" /tmp/chrome-profile
 chrome --user-data-dir=/tmp/chrome-profile --remote-debugging-port=9222
 ```
 
@@ -96,12 +96,12 @@ chrome --user-data-dir=/tmp/chrome-profile --remote-debugging-port=9222
 TEMP_DIR="/tmp/sinator-chrome-$(date +%s)"
 mkdir -p "$TEMP_DIR"
 cp "/Users/jeremy/Library/Application Support/Google/Chrome/Local State" "$TEMP_DIR/"
-cp -R "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 73" "$TEMP_DIR/"
+cp -R "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 901" "$TEMP_DIR/"
 
 # 2. Chrome mit kopiertem Profil + profile-directory Flag starten
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="$TEMP_DIR" \
-  --profile-directory="Profile 73" \
+  --profile-directory="Profile 901" \
   --remote-debugging-port=9222 \
   --no-first-run \
   --no-default-browser-check 2>&1 &
