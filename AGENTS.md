@@ -149,19 +149,30 @@ PRÜFUNG: Kann GMX Inbox erreicht werden?
   → JA: Session OK → weiter zu Flow 1
 
 FALLS NICHT (Session korrupt):
-  a) Profil-Icon klicken → Logout (im Shadow DOM von ACCOUNT-AVATAR!)
-  b) Profil-Icon klicken → Login (ERSTE attempt - GMX ignoriert!)
-  b2) Trotzdem Email + Passwort eingeben und Anmelden klicken (ignoriert)
-  c) Profil-Icon klicken → Login (ZWEITE attempt - jetzt erscheint Email-Form)
-  d) Email: opensin@gmx.de → Enter → Click Weiter
-  e) Passwort: ZOE.jerry2024 → Enter → Click Anmelden
+  a) JS click auf ACCOUNT-AVATAR → öffnet Shadow DOM Dropdown
+     → JS click auf Logout BUTTON (im Shadow DOM!)
+  b) JS click auf ACCOUNT-AVATAR → JS click auf Login
+     (ERSTE attempt - GMX ignoriert diesen Klick!)
+  b2) Email + Passwort eingeben und Login klicken (ignoriert)
+  c) JS click auf ACCOUNT-AVATAR → JS click auf Login
+     (ZWEITE attempt - jetzt erscheint Email-Form!)
+  d) Email: opensin@gmx.de → Click Weiter
+  e) Passwort: ZOE.jerry2024 → Click Login
   f) Verifizieren: Click E-Mail → navigator.gmx.net/mail?sid= ?
-
-**CRITICAL:** Dropdown ist im Shadow DOM von ACCOUNT-AVATAR!
-  - Logout: BUTTON bei ~(914, 384) im Shadow DOM
-  - Login: BUTTON bei ~(914, 263) im Shadow DOM
-  - Nicht im normalen DOM findbar!
 ```
+
+**CRITICAL: Shadow DOM Handling**
+- ACCOUNT-AVATAR ist ein Custom Element mit Shadow DOM
+- CDP `click_at()` öffnet das Dropdown NICHT zuverlässig
+- `getBoundingClientRect()` gibt 0x0 für Shadow DOM Elemente zurück
+- **Lösung:** JS `.click()` auf das Custom Element + `.dispatchEvent(new Event('mouseenter'))`
+- Dann JS `.click()` auf Buttons im Shadow DOM via `avatar.shadowRoot.querySelectorAll('button')`
+- 3s Wait für Shadow DOM Rendering nötig
+
+**Login Formular:**
+- 2-Schritt Formular: Email → Weiter → Password → Login
+- Nach Login-Formular: Beide Felder (Email + Password) sichtbar
+- Buttons: "Weiter" dann "Login" (nicht "Anmelden")
 
 **Credentials:**
 - Email: `opensin@gmx.de`
