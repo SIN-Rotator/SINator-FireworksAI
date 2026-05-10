@@ -1301,24 +1301,75 @@ class GmxService:
             await asyncio.sleep(2)
             
             # Step 2: Find dropdown item by text and click via CDP
+            # Support multiple logout/login synonyms (GMX shows different text depending on state)
+            # CRITICAL: Dropdown is INSIDE Shadow DOM of ACCOUNT-AVATAR!
             action_js = """
             (function() {
                 var text = "%s";
-                var all = document.querySelectorAll('*');
-                for (var i=0; i<all.length; i++) {
-                    var t = (all[i].textContent || '').trim().toLowerCase();
-                    var rect = all[i].getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0 && rect.top > 0 && rect.left > 0) {
-                        if (t.indexOf(text) !== -1) {
-                            return {
-                                found: true,
-                                x: Math.round(rect.left + rect.width/2),
-                                y: Math.round(rect.top + rect.height/2),
-                                text: t
-                            };
+                var vw = window.innerWidth, vh = window.innerHeight;
+                
+                // Build search terms array
+                var searchTerms = [text];
+                if (text === 'logout') {
+                    searchTerms = ['logout', 'abmelden', 'ausloggen', 'account wechseln', 'wechseln'];
+                } else if (text === 'login') {
+                    searchTerms = ['login', 'anmelden', 'einloggen', 'zum postfach'];
+                }
+                
+                // Helper: search in a root (document or shadow root)
+                function searchInRoot(root) {
+                    if (!root) return [];
+                    var results = [];
+                    var all = root.querySelectorAll('button, a, [role="button"], [role="menuitem"], div, span, li, section, p');
+                    for (var i=0; i<all.length; i++) {
+                        var t = (all[i].textContent || '').trim().toLowerCase();
+                        var rect = all[i].getBoundingClientRect();
+                        var style = window.getComputedStyle(all[i]);
+                        // Must be visible, short text, in upper-right area
+                        var maxY = Math.min(vh * 0.7, 600);
+                        if (rect.width > 10 && rect.height > 10 && t.length > 0 && t.length < 100 &&
+                            rect.top >= 0 && rect.top < maxY && 
+                            rect.left >= vw * 0.5 && rect.left < vw &&
+                            style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+                            for (var s=0; s<searchTerms.length; s++) {
+                                if (t.indexOf(searchTerms[s]) !== -1) {
+                                    results.push({
+                                        x: Math.round(rect.left + rect.width/2),
+                                        y: Math.round(rect.top + rect.height/2),
+                                        text: t,
+                                        score: rect.top
+                                    });
+                                }
+                            }
                         }
                     }
+                    return results;
                 }
+                
+                // Search in document
+                var candidates = searchInRoot(document);
+                
+                // Search in shadow DOMs (ACCOUNT-AVATAR has the dropdown!)
+                var shadowHosts = document.querySelectorAll('ACCOUNT-AVATAR, account-avatar, [class*="avatar"], [class*="account"]');
+                for (var h=0; h<shadowHosts.length; h++) {
+                    if (shadowHosts[h].shadowRoot) {
+                        var shadowResults = searchInRoot(shadowHosts[h].shadowRoot);
+                        candidates = candidates.concat(shadowResults);
+                    }
+                }
+                
+                if (candidates.length > 0) {
+                    candidates.sort(function(a, b) { return a.score - b.score; });
+                    return {
+                        found: true,
+                        x: candidates[0].x,
+                        y: candidates[0].y,
+                        text: candidates[0].text,
+                        source: candidates.length > 1 ? 'shadow_dom' : 'light_dom',
+                        candidates: candidates.slice(0, 3)
+                    };
+                }
+                
                 return {found: false};
             })()
             """ % action_text

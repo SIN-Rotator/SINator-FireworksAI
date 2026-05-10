@@ -149,13 +149,18 @@ PRÜFUNG: Kann GMX Inbox erreicht werden?
   → JA: Session OK → weiter zu Flow 1
 
 FALLS NICHT (Session korrupt):
-  a) Profil-Icon klicken → Logout
+  a) Profil-Icon klicken → Logout (im Shadow DOM von ACCOUNT-AVATAR!)
   b) Profil-Icon klicken → Login (ERSTE attempt - GMX ignoriert!)
   b2) Trotzdem Email + Passwort eingeben und Anmelden klicken (ignoriert)
   c) Profil-Icon klicken → Login (ZWEITE attempt - jetzt erscheint Email-Form)
   d) Email: opensin@gmx.de → Enter → Click Weiter
   e) Passwort: ZOE.jerry2024 → Enter → Click Anmelden
   f) Verifizieren: Click E-Mail → navigator.gmx.net/mail?sid= ?
+
+**CRITICAL:** Dropdown ist im Shadow DOM von ACCOUNT-AVATAR!
+  - Logout: BUTTON bei ~(914, 384) im Shadow DOM
+  - Login: BUTTON bei ~(914, 263) im Shadow DOM
+  - Nicht im normalen DOM findbar!
 ```
 
 **Credentials:**
