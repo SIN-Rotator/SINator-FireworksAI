@@ -226,6 +226,213 @@ class FireworksService:
             logger.warning(f"Screenshot {label} fehlgeschlagen: {e}")
             return ""
 
+    async def _click_fireworks_email_in_iframe(
+        self,
+        client: CDPClient,
+        session_id: str
+    ) -> bool:
+        """Findet und klickt die Fireworks-Email-Zeile im Main Frame oder iframe."""
+        click_result = await client.evaluate(
+            session_id,
+            """
+            (function() {
+                const selectors = [
+                    '[class*="inbox-content"]',
+                    '[class*="maillist"]',
+                    '[class*="mail_list"]',
+                    'main [class*="list"]'
+                ];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (!el) continue;
+                    const items = el.querySelectorAll('[class*="item"], [class*="row"], tr');
+                    for (const item of items) {
+                        const text = item.innerText.toLowerCase();
+                        if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
+                            const rect = item.getBoundingClientRect();
+                            item.click();
+                            return {clicked: true, x: rect.x + rect.width/2, y: rect.y + rect.height/2};
+                        }
+                    }
+                }
+                return {clicked: false};
+            })()
+            """,
+            return_by_value=True
+        )
+        val = click_result.get("result", {}).get("value", {})
+        return val.get("clicked", False)
+
+    async def _extract_otp_from_detail_iframe(
+        self,
+        client: CDPClient,
+        session_id: str
+    ) -> str:
+        """Sucht OTP-URL in allen CDP-Targets (inkl. mailbody-ui.de iframes)."""
+        targets_result = await client.send_to_session(
+            session_id, "Target.getTargets", {}
+        )
+        targets = targets_result.get("value", {}).get("targetInfos", [])
+        
+        for target_info in targets:
+            target_id = target_info.get("targetId", "")
+            if not target_id or target_id == session_id:
+                continue
+            try:
+                target_session = await client.attach_to_target(target_id)
+                frame_result = await client.evaluate(
+                    target_session,
+                    "(function() { return window.location.href; })()",
+                    return_by_value=True
+                )
+                frame_url = frame_result.get("result", {}).get("value", "") or ""
+                if "mailbody-ui.de" in frame_url or "detail-body" in frame_url:
+                    logger.info(f"[FW Register] Found mailbody frame: {frame_url[:80]}...")
+                    body_result = await client.evaluate(
+                        target_session,
+                        "(function() { return document.body ? document.body.innerHTML : ''; })()",
+                        return_by_value=True
+                    )
+                    body_html = body_result.get("result", {}).get("value", "") or ""
+                    if body_html:
+                        urls = re.findall(r'https://app\.fireworks\.ai/signup/(?:confirm|verify|email_verification)[^\s"\'<>]+', body_html)
+                        if urls:
+                            otp_url = html.unescape(urls[0])
+                            logger.info(f"[FW Register] OTP URL from mailbody frame: {otp_url[:80]}...")
+                            await client.detach_from_target(target_session)
+                            return otp_url
+                await client.detach_from_target(target_session)
+            except Exception:
+                pass
+        
+        # Fallback: Page.getFrameTree + createIsolatedWorld
+        try:
+            frame_tree = await client.send_to_session(
+                session_id, "Page.getFrameTree", {}
+            )
+            
+            def find_mail_frame(node):
+                frame = node.get('frame', {})
+                url = frame.get('url', '')
+                if 'mailbody' in url or ('gmx.net' in url and 'mail' in url and 'client' in url):
+                    return frame.get('id')
+                for child in node.get('childFrames', []):
+                    result = find_mail_frame(child)
+                    if result:
+                        return result
+                return None
+            
+            mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
+            if mail_frame_id:
+                logger.info(f"[FW Register] Found mail frame via getFrameTree: {mail_frame_id[:20]}...")
+                world_result = await client.send_to_session(
+                    session_id, "Page.createIsolatedWorld", {
+                        "frameId": mail_frame_id,
+                        "worldName": "sinator_otp"
+                    }
+                )
+                execution_context_id = world_result.get("executionContextId")
+                if execution_context_id:
+                    eval_result = await client.send_to_session(
+                        session_id, "Runtime.evaluate", {
+                            "expression": """(function() {
+                                const html = document.body ? document.body.innerHTML : '';
+                                const m = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/(?:confirm|verify|email_verification)[^\\s"'<>]+/);
+                                return m ? m[0] : '';
+                            })()""",
+                            "contextId": execution_context_id,
+                            "returnByValue": True
+                        }
+                    )
+                    frame_otp = eval_result.get("result", {}).get("value", "")
+                    if frame_otp:
+                        otp_url = html.unescape(frame_otp)
+                        logger.info(f"[FW Register] OTP URL from frame isolated world: {otp_url[:80]}...")
+                        return otp_url
+        except Exception as e:
+            logger.debug(f"[FW Register] FrameTree fallback failed: {e}")
+        
+        return ""
+
+    async def _search_and_click_email_via_frametree(
+        self,
+        client: CDPClient,
+        session_id: str
+    ) -> str:
+        """Sucht Email im iframe via FrameTree, klickt sie, und extrahiert OTP."""
+        try:
+            frame_tree = await client.send_to_session(
+                session_id, "Page.getFrameTree", {}
+            )
+            
+            def find_mail_frame(node):
+                frame = node.get('frame', {})
+                url = frame.get('url', '')
+                if 'gmx.net' in url and 'mail' in url and 'client' in url:
+                    return frame.get('id')
+                for child in node.get('childFrames', []):
+                    result = find_mail_frame(child)
+                    if result:
+                        return result
+                return None
+            
+            mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
+            if not mail_frame_id:
+                return ""
+            
+            logger.info(f"[FW Register] Found mail client frame: {mail_frame_id[:20]}...")
+            
+            # Create isolated world to query email rows
+            world_result = await client.send_to_session(
+                session_id, "Page.createIsolatedWorld", {
+                    "frameId": mail_frame_id,
+                    "worldName": "sinator_email_click"
+                }
+            )
+            execution_context_id = world_result.get("executionContextId")
+            if not execution_context_id:
+                return ""
+            
+            # Find email coordinates
+            eval_result = await client.send_to_session(
+                session_id, "Runtime.evaluate", {
+                    "expression": """(function() {
+                        const items = document.querySelectorAll('[class*="item"], [class*="row"], tr, div[class]');
+                        for (const item of items) {
+                            const text = item.innerText.toLowerCase();
+                            if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
+                                const rect = item.getBoundingClientRect();
+                                return {
+                                    found: true,
+                                    x: rect.x + rect.width/2,
+                                    y: rect.y + rect.height/2,
+                                    text: item.innerText.trim().slice(0, 60)
+                                };
+                            }
+                        }
+                        return {found: false};
+                    })()""",
+                    "contextId": execution_context_id,
+                    "returnByValue": True
+                }
+            )
+            result = eval_result.get("result", {}).get("value", {})
+            if not result.get("found"):
+                return ""
+            
+            # Click at coordinates
+            x, y = result.get("x", 0), result.get("y", 0)
+            logger.info(f"[FW Register] Clicking email at ({x:.0f}, {y:.0f}): {result.get('text', '')}")
+            await client.click_at(session_id, x, y)
+            await asyncio.sleep(5)
+            
+            # Now search for detail iframe
+            return await self._extract_otp_from_detail_iframe(client, session_id)
+            
+        except Exception as e:
+            logger.warning(f"[FW Register] FrameTree email click failed: {e}")
+            return ""
+
     async def _dismiss_cookie_banner(
         self,
         client: CDPClient,
@@ -1830,163 +2037,18 @@ class FireworksService:
                     elif otp_search_val.get("found") == 'needs_click':
                         subject = otp_search_val.get("subject", "")
                         logger.info(f"[FW Register] Found fireworks email (needs click): {subject[:60]}...")
-                        # Find and click the email row
-                        click_result = await client.evaluate(
-                            session_id,
-                            """
-                            (function() {
-                                const selectors = [
-                                    '[class*="inbox-content"]',
-                                    '[class*="maillist"]',
-                                    '[class*="mail_list"]',
-                                    'main [class*="list"]'
-                                ];
-                                for (const sel of selectors) {
-                                    const el = document.querySelector(sel);
-                                    if (!el) continue;
-                                    const items = el.querySelectorAll('[class*="item"], [class*="row"], tr');
-                                    for (const item of items) {
-                                        const text = item.innerText.toLowerCase();
-                                        if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm') || text.includes('bestätig'))) {
-                                            const link = item.closest('a') || item.querySelector('a');
-                                            if (link) {
-                                                link.click();
-                                                return {clicked: true, href: link.href};
-                                            }
-                                            // Try clicking the row itself
-                                            item.click();
-                                            return {clicked: true};
-                                        }
-                                    }
-                                }
-                                return {clicked: false};
-                            })()
-                            """,
-                            return_by_value=True
-                        )
-                        click_val = click_result.get("result", {}).get("value", {})
-                        if click_val.get("clicked"):
+                        # Find and click the email row in main frame or iframe
+                        clicked = await self._click_fireworks_email_in_iframe(client, session_id)
+                        if clicked:
                             await asyncio.sleep(5)
-                            # IMPORTANT: GMX opens email in detail-body-iframe (gmxnet.mailbody-ui.de)
-                            # The main frame stays on the inbox URL. We must search ALL frames.
-                            targets_result = await client.send_to_session(
-                                session_id, "Target.getTargets", {}
-                            )
-                            targets = targets_result.get("value", {}).get("targetInfos", [])
-                            
-                            # Also check all existing CDP sessions for OTP URL
-                            for target_info in targets:
-                                target_id = target_info.get("targetId", "")
-                                if not target_id or target_id == session_id:
-                                    continue
-                                try:
-                                    target_session = await client.attach_to_target(target_id)
-                                    frame_result = await client.evaluate(
-                                        target_session,
-                                        "(function() { return window.location.href; })()",
-                                        return_by_value=True
-                                    )
-                                    frame_url = frame_result.get("result", {}).get("value", "") or ""
-                                    if "mailbody-ui.de" in frame_url or "detail-body" in frame_url:
-                                        logger.info(f"[FW Register] Found mailbody frame: {frame_url[:80]}...")
-                                        body_result = await client.evaluate(
-                                            target_session,
-                                            "(function() { return document.body ? document.body.innerHTML : ''; })()",
-                                            return_by_value=True
-                                        )
-                                        body_html = body_result.get("result", {}).get("value", "") or ""
-                                        if body_html:
-                                            import re as _re
-                                            urls = _re.findall(r'https://app\.fireworks\.ai/signup/(?:confirm|verify|email_verification)[^\s"\'<>]+', body_html)
-                                            if urls:
-                                                otp_url = urls[0]
-                                                # Decode HTML entities
-                                                import html as _html
-                                                otp_url = _html.unescape(otp_url)
-                                                logger.info(f"[FW Register] OTP URL from mailbody frame: {otp_url[:80]}...")
-                                                await client.detach_from_target(target_session)
-                                                break
-                                    await client.detach_from_target(target_session)
-                                except Exception as _e:
-                                    pass
-                            
+                            otp_url = await self._extract_otp_from_detail_iframe(client, session_id)
                             if otp_url:
                                 break
-                            
-                            # FALLBACK 2: Use Page.getFrameTree + Page.createIsolatedWorld
-                            # When iframes are not exposed as CDP targets (Chrome 147+ behavior)
-                            try:
-                                frame_tree = await client.send_to_session(
-                                    session_id, "Page.getFrameTree", {}
-                                )
-                                
-                                def find_mail_frame(node):
-                                    frame = node.get('frame', {})
-                                    url = frame.get('url', '')
-                                    if 'mailbody' in url or ('gmx.net' in url and 'mail' in url and 'client' in url):
-                                        return frame.get('id')
-                                    for child in node.get('childFrames', []):
-                                        result = find_mail_frame(child)
-                                        if result:
-                                            return result
-                                    return None
-                                
-                                mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
-                                if mail_frame_id:
-                                    logger.info(f"[FW Register] Found mail frame via getFrameTree: {mail_frame_id[:20]}...")
-                                    world_result = await client.send_to_session(
-                                        session_id, "Page.createIsolatedWorld", {
-                                            "frameId": mail_frame_id,
-                                            "worldName": "sinator_otp"
-                                        }
-                                    )
-                                    execution_context_id = world_result.get("executionContextId")
-                                    if execution_context_id:
-                                        eval_result = await client.send_to_session(
-                                            session_id, "Runtime.evaluate", {
-                                                "expression": """(function() {
-                                                    const html = document.body ? document.body.innerHTML : '';
-                                                    const m = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/(?:confirm|verify|email_verification)[^\\s"'<>]+/);
-                                                    return m ? m[0] : '';
-                                                })()""",
-                                                "contextId": execution_context_id,
-                                                "returnByValue": True
-                                            }
-                                        )
-                                        frame_otp = eval_result.get("result", {}).get("value", "")
-                                        if frame_otp:
-                                            import html as _html
-                                            otp_url = _html.unescape(frame_otp)
-                                            logger.info(f"[FW Register] OTP URL from frame isolated world: {otp_url[:80]}...")
-                            except Exception as _frame_e:
-                                logger.debug(f"[FW Register] FrameTree fallback failed: {_frame_e}")
-                            
-                            if otp_url:
-                                break
-                            
-                            # Fallback 3: scan main frame DOM (this path rarely works for GMX emails)
-                            email_result = await client.evaluate(
-                                session_id,
-                                """
-                                (function() {
-                                    const body = document.body.innerHTML.toLowerCase();
-                                    const idx = body.indexOf('fireworks');
-                                    if (idx !== -1) {
-                                        const snippet = body.substring(Math.max(0, idx-300), Math.min(body.length, idx+800));
-                                        const m = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
-                                        if (m) return {found: true, url: m[0]};
-                                    }
-                                    return {found: false};
-                                })()
-                                """,
-                                return_by_value=True
-                            )
-                            email_val = email_result.get("result", {}).get("value", {})
-                            if isinstance(email_val, dict) and email_val.get("found"):
-                                otp_url = email_val.get("url", "")
-                                if otp_url:
-                                    logger.info(f"[FW Register] OTP URL from main frame: {otp_url[:80]}...")
-                                    break
+                        
+                        # Fallback: direct iframe search and click
+                        otp_url = await self._search_and_click_email_via_frametree(client, session_id)
+                        if otp_url:
+                            break
 
                 if attempt < max_retries - 1:
                     await asyncio.sleep(retry_delay)
