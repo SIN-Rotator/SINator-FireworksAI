@@ -226,6 +226,110 @@ class FireworksService:
             logger.warning(f"Screenshot {label} fehlgeschlagen: {e}")
             return ""
 
+    async def _search_otp_in_iframe(
+        self,
+        client: CDPClient,
+        session_id: str
+    ) -> str:
+        """Sucht OTP-URL im GMX Mail-Client iframe via Page.getFrameTree + createIsolatedWorld."""
+        try:
+            frame_tree = await client.send_to_session(
+                session_id, "Page.getFrameTree", {}
+            )
+            
+            def find_mail_frame(node):
+                frame = node.get('frame', {})
+                url = frame.get('url', '')
+                if 'gmx.net' in url and 'mail' in url and 'client' in url:
+                    return frame.get('id')
+                for child in node.get('childFrames', []):
+                    result = find_mail_frame(child)
+                    if result:
+                        return result
+                return None
+            
+            mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
+            if not mail_frame_id:
+                return ""
+            
+            # Create isolated world in the mail frame
+            world_result = await client.send_to_session(
+                session_id, "Page.createIsolatedWorld", {
+                    "frameId": mail_frame_id,
+                    "worldName": "sinator_otp_search"
+                }
+            )
+            execution_context_id = world_result.get("executionContextId")
+            if not execution_context_id:
+                return ""
+            
+            # Search for fireworks email and extract OTP URL directly
+            eval_result = await client.send_to_session(
+                session_id, "Runtime.evaluate", {
+                    "expression": """(function() {
+                        const items = document.querySelectorAll('[class*="item"], [class*="row"], tr, div[class]');
+                        for (const item of items) {
+                            const text = item.innerText.toLowerCase();
+                            if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
+                                // Try to extract URL from inline HTML
+                                const html = item.innerHTML;
+                                const m = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/(?:confirm|verify|email_verification)[^\\s"'<>]+/);
+                                if (m) return {found: true, url: m[0], clickNeeded: false};
+                                
+                                // URL not in row HTML — need to click
+                                const rect = item.getBoundingClientRect();
+                                return {
+                                    found: true,
+                                    url: '',
+                                    clickNeeded: true,
+                                    x: rect.x + rect.width/2,
+                                    y: rect.y + rect.height/2,
+                                    text: item.innerText.trim().slice(0, 60)
+                                };
+                            }
+                        }
+                        return {found: false};
+                    })()""",
+                    "contextId": execution_context_id,
+                    "returnByValue": True
+                }
+            )
+            result = eval_result.get("result", {}).get("value", {})
+            
+            if not result.get("found"):
+                return ""
+            
+            # If URL found directly, return it
+            if not result.get("clickNeeded") and result.get("url"):
+                return html.unescape(result.get("url"))
+            
+            # Need to click — dispatch mouse event in iframe context
+            x, y = result.get("x", 0), result.get("y", 0)
+            logger.info(f"[FW Register] Clicking email in iframe at ({x:.0f}, {y:.0f}): {result.get('text', '')}")
+            
+            await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+                "type": "mousePressed",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "clickCount": 1
+            })
+            await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+                "type": "mouseReleased",
+                "x": x,
+                "y": y,
+                "button": "left",
+                "clickCount": 1
+            })
+            await asyncio.sleep(5)
+            
+            # Now search for detail iframe
+            return await self._extract_otp_from_detail_iframe(client, session_id)
+            
+        except Exception as e:
+            logger.debug(f"[FW Register] iframe OTP search failed: {e}")
+            return ""
+
     async def _click_fireworks_email_in_iframe(
         self,
         client: CDPClient,
@@ -1969,6 +2073,15 @@ class FireworksService:
                 inbox_url = await goto_inbox()
                 logger.info(f"[FW Register] Inbox URL: {inbox_url[:80]}...")
 
+                # FIRST: Search in iframe via Page.getFrameTree + createIsolatedWorld
+                # GMX emails are in cross-origin iframe (3c.gmx.net/mail/client/start)
+                iframe_otp = await self._search_otp_in_iframe(client, session_id)
+                if iframe_otp:
+                    otp_url = iframe_otp
+                    logger.info(f"[FW Register] OTP URL found in iframe: {otp_url[:80]}...")
+                    break
+                
+                # SECOND: Search in main frame DOM (for non-iframe layouts)
                 otp_search_result = await client.evaluate(
                     session_id,
                     """
@@ -1995,7 +2108,7 @@ class FireworksService:
                                 const fwIdx = html.indexOf('fireworks');
                                 if (fwIdx !== -1) {
                                     const snippet = html.substring(Math.max(0, fwIdx-300), Math.min(html.length, fwIdx+600));
-                                    const urlMatch = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
+                                    const urlMatch = snippet.match(/https:\/\/app\.fireworks\.ai\/[^"'>\s]{10,}/);
                                     if (urlMatch) return {found: true, url: urlMatch[0], source: sel};
                                 }
                             }
@@ -2016,7 +2129,7 @@ class FireworksService:
                             const bodyHtml = document.body.innerHTML.toLowerCase();
                             const idx = bodyHtml.indexOf('fireworks');
                             const snippet = bodyHtml.substring(Math.max(0, idx-300), Math.min(bodyHtml.length, idx+600));
-                            const m = snippet.match(/https:\\/\\/app\\.fireworks\\.ai\\/[^"'>\\s]{10,}/);
+                            const m = snippet.match(/https:\/\/app\.fireworks\.ai\/[^"'>\s]{10,}/);
                             if (m) return {found: true, url: m[0]};
                         }
 
