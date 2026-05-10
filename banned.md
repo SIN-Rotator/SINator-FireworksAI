@@ -4,6 +4,22 @@
 
 ---
 
+## ❌ BANNED: AX tree_line als element_index nutzen (2026-05-11)
+
+**Problem:** AX-Tree output format:
+```
+[140] - [123] AXCheckBox "Flexible capacity for production"
+  ^^^   ^^^^
+  |     +---> element_index = 123 (RICHTIG!)
+  +---> tree_line = 140 (FALSCH!)
+```
+Klickt man `element_index: 140` wird das WONG element geklickt (AXStaticText ""), nicht die Checkbox!
+
+**Banned:** Regex `\[(\d+)\]` extrahiert tree_line statt element_index!
+**Fix:** Immer `parts[1].split(']')[0]` für secondary ID nutzen (siehe AGENTS.md Regel 1).
+
+---
+
 ## ❌ BANNED: Chrome mit Default user-data-dir starten
 
 ```bash

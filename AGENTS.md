@@ -1,5 +1,41 @@
 # AGENTS.md — SINator Fireworks AI Rotator
 
+## ⚠️ EINFACHE REGEL — AX ELEMENT CLICK:
+Bei jedem Scan: Speichere VOLLSTÄNDIGEN PFAD + TEXT:
+```python
+elements = []
+for i, line in enumerate(lines):
+    stripped = line.strip()
+    if 'AXCheckBox' in stripped or 'AXButton' in stripped:
+        # Extrahiere den TEXT im element
+        text_match = re.search(r'AXButton "(.*?)"|AXCheckBox "(.*?)"', stripped)
+        if text_match:
+            text = text_match.group(1) or text_match.group(2)
+            # Extrahiere secondary ID (DIE RICHTIGE!)
+            parts = stripped.split('] - [')
+            sec_id = parts[1].split(']')[0]
+            
+            # Speichere: text + id
+            elements.append({
+                'text': text,
+                'element_index': int(sec_id),  # <-- DIESE ID, nicht tree_line!
+                'line': i
+            })
+```
+
+**Vor dem Click:** Rescan prüfen ob gespeicherter text IM AX-tree noch existiert:
+```python
+current_tree = get_ax_tree()
+if gesuchter_text in current_tree:
+    cua-driver click element_id
+else:
+    # RESCAN nötig! Element verschoben/geändert
+```
+
+**Regel:**
+> MATCH text + MATCH parent + MATCH id = CLICK
+> MATCH text + MISSING id = RESCAN
+
 ## 🎯 PROJECT VISION
 
 **Ziel:** Automatisierte Erstellung von Fireworks AI API-Keys via GMX Alias → Fireworks Account → OTP Verification → API-Key Pool.
