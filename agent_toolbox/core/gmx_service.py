@@ -1258,131 +1258,72 @@ class GmxService:
         start_time = time.time()
 
         async def _click_profile_icon_and_action(client, session_id, action_text: str) -> bool:
-            """Klickt Profil-Icon via CDP click_at und dann action_text via click_at."""
-            # Step 1: Find avatar and click via CDP (not JS .click()!)
-            avatar_js = """
+            """Klickt Profil-Icon und dann action_text via JS .click() im Shadow DOM."""
+            # CRITICAL: Shadow DOM dropdown buttons are NOT accessible via CDP click_at()
+            # getBoundingClientRect() returns 0x0 for shadow DOM elements until clicked via JS
+            # Step 1: Open dropdown by clicking avatar via JS
+            open_js = """
             (function() {
-                var el = document.querySelector('ACCOUNT-AVATAR') || 
-                         document.querySelector('ACCOUNT-AVATAR-NAVIGATOR') ||
-                         document.querySelector('[data-testid="account-avatar"]');
-                if (!el) {
-                    var all = document.querySelectorAll('*');
-                    var vw = window.innerWidth;
-                    for (var i=0; i<all.length; i++) {
-                        var rect = all[i].getBoundingClientRect();
-                        if (rect.right > vw * 0.80 && rect.top < 80 && rect.width > 15 && rect.height > 15) {
-                            var text = (all[i].textContent || '').trim().toLowerCase();
-                            if (text.indexOf('account') !== -1 || text.indexOf('mein') !== -1 ||
-                                all[i].className.indexOf('avatar') !== -1 || all[i].className.indexOf('account') !== -1) {
-                                el = all[i];
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (!el) return {found: false};
-                var rect = el.getBoundingClientRect();
-                return {
-                    found: true,
-                    x: Math.round(rect.left + rect.width/2),
-                    y: Math.round(rect.top + rect.height/2),
-                    tag: el.tagName
-                };
+                var avatar = document.querySelector('ACCOUNT-AVATAR') || 
+                             document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+                if (!avatar) return {found: false};
+                
+                // Open flyout by clicking avatar
+                avatar.click();
+                avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
+                
+                return {found: true, tag: avatar.tagName};
             })()
             """
-            result = await client.evaluate(session_id, avatar_js, return_by_value=True)
-            val = result.get("result", {}).get("value", {})
-            if not val.get("found"):
-                logger.warning(f"[Flow 0] Could not find profile avatar")
-                return False
+            await client.evaluate(session_id, open_js, return_by_value=True)
+            await asyncio.sleep(3)  # Wait for shadow DOM to fully render
             
-            logger.info(f"[Flow 0] Clicking avatar at ({val['x']}, {val['y']})...")
-            await client.click_at(session_id, val["x"], val["y"])
-            await asyncio.sleep(2)
-            
-            # Step 2: Find dropdown item by text and click via CDP
-            # Support multiple logout/login synonyms (GMX shows different text depending on state)
-            # CRITICAL: Dropdown is INSIDE Shadow DOM of ACCOUNT-AVATAR!
+            # Step 2: Click the action button directly inside shadow DOM via JS
             action_js = """
             (function() {
                 var text = "%s";
-                var vw = window.innerWidth, vh = window.innerHeight;
-                
-                // Build search terms array
                 var searchTerms = [text];
                 if (text === 'logout') {
-                    searchTerms = ['logout', 'abmelden', 'ausloggen', 'account wechseln', 'wechseln'];
+                    searchTerms = ['logout', 'abmelden', 'ausloggen'];
                 } else if (text === 'login') {
                     searchTerms = ['login', 'anmelden', 'einloggen', 'zum postfach'];
                 }
                 
-                // Helper: search in a root (document or shadow root)
-                function searchInRoot(root) {
-                    if (!root) return [];
-                    var results = [];
-                    var all = root.querySelectorAll('button, a, [role="button"], [role="menuitem"], div, span, li, section, p');
-                    for (var i=0; i<all.length; i++) {
-                        var t = (all[i].textContent || '').trim().toLowerCase();
-                        var rect = all[i].getBoundingClientRect();
-                        var style = window.getComputedStyle(all[i]);
-                        // Must be visible, short text, in upper-right area
-                        var maxY = Math.min(vh * 0.7, 600);
-                        if (rect.width > 10 && rect.height > 10 && t.length > 0 && t.length < 100 &&
-                            rect.top >= 0 && rect.top < maxY && 
-                            rect.left >= vw * 0.5 && rect.left < vw &&
-                            style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-                            for (var s=0; s<searchTerms.length; s++) {
-                                if (t.indexOf(searchTerms[s]) !== -1) {
-                                    results.push({
-                                        x: Math.round(rect.left + rect.width/2),
-                                        y: Math.round(rect.top + rect.height/2),
-                                        text: t,
-                                        score: rect.top
-                                    });
-                                }
-                            }
+                var avatar = document.querySelector('ACCOUNT-AVATAR') || 
+                             document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+                if (!avatar || !avatar.shadowRoot) return {found: false, error: 'no shadow'};
+                
+                // Search in shadow DOM for button with matching text
+                var buttons = avatar.shadowRoot.querySelectorAll('button, a');
+                for (var i=0; i<buttons.length; i++) {
+                    var t = (buttons[i].textContent || '').trim().toLowerCase();
+                    for (var s=0; s<searchTerms.length; s++) {
+                        if (t.indexOf(searchTerms[s]) !== -1) {
+                            buttons[i].click();
+                            buttons[i].dispatchEvent(new Event('click', {bubbles: true}));
+                            return {found: true, clicked: t, index: i};
                         }
                     }
-                    return results;
                 }
                 
-                // Search in document
-                var candidates = searchInRoot(document);
-                
-                // Search in shadow DOMs (ACCOUNT-AVATAR has the dropdown!)
-                var shadowHosts = document.querySelectorAll('ACCOUNT-AVATAR, account-avatar, [class*="avatar"], [class*="account"]');
-                for (var h=0; h<shadowHosts.length; h++) {
-                    if (shadowHosts[h].shadowRoot) {
-                        var shadowResults = searchInRoot(shadowHosts[h].shadowRoot);
-                        candidates = candidates.concat(shadowResults);
-                    }
+                // Fallback: click first button if any exist
+                if (buttons.length > 0) {
+                    buttons[0].click();
+                    return {found: true, clicked: buttons[0].textContent.trim(), fallback: true};
                 }
                 
-                if (candidates.length > 0) {
-                    candidates.sort(function(a, b) { return a.score - b.score; });
-                    return {
-                        found: true,
-                        x: candidates[0].x,
-                        y: candidates[0].y,
-                        text: candidates[0].text,
-                        source: candidates.length > 1 ? 'shadow_dom' : 'light_dom',
-                        candidates: candidates.slice(0, 3)
-                    };
-                }
-                
-                return {found: false};
+                return {found: false, buttons: buttons.length};
             })()
             """ % action_text
             action_result = await client.evaluate(session_id, action_js, return_by_value=True)
             action_val = action_result.get("result", {}).get("value", {})
             
             if not action_val.get("found"):
-                logger.warning(f"[Flow 0] Could not find '{action_text}' in dropdown")
+                logger.warning(f"[Flow 0] Could not find '{action_text}' in shadow DOM: {action_val}")
                 return False
             
-            logger.info(f"[Flow 0] Clicking '{action_text}' at ({action_val['x']}, {action_val['y']})...")
-            await client.click_at(session_id, action_val["x"], action_val["y"])
-            await asyncio.sleep(1)
+            logger.info(f"[Flow 0] Clicked '{action_text}' in shadow DOM: '{action_val.get('clicked')}'")
+            await asyncio.sleep(2)
             return True
 
         async def _wait_for_page_stable(client, session_id, timeout: int = 10) -> str:
@@ -1574,69 +1515,76 @@ class GmxService:
                 await _click_profile_icon_and_action(client, session_id, "login")
                 await asyncio.sleep(3)
             
-# d) Enter email and click Next/Weiter via CDP click_at
-            logger.info(f"[Flow 0] Step D: Enter email {email}...")
+# d/e) Two-step login form: Email + Weiter, then Password + Login
+            logger.info(f"[Flow 0] Step D: Fill email and click Weiter...")
+            
+            # Step 1: Fill email and click Weiter
             email_js = """
             (function() {
-                var input = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
-                if (!input) return {found: false};
+                var email = '%s';
+                
+                var emailInput = document.querySelector('input[type="email"], input[name="email"], input[autocomplete="email"]');
+                if (!emailInput) return {found: false, msg: 'no email input'};
                 
                 var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                nativeSetter.call(input, '%s');
-                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
-                input.dispatchEvent(new Event('change', {bubbles: true}));
+                nativeSetter.call(emailInput, email);
+                emailInput.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                emailInput.dispatchEvent(new Event('change', {bubbles: true}));
                 
-                // Find "Weiter" button coordinates
-                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                // Find Weiter button
+                var buttons = document.querySelectorAll('button, input[type="submit"]');
                 for (var i=0; i<buttons.length; i++) {
-                    var btn = buttons[i];
-                    var text = (btn.textContent || '').trim().toLowerCase();
-                    var rect = btn.getBoundingClientRect();
-                    if (text.indexOf('weiter') !== -1 || text.indexOf('next') !== -1 || 
-                        text.indexOf('continue') !== -1 || text.indexOf('angemeldet') !== -1) {
-                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    var text = (buttons[i].textContent || '').trim().toLowerCase();
+                    var rect = buttons[i].getBoundingClientRect();
+                    if (rect.width > 10 && rect.height > 10) {
+                        if (text.indexOf('weiter') !== -1 || text.indexOf('next') !== -1 || text.indexOf('continue') !== -1) {
+                            buttons[i].click();
+                            return {found: true, clicked: text, hasPw: false};
+                        }
                     }
                 }
-                return {found: true, clickX: 0, clickY: 0};
+                
+                return {found: true, clicked: 'none', hasPw: false};
             })()
             """ % email
-            email_input_result = await client.evaluate(session_id, email_js, return_by_value=True)
-            input_val = email_input_result.get("result", {}).get("value", {})
-            logger.info(f"[Flow 0] Email input: {input_val}")
-            if input_val.get("clickX", 0) > 0:
-                await client.click_at(session_id, input_val["clickX"], input_val["clickY"])
+            r1 = await client.evaluate(session_id, email_js, return_by_value=True)
+            val1 = r1.get("result", {}).get("value", {})
+            logger.info(f"[Flow 0] Email step: {val1}")
             await asyncio.sleep(4)
             
-            # e) Enter password and click Login via CDP click_at
-            logger.info("[Flow 0] Step E: Enter password...")
+            # Step 2: Fill password and click Login
+            logger.info("[Flow 0] Step E: Fill password and click Login...")
             pw_js = """
             (function() {
-                var input = document.querySelector('input[type="password"], input[name="password"]');
-                if (!input) return {found: false};
+                var password = '%s';
+                
+                var pwInput = document.querySelector('input[type="password"], input[name="password"]');
+                if (!pwInput) return {found: false, msg: 'no password input', url: window.location.href};
                 
                 var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                nativeSetter.call(input, '%s');
-                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
-                input.dispatchEvent(new Event('change', {bubbles: true}));
+                nativeSetter.call(pwInput, password);
+                pwInput.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                pwInput.dispatchEvent(new Event('change', {bubbles: true}));
                 
-                // Find "Anmelden" button coordinates
-                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                // Find Login/Anmelden button
+                var buttons = document.querySelectorAll('button, input[type="submit"]');
                 for (var i=0; i<buttons.length; i++) {
-                    var btn = buttons[i];
-                    var text = (btn.textContent || '').trim().toLowerCase();
-                    var rect = btn.getBoundingClientRect();
-                    if (text.indexOf('anmelden') !== -1 || text.indexOf('login') !== -1 || text.indexOf('einloggen') !== -1) {
-                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    var text = (buttons[i].textContent || '').trim().toLowerCase();
+                    var rect = buttons[i].getBoundingClientRect();
+                    if (rect.width > 10 && rect.height > 10) {
+                        if (text.indexOf('login') !== -1 || text.indexOf('anmelden') !== -1 || text.indexOf('einloggen') !== -1) {
+                            buttons[i].click();
+                            return {found: true, clicked: text};
+                        }
                     }
                 }
-                return {found: true, clickX: 0, clickY: 0};
+                
+                return {found: true, clicked: 'none'};
             })()
             """ % password
-            pw_input_result = await client.evaluate(session_id, pw_js, return_by_value=True)
-            pw_val = pw_input_result.get("result", {}).get("value", {})
-            logger.info(f"[Flow 0] Password input: {pw_val}")
-            if pw_val.get("clickX", 0) > 0:
-                await client.click_at(session_id, pw_val["clickX"], pw_val["clickY"])
+            r2 = await client.evaluate(session_id, pw_js, return_by_value=True)
+            val2 = r2.get("result", {}).get("value", {})
+            logger.info(f"[Flow 0] Password step: {val2}")
             await asyncio.sleep(5)
             
             # Verify login success - click E-Mail via CDP click_at (find coordinates first)
