@@ -6,15 +6,16 @@
 ║  ENDPOINT:                                                                    ║
 ║  POST /rotation/full         → Komplette Account-Rotation (GMX + Fireworks) ║
 ║                                                                              ║
-║  FLOW (2 SCHRITTE — register() macht alles intern):                         ║
+║  FLOW (4 SCHRITTE):                                                          ║
+║  0. GMX Session 确保 — Login falls Session korrupt                           ║
 ║  1. GMX Alias löschen (falls vorhanden) + neuen Alias erstellen             ║
 ║  2. Fireworks register() — 12-Phasen E2E:                                   ║
 ║     • Fireworks Cookies + LocalStorage clearen                              ║
 ║     • /signup Page → Cookie Banner dismissen                                ║
 ║     • Email → Next → 2x Password → Create Account                          ║
-║     • GMX OTP Polling (12x5s = 60s)                                         ║
-║     • OTP URL öffnen → Account verifiziert                                  ║
-║     • Sign In Flow → Email/Password Login                                   ║
+║     • GMX OTP Polling (30x6s = 180s)                                        ║
+║     • OTP URL aus detail-body-iframe extrahieren                            ║
+║     • Account verifiziert → Sign In Flow                                    ║
 ║     • FirstName/LastName + Terms of Service                                 ║
 ║     • Use Case Selection → $5 Credits Submit                                ║
 ║     • Navigate zu API-Keys → Create + Generate Key                          ║
@@ -24,8 +25,8 @@
 ║  ALLE OPERATIONEN nutzen dieselbe Browser-Session:                           ║
 ║  Chrome Profile 901, CDP Port 9222, gleicher Tab für GMX + Fireworks.       ║
 ║                                                                              ║
-║  TYPISCHE LAUFZEIT: ~2-4 minuten                                             ║
-║  (GMX Alias ~45s, Fireworks 12-Phasen ~60-180s je nach Email-Delay)         ║
+║  TYPISCHE LAUFZEIT: ~2-5 minuten                                             ║
+║  (Flow 0: ~10s, GMX Alias ~30s, Fireworks ~60-180s je nach Email-Delay)     ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -100,6 +101,40 @@ async def full_rotation(request: RotationRequest):
     api_key_name = None
 
     try:
+        # ════════════════════════════════════════════════════════════════════════
+        #  STEP 0: GMX Session确保 / Login
+        # ════════════════════════════════════════════════════════════════════════
+        #
+        # Flow 0: Stellt GMX Session sicher, otherwise fresh login.
+        # Prüft ob navigator.gmx.net/mail?sid= erreichbar.
+        # Falls nicht: Logout → Login → Email → Passwort
+        #
+        logger.info("=== Flow 0: GMX Session Check ===")
+        gmx_svc = get_gmx_service()
+        session_result = await gmx_svc.ensure_gmx_session(
+            email="opensin@gmx.de",
+            password="ZOE.jerry2024",
+            cdp_port=cdp_port,
+        )
+        
+        if session_result["status"] == "success":
+            steps_completed.append("gmx_session_active")
+            logger.info(f"✅ GMX Session OK: {session_result.get('sid', '')[:20]}...")
+        else:
+            steps_failed.append("gmx_session_failed")
+            logger.error(f"❌ GMX Session fehlgeschlagen: {session_result}")
+            return RotationResponse(
+                status="error",
+                gmx_alias=None,
+                fireworks_account=None,
+                api_key=None,
+                api_key_name=None,
+                steps_completed=steps_completed,
+                steps_failed=steps_failed,
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=f"GMX Session failed: {session_result.get('error', 'unknown')}",
+            )
+
         # ════════════════════════════════════════════════════════════════════════
         #  STEP 1: GMX Alias Rotation
         # ════════════════════════════════════════════════════════════════════════

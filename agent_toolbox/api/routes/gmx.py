@@ -91,6 +91,49 @@ async def check_session():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/session/ensure", response_model=GmxSessionCheckResponse)
+async def ensure_gmx_session(
+    email: str = "opensin@gmx.de",
+    password: str = "ZOE.jerry2024",
+):
+    """
+    Flow 0: Stellt GMX Session wieder her oder macht Fresh Login.
+    
+    FLOW:
+    1. Check ob GMX Inbox erreichbar (Session OK → Flow 1 weiter)
+    2. Falls nicht: Logout → Login (3x Profil-Icon) → Email → Passwort
+    
+    Args:
+        email: GMX login email (default: opensin@gmx.de)
+        password: GMX login password (default: ZOE.jerry2024)
+    
+    Returns:
+        status: "success" | "partial" | "error"
+        action: "session_active" | "login_completed" | "login_attempted" | "failed"
+        current_url: Aktuelle URL nach Login
+        sid: GMX session ID (wenn verfügbar)
+    """
+    t0 = time.time()
+    cdp_port = _require_browser()
+    
+    try:
+        result = await get_gmx_service().ensure_gmx_session(
+            email=email,
+            password=password,
+            cdp_port=cdp_port,
+        )
+        return GmxSessionCheckResponse(
+            status=result["status"],
+            current_url=result.get("current_url", ""),
+            session_active=result.get("status") == "success",
+            execution_time=f"{time.time()-t0:.2f}s",
+            error=result.get("error"),
+        )
+    except Exception as e:
+        logger.error(f"ensure_gmx_session endpoint fehlgeschlagen: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/email-addresses", response_model=GmxEmailAddressesResponse)
 async def open_email_addresses():
     """

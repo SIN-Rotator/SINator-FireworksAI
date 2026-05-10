@@ -33,6 +33,7 @@ Server starts on `http://localhost:8000` — Swagger UI at `/docs`.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | POST | `/api/v1/gmx/session/check` | Check GMX session active |
+| POST | `/api/v1/gmx/session/ensure` | **Flow 0** — Login or recover GMX session |
 | POST | `/api/v1/gmx/email-addresses` | Navigate to alias settings page |
 | POST | `/api/v1/gmx/alias/delete` | Delete existing alias |
 | POST | `/api/v1/gmx/alias/create` | Create new alias |
@@ -155,16 +156,55 @@ Chrome --user-data-dir=TEMP_DIR --profile-directory="Profile 901" --remote-debug
 
 ---
 
+## Full Pipeline (4 Flows)
+
+### `POST /api/v1/rotation/full` — Complete Account Rotation
+
+**Atomically rotates GMX alias → Fireworks registration → API key extraction.**
+
+```bash
+curl -X POST http://localhost:8000/api/v1/rotation/full \
+  -H "Content-Type: application/json" \
+  -d '{"fireworks_password": "YourPassword123!"}'
+```
+
+**Flow 0 (Session):** Check GMX session → Login if needed (Profile Icon → Logout → Login → Login → Email → Password)
+
+**Flow 1 (GMX Alias):** Delete existing alias → Create new alias (`{adj}-{noun}-{3digits}@gmx.de`)
+
+**Flow 2 (Fireworks Registration):** Navigate to /signup → Cookie Banner dismiss → Email → Password → Create Account → OTP polling
+
+**Flow 3 (OTP & Setup):** Read OTP URL from GMX email (via `detail-body-iframe` mailbody-ui.de) → Confirm account → Sign In → Setup profile → Submit for $5 credits → Create API key
+
+**Response:**
+```json
+{
+  "status": "success",
+  "gmx_alias": "swift-hawk-842@gmx.de",
+  "fireworks_account": "swift-hawk-842@gmx.de",
+  "api_key": "fw_2KY4b8C2d1E9f0G3h...",
+  "api_key_name": "swift-hawk",
+  "steps_completed": ["gmx_session_active", "gmx_alias_rotated", "fw_registered", "fw_otp_received", "fw_setup_complete", "api_key_created"],
+  "steps_failed": [],
+  "execution_time": "187.32s"
+}
+```
+
+---
+
 ## Status
 
 - ✅ Chrome startup with profile copy
+- ✅ **Flow 0:** GMX session ensure / login recovery
 - ✅ GMX session check
 - ✅ GMX email-addresses page navigation
 - ✅ GMX alias deletion
 - ✅ GMX alias creation
 - ✅ GMX alias rotation (atomic delete+create)
-- 🔄 Fireworks AI registration + OTP (in progress)
-- 🔄 API key pool management
+- ✅ **Flow 3:** OTP polling via `detail-body-iframe` (mailbody-ui.de)
+- ✅ Fireworks AI registration + OTP
+- ✅ API key pool management
+- ✅ Full pipeline: `POST /rotation/full`
 
 ---
 
