@@ -138,6 +138,33 @@ Response:
 
 ---
 
+### Flow #0: GMX Login / Session Recovery (ensure_gmx_session)
+
+**Methode:** `GmxService.ensure_gmx_session(email, password, cdp_port)`
+
+```
+PRÜFUNG: Kann GMX Inbox erreicht werden?
+  → navigate(gmx.net) → click E-Mail (208, 44) → wait 5s
+  → URL enthält navigator.gmx.net/mail?sid= ?
+  → JA: Session OK → weiter zu Flow 1
+
+FALLS NICHT (Session korrupt):
+  a) Profil-Icon klicken → Logout
+  b) Profil-Icon klicken → Login
+  c) Profil-Icon klicken → Login (GMX braucht 2x)
+  d) Email: opensin@gmx.de → Enter → Click Weiter
+  e) Passwort: ZOE.jerry2024 → Enter → Click Anmelden
+  f) Verifizieren: Click E-Mail → navigator.gmx.net/mail?sid= ?
+```
+
+**Credentials:**
+- Email: `opensin@gmx.de`
+- Passwort: `ZOE.jerry2024`
+
+**WICHTIG:** NUR Flow 0 anfassen. Flow 1, 2, 3 sind READ-ONLY!
+
+---
+
 ### ⚠️⚠️⚠️ Flow #1: GMX Alias Rotation — READ-ONLY VERIFIED (2026-05-10) ⚠️⚠️⚠️
 
 **STATUS: READ-ONLY — NIEMALS ÄNDERN!**
@@ -732,4 +759,4 @@ Agent versuchte "DOM exploration" für GMX Shadow-DOM Input → rewrite `_naviga
 3. Neuer Ansatz = Neue Datei (debug/), nicht existierende Dateien ändern
 4. IMMER zuerst backup/branch erstellen bevor irgendetwas geändert wird
 
-*Letzte Aktualisierung: 2026-05-10*
+*Letzte Aktualisierung: 2026-05-10 (Flow 0 hinzugefügt: GMX Login / Session Recovery)*
