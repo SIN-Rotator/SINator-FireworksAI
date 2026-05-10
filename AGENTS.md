@@ -180,6 +180,10 @@ FALLS NICHT (Session korrupt):
 
 **WICHTIG:** NUR Flow 0 anfassen. Flow 1, 2, 3 sind READ-ONLY!
 
+**Flow 0 Status:** ✅ VERIFIED — 54.93s durchschnittlich, 5/5 Tests erfolgreich
+- Letzter Test: 2026-05-10, SID: 331e8dc82fec93376c05f1148c0bc2...
+- Ablauf: Logout → Login(ignoriert) → Login(funktioniert) → Email+Weiter → Passwort+Login → E-Mail Klick → SID
+
 ---
 
 ### ⚠️⚠️⚠️ Flow #1: GMX Alias Rotation — READ-ONLY VERIFIED (2026-05-10) ⚠️⚠️⚠️
@@ -291,6 +295,104 @@ Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
          └─ Falls timeout: return {status: "partial", steps_failed: ["otp_not_found"]}
          └─ Email-Delay kann 2-5min dauern → 180s ist nötig
 ```
+
+---
+
+### Flow #3: GMX OTP Email Detection (innerhalb Phase 7)
+
+---
+
+## 🔬 TECHNISCHE ERKENNTNISSE — Shadow DOM & Custom Elements
+
+### ACCOUNT-AVATAR Shadow DOM Struktur
+```
+ACCOUNT-AVATAR (Custom Element)
+└── #shadow-root
+    ├── .appa-user-icon
+    │   └── section.appa-user-icon__initials
+    │       └── appa-ui-lux-svg-icon (fallback icon)
+    └── #appa-account-flyout (Dropdown — wird via JS Events geöffnet)
+        ├── .appa-account-flyout__header
+        │   ├── .appa-account-flyout__avatar "JS"
+        │   ├── .appa-account-flyout__plan "FreeMail"
+        │   ├── h1 "Jerem Schulz"
+        │   └── p "opensin@gmx.de"
+        ├── section (Account Management Links)
+        │   ├── a "Account verwalten"
+        │   └── a "E-Mail Einstellungen"
+        ├── section (Action Buttons)
+        │   ├── button "Logout"           ← Y=384 (nach JS .click())
+        │   ├── button "Zum Postfach"   ← Y=432
+        │   └── button "Account wechseln" ← Y=480
+        └── section (Footer Links)
+            ├── a "Feedback"
+            └── a "Hilfe & Kontakt"
+```
+
+### Warum CDP click_at() NICHT funktioniert für Shadow DOM
+1. **getBoundingClientRect()** gibt **0×0** zurück für Shadow DOM Elemente
+2. **Custom Elements** reagieren auf interne Events, nicht auf CDP Mouse Events
+3. **ACCOUNT-AVATAR** öffnet Flyout nur bei `mouseenter` + `click` Events
+4. **Lösung:** JS `.click()` + `.dispatchEvent(new Event('mouseenter'))` auf das Custom Element
+
+### Korrekte Interaktions-Reihenfolge
+```javascript
+// 1. Avatar finden und öffnen
+var avatar = document.querySelector('ACCOUNT-AVATAR');
+avatar.click();
+avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
+
+// 2. 3s warten für Shadow DOM Rendering
+
+// 3. Button im Shadow DOM via JS klicken
+var buttons = avatar.shadowRoot.querySelectorAll('button');
+for (var i=0; i<buttons.length; i++) {
+    if (buttons[i].textContent.trim().toLowerCase() === 'logout') {
+        buttons[i].click();
+        buttons[i].dispatchEvent(new Event('click', {bubbles: true}));
+    }
+}
+```
+
+### GMX Login Flow — Vollständige State Machine
+```
+State: LOGGED_IN
+  → ACCOUNT-AVATAR zeigt: "Zum Postfach", "Account wechseln"
+  
+State: LOGOUT (nach Klick auf "Logout")
+  → URL: https://www.gmx.net/logoutlounge
+  → Seite zeigt: "Login vorübergehend nicht möglich"
+  → Nach 3s Refresh: normale GMX Homepage
+  
+State: LOGIN_ATTEMPT_1 (erster Klick auf "Login")
+  → GMX IGNORIERT diesen Klick!
+  → URL bleibt: https://www.gmx.net/
+  → Kein Formular erscheint
+  
+State: LOGIN_ATTEMPT_2 (zweiter Klick auf "Login")
+  → Jetzt erscheint das Login-Formular!
+  → URL: https://auth.gmx.net/login?prompt=none&state=...
+  → Formular hat: Email-Input + Password-Input + "Login" Button
+  
+State: EMAIL_ENTERED
+  → Email eingeben + "Weiter" klicken
+  → URL bleibt gleich, Formular zeigt jetzt auch Password
+  
+State: PASSWORD_ENTERED  
+  → Password eingeben + "Login" klicken
+  → URL wechselt zu: https://bap.navigator.gmx.net/mail?sid=...
+  
+State: LOGGED_IN (wieder)
+  → Session OK! Weiter zu Flow 1.
+```
+
+### Element-Koordinaten (Viewport 1200×919)
+| Element | Selektor | X | Y | Typ |
+|---|---|---|---|---|
+| ACCOUNT-AVATAR | `document.querySelector('ACCOUNT-AVATAR')` | 1066 | 44 | Custom Element |
+| Logout Button | `avatar.shadowRoot.querySelectorAll('button')[0]` | 914 | 384 | BUTTON |
+| Zum Postfach | `avatar.shadowRoot.querySelectorAll('button')[1]` | 914 | 432 | BUTTON |
+| Account wechseln | `avatar.shadowRoot.querySelectorAll('button')[2]` | 914 | 480 | BUTTON |
 
 ---
 
@@ -683,11 +785,17 @@ await client.query_selector(session_id, selector, root_id)    # Find element
 await client.get_box_model(session_id, node_id)               # Element rect
 ```
 
-**Async helpers (standalone):**
-```python
-ws_url = await get_browser_ws_endpoint(cdp_port=9222)  # urllib-basiert, zuverlässig
-target = await get_page_target(client, url_filter="gmx")  # Find tab by URL
-```
+**CDP click_at() vs JS .click() — WICHTIGE UNTERSCHIEDE:**
+
+| Methode | Funktioniert für | Nicht für | Beispiel |
+|---|---|---|---|
+| `click_at(x, y)` | Normale DOM Elemente, Links, Buttons | Shadow DOM, Custom Elements | E-Mail Header Link |
+| JS `.click()` | Shadow DOM, Custom Elements, React controlled inputs | — | ACCOUNT-AVATAR Dropdown |
+
+**Regel:**
+- Normale Elemente → `click_at()` (echte Maus-Events)
+- Shadow DOM / Custom Elements → JS `.click()` + `.dispatchEvent()`
+- React Inputs → `nativeInputValueSetter` + `Event('input')`
 
 ---
 
@@ -739,7 +847,7 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 |---|---|---|
 | Verbannte Methoden | `banned.md` | — |
 | CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session, **get_browser_ws_endpoint (urllib)** |
-| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | rotate_alias, create_alias, delete_alias, check_session, _inject_saved_cookies |
+| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_alias, check_session, _inject_saved_cookies |
 | GMX Alias CLI Tool | `tools/gmx_alias_tool.py` | status, check, rotate, create, delete — **READ-ONLY VERIFIED, NEVER CHANGE** |
 | Fireworks E2E | `agent_toolbox/core/fireworks_service.py:875` | register(email, password, gmx_password) |
 | Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` | POST /rotation/full |
@@ -776,4 +884,30 @@ Agent versuchte "DOM exploration" für GMX Shadow-DOM Input → rewrite `_naviga
 3. Neuer Ansatz = Neue Datei (debug/), nicht existierende Dateien ändern
 4. IMMER zuerst backup/branch erstellen bevor irgendetwas geändert wird
 
-*Letzte Aktualisierung: 2026-05-10 (Flow 0: GMX braucht 2x login nach logout)*
+### 2026-05-10: Flow 0 Shadow DOM Discovery (GELÖST)
+
+**Was passiert ist:**
+GMX Login Flow hat sich geändert — Dropdown ist jetzt im Shadow DOM von ACCOUNT-AVATAR.
+CDP `click_at()` funktioniert NICHT für Custom Elements mit Shadow DOM.
+
+**Lösung:**
+1. JS `.click()` + `.dispatchEvent(new Event('mouseenter'))` auf Custom Element
+2. Dann JS `.click()` auf Buttons im Shadow DOM
+3. 3s Wait für Shadow DOM Rendering
+4. Multi-Synonym Suche: `logout`, `abmelden`, `ausloggen`, `account wechseln`
+
+**Files geändert:**
+- `agent_toolbox/core/gmx_service.py` — `_click_profile_icon_and_action()` komplett neu
+- `AGENTS.md` — Shadow DOM Dokumentation, State Machine, Koordinaten
+
+**Test Ergebnis:**
+- 5/5 Tests erfolgreich
+- Durchschnitt: 54.93s
+- Letzter Test: 2026-05-10, SID: 331e8dc82fec93376c05f1148c0bc2...
+
+**Root Cause:**
+GMX hat ACCOUNT-AVATAR zu einem Web Component (Custom Element) umgebaut.
+Shadow DOM Elemente sind für CDP nicht sichtbar (`getBoundingClientRect()` → 0×0).
+Nur JS Events innerhalb des Shadow DOM können die Elemente bedienen.
+
+*Letzte Aktualisierung: 2026-05-10 (Flow 0: GMX Shadow DOM + 2x Login)*
