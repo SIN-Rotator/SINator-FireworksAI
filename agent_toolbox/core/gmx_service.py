@@ -243,8 +243,24 @@ class GmxService:
         })()''', return_by_value=True)
         clicked = click_result.get("result", {}).get("value", False)
         if not clicked:
-            logger.warning("E-Mail Nav Element nicht gefunden, fallback CDP click bei (302, 44)")
-            await client.click_at(session_id, x=302, y=44)
+            logger.warning("E-Mail Nav Element nicht gefunden, fallback via JS querySelectorAll")
+            await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    var links = document.querySelectorAll('a');
+                    for (var i=0; i<links.length; i++) {
+                        var t = links[i].textContent.trim().toLowerCase();
+                        if (t === 'e-mail') {
+                            links[i].click();
+                            return true;
+                        }
+                    }
+                    return false;
+                })()
+                """,
+                return_by_value=True,
+            )
         await asyncio.sleep(5)
 
         # Extract SID from mail page URL
@@ -1242,60 +1258,81 @@ class GmxService:
         start_time = time.time()
 
         async def _click_profile_icon_and_action(client, session_id, action_text: str) -> bool:
-            """Klickt Profil-Icon und dann auf action_text."""
-            result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    // Find profile icon
-                    const selectors = [
-                        'ACCOUNT-AVATAR-NAVIGATOR',
-                        '[data-testid="account-avatar"]',
-                        '.account-avatar',
-                        'button[data-item-name="account"]',
-                        '[class*="avatar"]',
-                        '[aria-label*="Account"]'
-                    ];
-                    for (const sel of selectors) {
-                        const el = document.querySelector(sel) || 
-                                   document.querySelector('[class*="account"]') ||
-                                   document.querySelector('[class*="avatar"]');
-                        if (el && el.offsetParent !== null) {
-                            el.click();
-                            return {clicked: true, tag: el.tagName};
+            """Klickt Profil-Icon via CDP click_at und dann action_text via click_at."""
+            # Step 1: Find avatar and click via CDP (not JS .click()!)
+            avatar_js = """
+            (function() {
+                var el = document.querySelector('ACCOUNT-AVATAR') || 
+                         document.querySelector('ACCOUNT-AVATAR-NAVIGATOR') ||
+                         document.querySelector('[data-testid="account-avatar"]');
+                if (!el) {
+                    var all = document.querySelectorAll('*');
+                    var vw = window.innerWidth;
+                    for (var i=0; i<all.length; i++) {
+                        var rect = all[i].getBoundingClientRect();
+                        if (rect.right > vw * 0.80 && rect.top < 80 && rect.width > 15 && rect.height > 15) {
+                            var text = (all[i].textContent || '').trim().toLowerCase();
+                            if (text.indexOf('account') !== -1 || text.indexOf('mein') !== -1 ||
+                                all[i].className.indexOf('avatar') !== -1 || all[i].className.indexOf('account') !== -1) {
+                                el = all[i];
+                                break;
+                            }
                         }
                     }
-                    return {clicked: false};
-                })()
-                """,
-                return_by_value=True,
-            )
+                }
+                if (!el) return {found: false};
+                var rect = el.getBoundingClientRect();
+                return {
+                    found: true,
+                    x: Math.round(rect.left + rect.width/2),
+                    y: Math.round(rect.top + rect.height/2),
+                    tag: el.tagName
+                };
+            })()
+            """
+            result = await client.evaluate(session_id, avatar_js, return_by_value=True)
             val = result.get("result", {}).get("value", {})
-            if not val.get("clicked"):
+            if not val.get("found"):
+                logger.warning(f"[Flow 0] Could not find profile avatar")
                 return False
+            
+            logger.info(f"[Flow 0] Clicking avatar at ({val['x']}, {val['y']})...")
+            await client.click_at(session_id, val["x"], val["y"])
             await asyncio.sleep(2)
             
-            # Now click action in the dropdown/menu
-            action_result = await client.evaluate(
-                session_id,
-                f"""
-                (function() {{
-                    const text = "{action_text}".toLowerCase();
-                    const options = document.querySelectorAll('button, a, [role="button"], [role="menuitem"]');
-                    for (const opt of options) {{
-                        const t = (opt.textContent || '').trim().toLowerCase();
-                        if (t.includes(text)) {{
-                            opt.click();
-                            return {{clicked: true, text: t}};
-                        }}
-                    }}
-                    return {{clicked: false}};
-                })()
-                """,
-                return_by_value=True,
-            )
+            # Step 2: Find dropdown item by text and click via CDP
+            action_js = """
+            (function() {
+                var text = "%s";
+                var all = document.querySelectorAll('*');
+                for (var i=0; i<all.length; i++) {
+                    var t = (all[i].textContent || '').trim().toLowerCase();
+                    var rect = all[i].getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top > 0 && rect.left > 0) {
+                        if (t.indexOf(text) !== -1) {
+                            return {
+                                found: true,
+                                x: Math.round(rect.left + rect.width/2),
+                                y: Math.round(rect.top + rect.height/2),
+                                text: t
+                            };
+                        }
+                    }
+                }
+                return {found: false};
+            })()
+            """ % action_text
+            action_result = await client.evaluate(session_id, action_js, return_by_value=True)
             action_val = action_result.get("result", {}).get("value", {})
-            return action_val.get("clicked", False)
+            
+            if not action_val.get("found"):
+                logger.warning(f"[Flow 0] Could not find '{action_text}' in dropdown")
+                return False
+            
+            logger.info(f"[Flow 0] Clicking '{action_text}' at ({action_val['x']}, {action_val['y']})...")
+            await client.click_at(session_id, action_val["x"], action_val["y"])
+            await asyncio.sleep(1)
+            return True
 
         async def _wait_for_page_stable(client, session_id, timeout: int = 10) -> str:
             """Wartet bis Seite stable ist und gibt URL zurück."""
@@ -1308,6 +1345,78 @@ class GmxService:
                     break
             return url
 
+        async def _do_email_password_login(client, session_id, email: str, password: str) -> bool:
+            """Füllt Email + Password Form aus und klickt login via CDP click_at."""
+            # Step 1: Fill email
+            email_js = """
+            (function() {
+                var input = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
+                if (!input) return {found: false};
+                
+                var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(input, '%s');
+                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                
+                // Find button coordinates for click_at
+                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                for (var i=0; i<buttons.length; i++) {
+                    var btn = buttons[i];
+                    var text = (btn.textContent || '').trim().toLowerCase();
+                    var rect = btn.getBoundingClientRect();
+                    if (text.indexOf('weiter') !== -1 || text.indexOf('next') !== -1 || 
+                        text.indexOf('continue') !== -1 || text.indexOf('angemeldet') !== -1) {
+                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    }
+                }
+                return {found: true, clickX: 0, clickY: 0};
+            })()
+            """ % email
+            r = await client.evaluate(session_id, email_js, return_by_value=True)
+            val = r.get("result", {}).get("value", {})
+            if not val.get("found"):
+                logger.info("[Flow 0] No email input found")
+                return False
+            
+            # Click "Weiter" button via CDP
+            if val.get("clickX", 0) > 0:
+                await client.click_at(session_id, val["clickX"], val["clickY"])
+            await asyncio.sleep(4)
+            
+            # Step 2: Fill password
+            pw_js = """
+            (function() {
+                var input = document.querySelector('input[type="password"], input[name="password"]');
+                if (!input) return {found: false};
+                
+                var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(input, '%s');
+                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                
+                // Find login button coordinates
+                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                for (var i=0; i<buttons.length; i++) {
+                    var btn = buttons[i];
+                    var text = (btn.textContent || '').trim().toLowerCase();
+                    var rect = btn.getBoundingClientRect();
+                    if (text.indexOf('anmelden') !== -1 || text.indexOf('login') !== -1 || text.indexOf('einloggen') !== -1) {
+                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    }
+                }
+                return {found: true, clickX: 0, clickY: 0};
+            })()
+            """ % password
+            r2 = await client.evaluate(session_id, pw_js, return_by_value=True)
+            val2 = r2.get("result", {}).get("value", {})
+            
+            # Click "Anmelden" button via CDP
+            if val2.get("clickX", 0) > 0:
+                await client.click_at(session_id, val2["clickX"], val2["clickY"])
+            
+            logger.info(f"[Flow 0] Email+Password login: email_btn='{val.get('text','none')}', pw_btn='{val2.get('text','none')}'")
+            return True
+
         client = None
         try:
             client, session_id, _ = await self._connect_to_browser(cdp_port)
@@ -1317,8 +1426,35 @@ class GmxService:
             await client.navigate(session_id, "https://www.gmx.net/")
             await asyncio.sleep(3)
             
-            # Click E-Mail header button
-            await client.click_at(session_id, 208, 44)
+            # Click E-Mail header button via JS - find the one with navigator.gmx.net in href
+            await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    var links = document.querySelectorAll('a');
+                    for (var i=0; i<links.length; i++) {
+                        var t = links[i].textContent.trim();
+                        if (t === 'E-Mail' || t === 'Email') {
+                            var href = links[i].href || '';
+                            if (href.indexOf('navigator.gmx.net') !== -1 || href.indexOf('gmx.net/mail') !== -1) {
+                                links[i].click();
+                                return {clicked: true, href: href};
+                            }
+                        }
+                    }
+                    // Fallback: click any E-Mail link
+                    for (var i=0; i<links.length; i++) {
+                        var t = links[i].textContent.trim().toLowerCase();
+                        if (t === 'e-mail' || t === 'email' || t === 'postfach') {
+                            links[i].click();
+                            return {clicked: true, fallback: true};
+                        }
+                    }
+                    return {clicked: false};
+                })()
+                """,
+                return_by_value=True,
+            )
             await asyncio.sleep(5)
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
@@ -1347,15 +1483,20 @@ class GmxService:
             if logout_ok:
                 await asyncio.sleep(3)
             
-            # b) Click profile icon → login
-            logger.info("[Flow 0] Step B: Click login via profile icon...")
+            # b) Click profile icon → login (ERSTE login attempt - wird von GMX ignoriert!)
+            logger.info("[Flow 0] Step B: First login attempt (GMX ignores this click)...")
             await _click_profile_icon_and_action(client, session_id, "login")
             await asyncio.sleep(3)
             
-            # c) Click profile icon → login again (GMX needs 2x)
-            logger.info("[Flow 0] Step C: Click login again (GMX needs 2x)...")
+            # STILL enter email + password (first attempt - will be ignored by GMX)
+            logger.info("[Flow 0] Step B2: Enter email+password (first attempt - GMX ignores)...")
+            await _do_email_password_login(client, session_id, email, password)
+            await asyncio.sleep(4)
+            
+            # c) Click profile icon → login again (ZWEITE login attempt - jetzt funktioniert)
+            logger.info("[Flow 0] Step C: Second login attempt (this one works)...")
             await _click_profile_icon_and_action(client, session_id, "login")
-            await asyncio.sleep(3)
+            await asyncio.sleep(4)
             
             # Check if login form is visible
             login_form_result = await client.evaluate(
@@ -1382,73 +1523,101 @@ class GmxService:
                 await _click_profile_icon_and_action(client, session_id, "login")
                 await asyncio.sleep(3)
             
-            # d) Enter email and click Next/Weiter
+# d) Enter email and click Next/Weiter via CDP click_at
             logger.info(f"[Flow 0] Step D: Enter email {email}...")
-            email_input_result = await client.evaluate(
-                session_id,
-                f"""
-                (function() {{
-                    const input = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
-                    if (!input) return {{found: false}};
-                    
-                    // Use native setter for React controlled inputs
-                    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    nativeSetter.call(input, '{email}');
-                    input.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
-                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    
-                    // Find and click Continue/Next/Weiter button
-                    const buttons = document.querySelectorAll('button, input[type="submit"]');
-                    for (const btn of buttons) {{
-                        const text = (btn.textContent || '').trim().toLowerCase();
-                        if (text.includes('weiter') || text.includes('next') || text.includes('continue') || text.includes('angemeldet')) {{
-                            btn.click();
-                            return {{found: true, buttonClicked: text}};
-                        }}
-                    }}
-                    return {{found: true, buttonClicked: 'none'}};
-                })()
-                """,
-                return_by_value=True,
-            )
+            email_js = """
+            (function() {
+                var input = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
+                if (!input) return {found: false};
+                
+                var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(input, '%s');
+                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                
+                // Find "Weiter" button coordinates
+                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                for (var i=0; i<buttons.length; i++) {
+                    var btn = buttons[i];
+                    var text = (btn.textContent || '').trim().toLowerCase();
+                    var rect = btn.getBoundingClientRect();
+                    if (text.indexOf('weiter') !== -1 || text.indexOf('next') !== -1 || 
+                        text.indexOf('continue') !== -1 || text.indexOf('angemeldet') !== -1) {
+                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    }
+                }
+                return {found: true, clickX: 0, clickY: 0};
+            })()
+            """ % email
+            email_input_result = await client.evaluate(session_id, email_js, return_by_value=True)
             input_val = email_input_result.get("result", {}).get("value", {})
             logger.info(f"[Flow 0] Email input: {input_val}")
+            if input_val.get("clickX", 0) > 0:
+                await client.click_at(session_id, input_val["clickX"], input_val["clickY"])
             await asyncio.sleep(4)
             
-            # e) Enter password and click Login
+            # e) Enter password and click Login via CDP click_at
             logger.info("[Flow 0] Step E: Enter password...")
-            pw_input_result = await client.evaluate(
-                session_id,
-                f"""
-                (function() {{
-                    const input = document.querySelector('input[type="password"], input[name="password"]');
-                    if (!input) return {{found: false}};
-                    
-                    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    nativeSetter.call(input, '{password}');
-                    input.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
-                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    
-                    // Find and click Login/Anmelden button
-                    const buttons = document.querySelectorAll('button, input[type="submit"]');
-                    for (const btn of buttons) {{
-                        const text = (btn.textContent || '').trim().toLowerCase();
-                        if (text.includes('anmelden') || text.includes('login') || text.includes('einloggen')) {{
-                            btn.click();
-                            return {{found: true, buttonClicked: text}};
-                        }}
-                    }}
-                    return {{found: true, buttonClicked: 'none'}};
-                })()
-                """,
-                return_by_value=True,
-            )
+            pw_js = """
+            (function() {
+                var input = document.querySelector('input[type="password"], input[name="password"]');
+                if (!input) return {found: false};
+                
+                var nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                nativeSetter.call(input, '%s');
+                input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+                
+                // Find "Anmelden" button coordinates
+                var buttons = document.querySelectorAll('button, input[type="submit"], a[role="button"]');
+                for (var i=0; i<buttons.length; i++) {
+                    var btn = buttons[i];
+                    var text = (btn.textContent || '').trim().toLowerCase();
+                    var rect = btn.getBoundingClientRect();
+                    if (text.indexOf('anmelden') !== -1 || text.indexOf('login') !== -1 || text.indexOf('einloggen') !== -1) {
+                        return {found: true, clickX: Math.round(rect.left + rect.width/2), clickY: Math.round(rect.top + rect.height/2), text: text};
+                    }
+                }
+                return {found: true, clickX: 0, clickY: 0};
+            })()
+            """ % password
+            pw_input_result = await client.evaluate(session_id, pw_js, return_by_value=True)
             pw_val = pw_input_result.get("result", {}).get("value", {})
             logger.info(f"[Flow 0] Password input: {pw_val}")
+            if pw_val.get("clickX", 0) > 0:
+                await client.click_at(session_id, pw_val["clickX"], pw_val["clickY"])
             await asyncio.sleep(5)
             
-            # Verify login success
-            await client.click_at(session_id, 208, 44)  # E-Mail button
+            # Verify login success - click E-Mail via CDP click_at (find coordinates first)
+            email_verify_js = """
+            (function() {
+                var links = document.querySelectorAll('a');
+                for (var i=0; i<links.length; i++) {
+                    var t = links[i].textContent.trim().toLowerCase();
+                    if (t === 'e-mail' || t === 'email') {
+                        var rect = links[i].getBoundingClientRect();
+                        var href = links[i].href || '';
+                        if (href.indexOf('navigator.gmx.net') !== -1 || href.indexOf('gmx.net/mail') !== -1) {
+                            return {found: true, x: Math.round(rect.left + rect.width/2), y: Math.round(rect.top + rect.height/2), href: href};
+                        }
+                    }
+                }
+                // Fallback: any E-Mail link
+                for (var i=0; i<links.length; i++) {
+                    var t = links[i].textContent.trim().toLowerCase();
+                    if (t === 'e-mail' || t === 'email') {
+                        var rect = links[i].getBoundingClientRect();
+                        return {found: true, x: Math.round(rect.left + rect.width/2), y: Math.round(rect.top + rect.height/2), href: links[i].href};
+                    }
+                }
+                return {found: false};
+            })()
+            """
+            verify_result = await client.evaluate(session_id, email_verify_js, return_by_value=True)
+            verify_val = verify_result.get("result", {}).get("value", {})
+            if verify_val.get("found"):
+                logger.info(f"[Flow 0] Clicking E-Mail at ({verify_val['x']}, {verify_val['y']})...")
+                await client.click_at(session_id, verify_val["x"], verify_val["y"])
             await asyncio.sleep(5)
             
             final_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)

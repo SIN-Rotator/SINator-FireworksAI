@@ -150,8 +150,9 @@ PRÜFUNG: Kann GMX Inbox erreicht werden?
 
 FALLS NICHT (Session korrupt):
   a) Profil-Icon klicken → Logout
-  b) Profil-Icon klicken → Login
-  c) Profil-Icon klicken → Login (GMX braucht 2x)
+  b) Profil-Icon klicken → Login (ERSTE attempt - GMX ignoriert!)
+  b2) Trotzdem Email + Passwort eingeben und Anmelden klicken (ignoriert)
+  c) Profil-Icon klicken → Login (ZWEITE attempt - jetzt erscheint Email-Form)
   d) Email: opensin@gmx.de → Enter → Click Weiter
   e) Passwort: ZOE.jerry2024 → Enter → Click Anmelden
   f) Verifizieren: Click E-Mail → navigator.gmx.net/mail?sid= ?
@@ -759,4 +760,4 @@ Agent versuchte "DOM exploration" für GMX Shadow-DOM Input → rewrite `_naviga
 3. Neuer Ansatz = Neue Datei (debug/), nicht existierende Dateien ändern
 4. IMMER zuerst backup/branch erstellen bevor irgendetwas geändert wird
 
-*Letzte Aktualisierung: 2026-05-10 (Flow 0 hinzugefügt: GMX Login / Session Recovery)*
+*Letzte Aktualisierung: 2026-05-10 (Flow 0: GMX braucht 2x login nach logout)*
