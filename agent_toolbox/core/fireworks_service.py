@@ -1651,9 +1651,9 @@ class FireworksService:
             # - navigator.gmx.net
             # - gmx.net
             #
-            logger.info("[FW Register] Phase 6a: Inject GMX session cookies from data/gmx-cookies.json")
+            logger.info("[FW Register] Phase 6a: Inject GMX session cookies from backup/session/gmx-cookies-master.json")
 
-            cookies_file = Path("/Users/jeremy/dev/SINator-fireworksai/data/gmx-cookies.json")
+            cookies_file = Path("/Users/jeremy/dev/SINator-fireworksai/backup/session/gmx-cookies-master.json")
             gmx_injected = 0
 
             if cookies_file.exists():
@@ -1989,7 +1989,58 @@ class FireworksService:
                             if otp_url:
                                 break
                             
-                            # Fallback: scan main frame DOM (this path rarely works for GMX emails)
+                            # FALLBACK 2: Use Page.getFrameTree + Page.createIsolatedWorld
+                            # When iframes are not exposed as CDP targets (Chrome 147+ behavior)
+                            try:
+                                frame_tree = await client.send_to_session(
+                                    session_id, "Page.getFrameTree", {}
+                                )
+                                
+                                def find_mail_frame(node):
+                                    frame = node.get('frame', {})
+                                    url = frame.get('url', '')
+                                    if 'mailbody' in url or ('gmx.net' in url and 'mail' in url and 'client' in url):
+                                        return frame.get('id')
+                                    for child in node.get('childFrames', []):
+                                        result = find_mail_frame(child)
+                                        if result:
+                                            return result
+                                    return None
+                                
+                                mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
+                                if mail_frame_id:
+                                    logger.info(f"[FW Register] Found mail frame via getFrameTree: {mail_frame_id[:20]}...")
+                                    world_result = await client.send_to_session(
+                                        session_id, "Page.createIsolatedWorld", {
+                                            "frameId": mail_frame_id,
+                                            "worldName": "sinator_otp"
+                                        }
+                                    )
+                                    execution_context_id = world_result.get("executionContextId")
+                                    if execution_context_id:
+                                        eval_result = await client.send_to_session(
+                                            session_id, "Runtime.evaluate", {
+                                                "expression": """(function() {
+                                                    const html = document.body ? document.body.innerHTML : '';
+                                                    const m = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/(?:confirm|verify|email_verification)[^\\s"'<>]+/);
+                                                    return m ? m[0] : '';
+                                                })()""",
+                                                "contextId": execution_context_id,
+                                                "returnByValue": True
+                                            }
+                                        )
+                                        frame_otp = eval_result.get("result", {}).get("value", "")
+                                        if frame_otp:
+                                            import html as _html
+                                            otp_url = _html.unescape(frame_otp)
+                                            logger.info(f"[FW Register] OTP URL from frame isolated world: {otp_url[:80]}...")
+                            except Exception as _frame_e:
+                                logger.debug(f"[FW Register] FrameTree fallback failed: {_frame_e}")
+                            
+                            if otp_url:
+                                break
+                            
+                            # Fallback 3: scan main frame DOM (this path rarely works for GMX emails)
                             email_result = await client.evaluate(
                                 session_id,
                                 """

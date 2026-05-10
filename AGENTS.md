@@ -97,10 +97,9 @@ SINator-fireworksai/
 │   └── gmx_alias_tool.py          ← VERIFIZIERTES READ-ONLY CLI-TOOL
 │                                  BEZEICHNUNG: VERIFIZIERT, NIEMALS ÄNDERN!
 ├── data/
-│   ├── fireworksai-pool.json      API-Key Pool (JSON)
-│   └── gmx-cookies.json           GMX Session Cookies (429 Entries)
+│   └── fireworksai-pool.json      API-Key Pool (JSON)
 ├── backup/session/
-│   └── gmx-cookies-master.json    Goldener Session-Backup (chmod 444)
+│   └── gmx-cookies-master.json    Goldener Session-Backup (chmod 444, READ-ONLY!)
 ├── AGENTS.md                      ← DIESE DATEI (Single Source of Truth)
 └── banned.md                      Verbotene Methoden
 ```
@@ -474,13 +473,8 @@ Phase 20: API Key erstellen
 
 ```
 1. Browser beenden: kill $(ps aux | grep "[c]hrome.*user-data-dir" ...)
-2. data/gmx-cookies.json LÖSCHEN (enthält abgelaufene Cookies)
-3. backup/session/gmx-cookies-master.json → data/gmx-cookies.json kopieren
-4. Chrome neu starten (Chrome Start Befehl)
-5. Cookies via CDP injizieren:
-   → GmxService._inject_saved_cookies(client, session_id)
-   → Network.setCookie für alle Cookies aus gmx-cookies.json
-6. GMX Homepage → "E-Mail" click → navigator.gmx.net/mail?sid=... prüfen
+2. Chrome neu starten (Chrome Start Befehl)
+3. GMX Homepage → "E-Mail" click → navigator.gmx.net/mail?sid=... prüfen
 ```
 
 ### Session Validierung (IMMER VOR JEDER OPERATION):
@@ -582,9 +576,7 @@ Falls Session tot: `curl -X POST http://localhost:8000/cookies/recover`
 
 ```
 backup/session/
-├── gmx-cookies-master.json  ← Goldener Master (chmod 444, READ-ONLY!)
-├── gmx-cookies-current.json ← Aktueller Zustand
-└── last-known-good/         ← Snapshot vor jeder Rotation
+└── gmx-cookies-master.json  ← Goldener Master (chmod 444, READ-ONLY!)
 ```
 
 ---
@@ -619,31 +611,29 @@ PoolManager unterstützt BEIDE Formate: Legacy `{"accounts": [...]}` und neues `
 - `get_stats()` → {total, used, available, keys: [...]}
 - `save()` → schreibt pool.json
 
-### data/gmx-cookies.json
+### data/fireworksai-pool.json
 
-429 Entries, Chrome CDP Export Format:
+API-Key Pool im Plain-Array Format:
 ```json
 [
   {
-    "name": "SID",
-    "value": "abc123...",
-    "domain": ".gmx.net",
-    "path": "/",
-    "expires": -1,
-    "size": 256,
-    "httpOnly": true,
-    "secure": true,
-    "session": true,
-    "sameSite": "none",
-    "priority": "medium",
-    "sourceScheme": "Secure",
-    "sourcePort": 443,
-    "partitionKey": null
+    "id": "uuid-8-stellig",
+    "api_key": "fw-Za4b8C2d1E9f0G3h...",
+    "alias_email": "swift-hawk-842@gmx.de",
+    "key_name": "swift-hawk",
+    "created_at": "2026-05-09T12:00:00Z",
+    "used": false,
+    "used_at": null
   }
 ]
 ```
 
-Nur GMX-relevante Cookies (domain enthält "gmx") werden injiziert.
+**PoolManager API:**
+- `add_key(api_key, alias_email, key_name)` → {status, key_id}
+- `get_available_key()` → {api_key, alias_email, key_name, ...} oder None
+- `mark_used(key_id)` → True/False
+- `get_stats()` → {total, used, available, keys: [...]}
+- `save()` → schreibt pool.json
 
 ---
 
@@ -749,8 +739,8 @@ Falls delete fehlschlägt → trotzdem neuen erstellen (partial success).
 ### GMX Session bei Chrome-Neustart
 **Problem:** Nach Chrome-Neustart sind GMX-Session-Cookies weg.
 
-**Fix:** `_inject_saved_cookies()` lädt gmx-cookies.json und injiziert alle
-Cookies via `Network.setCookie`. GMX-Session wird wiederhergestellt ohne Login.
+**Fix:** Chrome mit Profil 901 starten → GMX Session wird automatisch
+wiederhergestellt (Cookies sind im Chrome-Profil gespeichert).
 
 ---
 
