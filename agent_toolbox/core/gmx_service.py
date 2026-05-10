@@ -1216,6 +1216,276 @@ class GmxService:
             if client:
                 await client.disconnect()
 
+    async def ensure_gmx_session(
+        self,
+        email: str = "opensin@gmx.de",
+        password: str = "ZOE.jerry2024",
+        cdp_port: int = 9222,
+    ) -> Dict[str, Any]:
+        """
+        ════════════════════════════════════════════════════════════════════════════════
+        FLOW 0: GMX LOGIN — Session-Wiederherstellung oder Fresh Login
+        ════════════════════════════════════════════════════════════════════════════════
+
+        PRÜFT: Ob GMX Inbox erreichbar ist (Session OK → Flow 1 weiter)
+        
+        FALLS NICHT: Vollständiger Logout → Login Flow:
+          a) Profil-Icon klicken → Logout
+          b) Profil-Icon klicken → Login
+          c) Profil-Icon klicken → Login (GMX braucht 2x)
+          d) Email: opensin@gmx.de + Weiter
+          e) Passwort: ZOE.jerry2024 + Login
+
+        NUR DIESER FLOW WIRD ANGEFASST. Flow 1, 2, 3 sind READ-ONLY.
+        """
+        import time
+        start_time = time.time()
+
+        async def _click_profile_icon_and_action(client, session_id, action_text: str) -> bool:
+            """Klickt Profil-Icon und dann auf action_text."""
+            result = await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    // Find profile icon
+                    const selectors = [
+                        'ACCOUNT-AVATAR-NAVIGATOR',
+                        '[data-testid="account-avatar"]',
+                        '.account-avatar',
+                        'button[data-item-name="account"]',
+                        '[class*="avatar"]',
+                        '[aria-label*="Account"]'
+                    ];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel) || 
+                                   document.querySelector('[class*="account"]') ||
+                                   document.querySelector('[class*="avatar"]');
+                        if (el && el.offsetParent !== null) {
+                            el.click();
+                            return {clicked: true, tag: el.tagName};
+                        }
+                    }
+                    return {clicked: false};
+                })()
+                """,
+                return_by_value=True,
+            )
+            val = result.get("result", {}).get("value", {})
+            if not val.get("clicked"):
+                return False
+            await asyncio.sleep(2)
+            
+            # Now click action in the dropdown/menu
+            action_result = await client.evaluate(
+                session_id,
+                f"""
+                (function() {{
+                    const text = "{action_text}".toLowerCase();
+                    const options = document.querySelectorAll('button, a, [role="button"], [role="menuitem"]');
+                    for (const opt of options) {{
+                        const t = (opt.textContent || '').trim().toLowerCase();
+                        if (t.includes(text)) {{
+                            opt.click();
+                            return {{clicked: true, text: t}};
+                        }}
+                    }}
+                    return {{clicked: false}};
+                })()
+                """,
+                return_by_value=True,
+            )
+            action_val = action_result.get("result", {}).get("value", {})
+            return action_val.get("clicked", False)
+
+        async def _wait_for_page_stable(client, session_id, timeout: int = 10) -> str:
+            """Wartet bis Seite stable ist und gibt URL zurück."""
+            url = ""
+            for _ in range(timeout):
+                await asyncio.sleep(1)
+                r = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                url = r.get("result", {}).get("value", "") or ""
+                if "gmx" in url.lower():
+                    break
+            return url
+
+        client = None
+        try:
+            client, session_id, _ = await self._connect_to_browser(cdp_port)
+            
+            # STEP 0: Check if we can already access email page
+            logger.info("[Flow 0] Checking if GMX session is active...")
+            await client.navigate(session_id, "https://www.gmx.net/")
+            await asyncio.sleep(3)
+            
+            # Click E-Mail header button
+            await client.click_at(session_id, 208, 44)
+            await asyncio.sleep(5)
+            
+            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            current_url = url_result.get("result", {}).get("value", "") or ""
+            
+            if "navigator.gmx.net/mail?sid=" in current_url:
+                logger.info("[Flow 0] ✅ Session already active - proceeding to Flow 1")
+                return {
+                    "status": "success",
+                    "action": "session_active",
+                    "current_url": current_url,
+                    "sid": current_url.split("sid=")[1].split("&")[0] if "sid=" in current_url else "",
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                }
+            
+            # STEP 1: Session not active - need logout/login
+            logger.info("[Flow 0] ❌ Session NOT active - starting logout/login flow")
+            
+            # Go to GMX homepage
+            await client.navigate(session_id, "https://www.gmx.net/")
+            await asyncio.sleep(3)
+            
+            # a) Click profile icon → logout
+            logger.info("[Flow 0] Step A: Logout via profile icon...")
+            logout_ok = await _click_profile_icon_and_action(client, session_id, "logout")
+            if logout_ok:
+                await asyncio.sleep(3)
+            
+            # b) Click profile icon → login
+            logger.info("[Flow 0] Step B: Click login via profile icon...")
+            await _click_profile_icon_and_action(client, session_id, "login")
+            await asyncio.sleep(3)
+            
+            # c) Click profile icon → login again (GMX needs 2x)
+            logger.info("[Flow 0] Step C: Click login again (GMX needs 2x)...")
+            await _click_profile_icon_and_action(client, session_id, "login")
+            await asyncio.sleep(3)
+            
+            # Check if login form is visible
+            login_form_result = await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    const emailInput = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
+                    const pwInput = document.querySelector('input[type="password"], input[name="password"]');
+                    return {
+                        hasEmailInput: !!emailInput,
+                        hasPasswordInput: !!pwInput,
+                        bodyText: document.body.innerText.substring(0, 300)
+                    };
+                })()
+                """,
+                return_by_value=True,
+            )
+            form_val = login_form_result.get("result", {}).get("value", {})
+            
+            if not form_val.get("hasEmailInput"):
+                logger.info("[Flow 0] Login form not visible, trying URL navigation...")
+                await client.navigate(session_id, "https://www.gmx.net/")
+                await asyncio.sleep(3)
+                await _click_profile_icon_and_action(client, session_id, "login")
+                await asyncio.sleep(3)
+            
+            # d) Enter email and click Next/Weiter
+            logger.info(f"[Flow 0] Step D: Enter email {email}...")
+            email_input_result = await client.evaluate(
+                session_id,
+                f"""
+                (function() {{
+                    const input = document.querySelector('input[type="email"], input[name="email"], input[id="email"], input[autocomplete="email"]');
+                    if (!input) return {{found: false}};
+                    
+                    // Use native setter for React controlled inputs
+                    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    nativeSetter.call(input, '{email}');
+                    input.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    
+                    // Find and click Continue/Next/Weiter button
+                    const buttons = document.querySelectorAll('button, input[type="submit"]');
+                    for (const btn of buttons) {{
+                        const text = (btn.textContent || '').trim().toLowerCase();
+                        if (text.includes('weiter') || text.includes('next') || text.includes('continue') || text.includes('angemeldet')) {{
+                            btn.click();
+                            return {{found: true, buttonClicked: text}};
+                        }}
+                    }}
+                    return {{found: true, buttonClicked: 'none'}};
+                })()
+                """,
+                return_by_value=True,
+            )
+            input_val = email_input_result.get("result", {}).get("value", {})
+            logger.info(f"[Flow 0] Email input: {input_val}")
+            await asyncio.sleep(4)
+            
+            # e) Enter password and click Login
+            logger.info("[Flow 0] Step E: Enter password...")
+            pw_input_result = await client.evaluate(
+                session_id,
+                f"""
+                (function() {{
+                    const input = document.querySelector('input[type="password"], input[name="password"]');
+                    if (!input) return {{found: false}};
+                    
+                    const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    nativeSetter.call(input, '{password}');
+                    input.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    input.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    
+                    // Find and click Login/Anmelden button
+                    const buttons = document.querySelectorAll('button, input[type="submit"]');
+                    for (const btn of buttons) {{
+                        const text = (btn.textContent || '').trim().toLowerCase();
+                        if (text.includes('anmelden') || text.includes('login') || text.includes('einloggen')) {{
+                            btn.click();
+                            return {{found: true, buttonClicked: text}};
+                        }}
+                    }}
+                    return {{found: true, buttonClicked: 'none'}};
+                })()
+                """,
+                return_by_value=True,
+            )
+            pw_val = pw_input_result.get("result", {}).get("value", {})
+            logger.info(f"[Flow 0] Password input: {pw_val}")
+            await asyncio.sleep(5)
+            
+            # Verify login success
+            await client.click_at(session_id, 208, 44)  # E-Mail button
+            await asyncio.sleep(5)
+            
+            final_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            final_url = final_url_result.get("result", {}).get("value", "") or ""
+            
+            if "navigator.gmx.net/mail?sid=" in final_url:
+                sid = final_url.split("sid=")[1].split("&")[0] if "sid=" in final_url else ""
+                logger.info(f"[Flow 0] ✅ Login successful! SID: {sid[:30]}...")
+                return {
+                    "status": "success",
+                    "action": "login_completed",
+                    "current_url": final_url,
+                    "sid": sid,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                }
+            else:
+                logger.warning(f"[Flow 0] Login may have failed. URL: {final_url[:80]}")
+                return {
+                    "status": "partial",
+                    "action": "login_attempted",
+                    "current_url": final_url,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": "Login completed but could not verify session",
+                }
+                
+        except Exception as e:
+            logger.error(f"[Flow 0] Error: {e}")
+            return {
+                "status": "error",
+                "action": "failed",
+                "error": str(e),
+                "execution_time": f"{time.time() - start_time:.2f}s",
+            }
+        finally:
+            if client:
+                await client.disconnect()
+
     async def open_email_addresses_page(self, cdp_port: int = 9222) -> Dict[str, Any]:
         """Navigiert zur E-Mail-Adressen-Verwaltungsseite."""
         client = None
