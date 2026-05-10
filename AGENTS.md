@@ -178,11 +178,12 @@ FALLS NICHT (Session korrupt):
 - Email: `opensin@gmx.de`
 - Passwort: `ZOE.jerry2024`
 
-**WICHTIG:** NUR Flow 0 anfassen. Flow 1, 2, 3 sind READ-ONLY!
+**WICHTIG:** Flow 0, 1, 2, 3 sind ALLE READ-ONLY! NIEMALS ÄNDERN außer bei konkretem Bug-Report!
 
-**Flow 0 Status:** ✅ VERIFIED — 54.93s durchschnittlich, 5/5 Tests erfolgreich
+**Flow 0 Status:** ✅ VERIFIED — 54.93s durchschnittlich, 5/5 Tests erfolgreich — **READ-ONLY SINCE 2026-05-10**
 - Letzter Test: 2026-05-10, SID: 331e8dc82fec93376c05f1148c0bc2...
 - Ablauf: Logout → Login(ignoriert) → Login(funktioniert) → Email+Weiter → Passwort+Login → E-Mail Klick → SID
+- **FILE:** `agent_toolbox/core/gmx_service.py` — `_click_profile_icon_and_action()`, `_do_email_password_login()`, `ensure_gmx_session()`
 
 ---
 
