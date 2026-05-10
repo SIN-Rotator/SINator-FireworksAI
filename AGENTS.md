@@ -1,5 +1,11 @@
 # AGENTS.md — SINator Fireworks AI Rotator
 
+## 🚨 MANDATORY SCAN PROTOCOL (PERMANENT)
+niemals wieder machst du auch nurrrr eine kleine aktion bevor du nicht gesamten mac alle elemente gescannt hast vor und nach JEDEM klick
+
+## 🛠️ BROWSER WAIT COMMAND
+/browser-wait-element — warte auf selector element, timeout 15s, return: gefunden/nicht gefunden
+
 ## ⚠️ EINFACHE REGEL — AX ELEMENT CLICK:
 Bei jedem Scan: Speichere VOLLSTÄNDIGEN PFAD + TEXT:
 ```python
