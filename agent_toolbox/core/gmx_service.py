@@ -1452,13 +1452,16 @@ class GmxService:
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             current_url = url_result.get("result", {}).get("value", "") or ""
             
-            if "navigator.gmx.net/mail?sid=" in current_url:
+            if "navigator.gmx.net/mail?sid=" in current_url or "bap.navigator.gmx.net/mail?sid=" in current_url:
                 logger.info("[Flow 0] ✅ Session already active - proceeding to Flow 1")
+                sid_val = ""
+                if "sid=" in current_url:
+                    sid_val = current_url.split("sid=")[1].split("&")[0]
                 return {
                     "status": "success",
                     "action": "session_active",
                     "current_url": current_url,
-                    "sid": current_url.split("sid=")[1].split("&")[0] if "sid=" in current_url else "",
+                    "sid": sid_val,
                     "execution_time": f"{time.time() - start_time:.2f}s",
                 }
             
@@ -1622,7 +1625,7 @@ class GmxService:
             final_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             final_url = final_url_result.get("result", {}).get("value", "") or ""
             
-            if "navigator.gmx.net/mail?sid=" in final_url:
+            if "navigator.gmx.net/mail?sid=" in final_url or "bap.navigator.gmx.net/mail?sid=" in final_url:
                 sid = final_url.split("sid=")[1].split("&")[0] if "sid=" in final_url else ""
                 logger.info(f"[Flow 0] ✅ Login successful! SID: {sid[:30]}...")
                 return {
@@ -2092,8 +2095,28 @@ class GmxService:
                     "error": f"Mail iframe nicht gefunden. URL: {current_url[:80]}...",
                 }
 
-            jsessionid_match = re.search(r'jsessionid=([^?&]+)', iframe_src)
-            jsessionid = jsessionid_match.group(1) if jsessionid_match else None
+            # Navigate to iframe to establish fresh webmailer session
+            logger.info(f"Navigiere zu webmailer: {iframe_src[:80]}...")
+            await client.navigate(session_id, iframe_src)
+            await asyncio.sleep(5)
+            
+            # Get jsessionid from BROWSER COOKIES (set by webmailer, not from stale iframe_src)
+            # The webmailer sets a JSESSIONID cookie. We extract it from the browser's
+            # current cookie jar rather than from the iframe URL (which is stale).
+            cookies_res = await client.send_to_session(session_id, "Network.getAllCookies")
+            jsessionid = None
+            for c in cookies_res.get("cookies", []):
+                if c.get("name") == "JSESSIONID":
+                    jsessionid = c.get("value", "")
+                    break
+            
+            if not jsessionid:
+                # Fallback: extract from current page URL
+                current_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                current_page_url = current_url_result.get('result', {}).get('value', '')
+                jsessionid_match = re.search(r'jsessionid=([^?&;]+)', current_page_url)
+                jsessionid = jsessionid_match.group(1) if jsessionid_match else None
+            
             logger.info(f"JSESSIONID extrahiert: {jsessionid[:30] if jsessionid else None}...")
 
             if not jsessionid:
@@ -2106,61 +2129,19 @@ class GmxService:
                 }
 
             # ════════════════════════════════════════════════════════════════════════
-            # PHASE 3: WEBMAILER LOADING
+            # PHASE 3: WEBMAILER LOADING (already navigated above)
             # ──────────────────────────────────────────────────────────────────────
-            # Navigation zum iframe-src lädt die Webmailer SPA. Diese braucht
-            # 8+ Sekunden bis die <list-mail-item> Custom Elements gerendert
-            # sind. Die Elemente sind in geschachtelten Shadow DOMs unter
-            # <webmailer-mail-list> → <mail-list-container> → <list-mail-list>.
-            # Wir nutzen rekursive JS Traversierung um sie zu finden.
+            # The webmailer was already loaded during jsessionid extraction.
+            # Wait additional time for list-mail-item elements to render.
             # ════════════════════════════════════════════════════════════════════════
-            logger.info(f"Navigiere zu webmailer: {iframe_src[:80]}...")
-            await client.navigate(session_id, iframe_src)
-            await asyncio.sleep(8)
+            await asyncio.sleep(5)
 
             # ════════════════════════════════════════════════════════════════════════
-            # PHASE 3.5: BASELINE SCAN (Anti-Stale-Email)
-            # ──────────────────────────────────────────────────────────────────────
-            # Wenn der Aufrufer keine exclude_mail_ids übergeben hat,
-            # führen wir einen initialen Scan durch und markieren ALLE
-            # aktuell sichtbaren Fireworks-Emails als "bekannt". Damit
-            # werden nur Emails verarbeitet die NACH diesem Scan eintreffen.
-            # Das verhindert dass wir einen alten/stale Confirm-Link
-            # zurückgeben der von einer vorherigen Rotation übrig geblieben ist.
+            # NOTE: Baseline scan removed. We fetch ALL found items to maximize
+            # chance of finding the OTP email. The sender_filter on the list
+            # already ensures we only look at Fireworks emails.
             # ════════════════════════════════════════════════════════════════════════
-            if exclude_mail_ids is None:
-                logger.info("Baseline-Scan: Sammle aktuell sichtbare Fireworks mailIds als 'bekannt'...")
-                baseline_js = f'''(function() {{
-                    function findItems(root) {{
-                        let items = [];
-                        const all = root.querySelectorAll("*");
-                        for (const el of all) {{
-                            if (el.tagName.toLowerCase() === "list-mail-item") {{
-                                const text = (el.textContent || "").toLowerCase();
-                                if (text.includes("{sender_filter.lower().replace("'", "\\'")}")) {{
-                                    const idAttr = el.getAttribute("id");
-                                    const mailId = idAttr ? idAttr.replace(/^id/, "") : null;
-                                    if (mailId) items.push(mailId);
-                                }}
-                            }}
-                            if (el.shadowRoot) {{
-                                items = items.concat(findItems(el.shadowRoot));
-                            }}
-                        }}
-                        return items;
-                    }}
-                    return findItems(document.body);
-                }})()'''
-                baseline_result = await client.evaluate(session_id, baseline_js, return_by_value=True)
-                baseline_ids = baseline_result.get('result', {}).get('value', [])
-                for mid in baseline_ids:
-                    known_mail_ids.add(mid)
-                logger.info(f"Baseline-Scan: {len(known_mail_ids)} mailIds als 'bekannt' markiert")
-                # Wenn wir mindestens ein bekanntes Item gefunden haben, warten wir
-                # zusätzlich damit eine potentielle neue Email Zeit hat einzutreffen.
-                if len(known_mail_ids) > 0 and max_retries > 1:
-                    logger.info(f"Warte initial {retry_delay}s auf neue Email...")
-                    await asyncio.sleep(retry_delay)
+            pass
 
             confirm_url = None
             found_mail_id = None
@@ -2226,23 +2207,25 @@ class GmxService:
                         # COOKIE EXTRACTION (CDP Network.getAllCookies)
                         # ───────────────────────────────────────────────────────────
                         # Wir brauchen ALLE GMX Cookies für die HTTP-Anfrage.
-                        # `Network.getAllCookies` liefert alle Cookies aus dem
-                        # Browser-Profile, nicht nur des aktuellen Tabs. Das ist
-                        # kritisch, da der Webmailer auf 3c-bap.gmx.net Cookies
-                        # von .gmx.net, navigator.gmx.net, und webmailer.gmx.net
-                        # benötigt.
+                        # CRITICAL FIX (2026-05-10): Using ALL GMX cookies (79+) causes
+                        # GMX mailbody API to return "413 Request Entity Too Large"
+                        # with "Bitte loeschen Sie Ihre Browser Cookies" error.
+                        # ONLY use essential GMX session cookies — this makes the
+                        # mailbody API return 200 instead of 413!
                         # ───────────────────────────────────────────────────────────
                         cookies_res = await client.send_to_session(session_id, "Network.getAllCookies")
                         cookies = cookies_res.get("cookies", [])
+                        essential_cookies = {"JSESSIONID", "SESSION", "lps", "navigator", "iac_token"}
                         cookie_dict = {}
                         for c in cookies:
-                            if "gmx" in (c.get("domain") or ""):
+                            if c.get("name") in essential_cookies:
                                 cookie_dict[c.get("name")] = c.get("value", "")
 
                         headers = {
                             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
                             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                             "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+                            "Referer": "https://3c-bap.gmx.net/mail/client/start",
                         }
 
                         # ════════════════════════════════════════════════════════════════

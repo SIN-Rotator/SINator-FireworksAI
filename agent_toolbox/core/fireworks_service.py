@@ -226,108 +226,496 @@ class FireworksService:
             logger.warning(f"Screenshot {label} fehlgeschlagen: {e}")
             return ""
 
+    async def _force_gmx_relogin(self, client: CDPClient, session_id: str, email: str, password: str) -> bool:
+        """Forces GMX logout then fresh login within the same CDP session.
+        
+        Used when GMX session dies during OTP polling. Instead of disconnecting
+        and reconnecting (which kills the session), we do logout+login in-place.
+        
+        CRITICAL: We stay connected to the SAME CDP session throughout.
+        This prevents the "Sitzung wird wiederhergestellt" issue.
+        """
+        try:
+            logger.info("[FW Register] Force GMX relogin in-place...")
+            
+            # Navigate to GMX homepage
+            await client.navigate(session_id, "https://www.gmx.net/")
+            await asyncio.sleep(3)
+            
+            # Click profile avatar → logout
+            logout_js = """
+(function() {
+    var avatar = document.querySelector('ACCOUNT-AVATAR') || document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+    if (!avatar) return {found: false, error: 'no avatar'};
+    avatar.click();
+    avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
+    return {found: true};
+})()
+"""
+            await client.evaluate(session_id, logout_js, return_by_value=True)
+            await asyncio.sleep(3)
+            
+            # Click logout in shadow DOM
+            shadow_logout = """
+(function() {
+    var avatar = document.querySelector('ACCOUNT-AVATAR') || document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+    if (!avatar || !avatar.shadowRoot) return {found: false, error: 'no shadow'};
+    var buttons = avatar.shadowRoot.querySelectorAll('button, a');
+    for (var i = 0; i < buttons.length; i++) {
+        var t = (buttons[i].textContent||'').trim().toLowerCase();
+        if (t.indexOf('logout') !== -1 || t.indexOf('abmelden') !== -1) {
+            buttons[i].click();
+            buttons[i].dispatchEvent(new Event('click', {bubbles: true}));
+            return {found: true, clicked: t};
+        }
+    }
+    return {found: false, buttons: Array.from(buttons).map(function(b){return b.textContent.trim();})};
+})()
+"""
+            logout_result = await client.evaluate(session_id, shadow_logout, return_by_value=True)
+            logger.info("[FW Register] Logout: " + str(logout_result.get('result',{}).get('value',{})))
+            await asyncio.sleep(3)
+            
+            # Navigate back to homepage (logout redirect)
+            await client.navigate(session_id, "https://www.gmx.net/")
+            await asyncio.sleep(3)
+            
+            # First login attempt (GMX ignores this)
+            first_login_js = """
+(function() {
+    var avatar = document.querySelector('ACCOUNT-AVATAR') || document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+    if (!avatar) return {found: false};
+    avatar.click();
+    avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
+    return {found: true};
+})()
+"""
+            await client.evaluate(session_id, first_login_js, return_by_value=True)
+            await asyncio.sleep(3)
+            
+            # Enter email+password (first attempt — ignored by GMX)
+            email_pw_js = """
+(function() {
+    var emailInput = document.querySelector('input[type="email"], input[name="email"], input[id="email"]');
+    var pwInput = document.querySelector('input[type="password"], input[name="password"]');
+    if (!emailInput || !pwInput) return {found: false, hasEmail: !!emailInput, hasPw: !!pwInput};
+    var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    ns.call(emailInput, 'EMAIL_PLACEHOLDER');
+    emailInput.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+    ns.call(pwInput, 'PWD_PLACEHOLDER');
+    pwInput.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+    return {found: true};
+})()
+""".replace('EMAIL_PLACEHOLDER', email).replace('PWD_PLACEHOLDER', password)
+            await client.evaluate(session_id, email_pw_js, return_by_value=True)
+            await asyncio.sleep(4)
+            
+            # Second login attempt (this works)
+            await client.evaluate(session_id, first_login_js, return_by_value=True)
+            await asyncio.sleep(4)
+            
+            # Enter email again
+            await client.evaluate(session_id, email_pw_js, return_by_value=True)
+            await asyncio.sleep(3)
+            
+            # Click Weiter
+            weiter_js = """
+(function() {
+    var buttons = document.querySelectorAll('button, input[type="submit"]');
+    for (var i = 0; i < buttons.length; i++) {
+        var t = (buttons[i].textContent||'').trim().toLowerCase();
+        if (t === 'weiter' || t === 'next') {
+            buttons[i].click();
+            return {clicked: t};
+        }
+    }
+    return {clicked: null};
+})()
+"""
+            await client.evaluate(session_id, weiter_js, return_by_value=True)
+            await asyncio.sleep(4)
+            
+            # Enter password
+            pw_only_js = """
+(function() {
+    var pwInput = document.querySelector('input[type="password"], input[name="password"]');
+    if (!pwInput) return {found: false};
+    var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    ns.call(pwInput, 'PWD_PLACEHOLDER');
+    pwInput.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+    return {found: true};
+})()
+""".replace('PWD_PLACEHOLDER', password)
+            await client.evaluate(session_id, pw_only_js, return_by_value=True)
+            await asyncio.sleep(2)
+            
+            # Click Login
+            login_js = """
+(function() {
+    var buttons = document.querySelectorAll('button, input[type="submit"]');
+    for (var i = 0; i < buttons.length; i++) {
+        var t = (buttons[i].textContent||'').trim().toLowerCase();
+        if (t === 'login' || t === 'anmelden') {
+            buttons[i].click();
+            return {clicked: t};
+        }
+    }
+    return {clicked: null};
+})()
+"""
+            await client.evaluate(session_id, login_js, return_by_value=True)
+            await asyncio.sleep(6)
+            
+            # Verify we're back at mail page
+            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            final_url = url_result.get("result", {}).get("value", "") or ""
+            
+            if "navigator.gmx.net/mail?sid=" in final_url or "bap.navigator.gmx.net/mail?sid=" in final_url:
+                logger.info("[FW Register] Relogin successful! URL: " + final_url[:80])
+                return True
+            else:
+                logger.warning("[FW Register] Relogin may have failed. URL: " + final_url[:80])
+                return "navigator.gmx.net" in final_url or "gmx.net" in final_url
+            
+        except Exception as e:
+            logger.error("[FW Register] Force relogin failed: " + str(e))
+            return False
+
     async def _search_otp_in_iframe(
         self,
         client: CDPClient,
         session_id: str
     ) -> str:
-        """Sucht OTP-URL im GMX Mail-Client iframe via Page.getFrameTree + createIsolatedWorld."""
+        """Sucht OTP-URL im GMX Mail-Client iframe via Shadow DOM Traversal.
+        
+        GMX mail uses Web Components with nested Shadow DOMs:
+        1. webmailer-mail-list#list (main web component)
+        2. mail-list-container (shadow root)
+        3. list-mail-list (shadow root)  
+        4. .list-mail-list (actual email container)
+        5. list-mail-item (individual emails)
+        
+        The mail content is in a cross-origin iframe (3c.gmx.net/mail/client/start).
+        We use Page.createIsolatedWorld to execute JS inside that frame.
+        """
         try:
-            frame_tree = await client.send_to_session(
-                session_id, "Page.getFrameTree", {}
+            # Step 1: Find the mail iframe in the DOM
+            # The mail iframe has URL containing '3c.gmx.net/mail/client/start' and 'jsessionid'
+            dom_result = await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        var src = iframes[i].src || '';
+                        // Find mail client iframe — it contains '3c.gmx.net' and 'mail/client/start'
+                        if ((src.indexOf('3c.gmx.net') !== -1 || src.indexOf('mail/client/start') !== -1) && src.indexOf('jsessionid') !== -1) {
+                            return {
+                                found: true,
+                                id: iframes[i].id || '',
+                                name: iframes[i].name || '',
+                                src: src.substring(0, 150)
+                            };
+                        }
+                    }
+                    // Fallback: any iframe with mail/client in URL
+                    for (var i = 0; i < iframes.length; i++) {
+                        var src = iframes[i].src || '';
+                        if (src.indexOf('mail/client') !== -1 || src.indexOf('mail/client/start') !== -1) {
+                            return {
+                                found: true,
+                                id: iframes[i].id || '',
+                                name: iframes[i].name || '',
+                                src: src.substring(0, 150)
+                            };
+                        }
+                    }
+                    return {found: false};
+                })()
+                """,
+                timeout=15
             )
-            
-            def find_mail_frame(node):
-                frame = node.get('frame', {})
-                url = frame.get('url', '')
-                if 'gmx.net' in url and 'mail' in url and 'client' in url:
-                    return frame.get('id')
-                for child in node.get('childFrames', []):
-                    result = find_mail_frame(child)
-                    if result:
-                        return result
-                return None
-            
-            mail_frame_id = find_mail_frame(frame_tree.get('frameTree', {}))
-            if not mail_frame_id:
+            dom_data = dom_result.get("result", {}).get("value", {})
+            if not dom_data.get("found"):
+                logger.debug("[FW Register] No mail iframe found in DOM")
                 return ""
             
-            # Create isolated world in the mail frame
+            logger.info(f"[FW Register] Mail iframe: id={dom_data['id']}, name={dom_data['name']}")
+            
+            # Step 2: Find the frame ID from Page.getFrameTree
+            frame_tree = await client.send_to_session(session_id, "Page.getFrameTree", {})
+            frame_tree_root = frame_tree.get("result", {}).get("frameTree", {})
+            all_frames = []
+            
+            def collect_frames(node):
+                frame = node.get("frame", {})
+                all_frames.append({
+                    "id": frame.get("id", ""),
+                    "url": frame.get("url", ""),
+                    "name": frame.get("name", "")
+                })
+                for child in node.get("childFrames", []):
+                    collect_frames(child)
+            
+            collect_frames(frame_tree_root)
+            
+            # Match by frame name or URL containing '3c.gmx.net'
+            mail_frame_id = None
+            iframe_name = dom_data.get("name", "")
+            iframe_id = dom_data.get("id", "")
+            
+            for f in all_frames:
+                frame_name = f.get("name", "")
+                frame_url = f.get("url", "")
+                # Try name match first (most reliable)
+                if iframe_name and frame_name == iframe_name:
+                    mail_frame_id = f.get("id")
+                    logger.info(f"[FW Register] Matched by name '{iframe_name}': frame_id={mail_frame_id[:20]}...")
+                    break
+                # Try URL match
+                if "3c.gmx.net" in frame_url and "mail" in frame_url:
+                    mail_frame_id = f.get("id")
+                    logger.info(f"[FW Register] Matched by URL: frame_id={mail_frame_id[:20]}... url={frame_url[:100]}...")
+                    break
+            
+            if not mail_frame_id:
+                # Last resort: try iframe id (may not work for cross-origin)
+                if iframe_id:
+                    for f in all_frames:
+                        if f.get("id") == iframe_id:
+                            mail_frame_id = f.get("id")
+                            break
+                
+                if not mail_frame_id:
+                    logger.debug(f"[FW Register] Could not find mail frame ID. Frames: {[f['url'][:60] for f in all_frames if f['url']]}")
+                    return ""
+            
+            # Step 3: Create isolated world in mail iframe with universal access
             world_result = await client.send_to_session(
                 session_id, "Page.createIsolatedWorld", {
                     "frameId": mail_frame_id,
-                    "worldName": "sinator_otp_search"
+                    "worldName": "sinator_otp_search",
+                    "grantUniversalAccess": True
                 }
             )
-            execution_context_id = world_result.get("executionContextId")
+            execution_context_id = world_result.get("result", {}).get("executionContextId")
             if not execution_context_id:
+                logger.debug(f"[FW Register] Could not create isolated world in mail frame {mail_frame_id[:20]}...")
                 return ""
             
-            # Search for fireworks email and extract OTP URL directly
-            eval_result = await client.send_to_session(
-                session_id, "Runtime.evaluate", {
-                    "expression": """(function() {
-                        const items = document.querySelectorAll('[class*="item"], [class*="row"], tr, div[class]');
-                        for (const item of items) {
-                            const text = item.innerText.toLowerCase();
-                            if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
-                                // Try to extract URL from inline HTML
-                                const html = item.innerHTML;
-                                const m = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/(?:confirm|verify|email_verification)[^\\s"'<>]+/);
-                                if (m) return {found: true, url: m[0], clickNeeded: false};
-                                
-                                // URL not in row HTML — need to click
-                                const rect = item.getBoundingClientRect();
-                                return {
-                                    found: true,
-                                    url: '',
-                                    clickNeeded: true,
-                                    x: rect.x + rect.width/2,
-                                    y: rect.y + rect.height/2,
-                                    text: item.innerText.trim().slice(0, 60)
-                                };
+            logger.info(f"[FW Register] Isolated world created, contextId: {execution_context_id}")
+            
+            # Step 4: Execute Shadow DOM traversal to find Fireworks email
+            # GMX web component structure:
+            # webmailer-mail-list#list → shadowRoot → mail-list-container → shadowRoot → list-mail-list → shadowRoot → .list-mail-list → list-mail-item
+            shadow_dom_js = """
+            (function() {
+                function deepTraverse(root, depth) {
+                    if (depth > 15) return null;
+                    if (!root) return null;
+                    
+                    // Check if this is the webmailer-mail-list web component
+                    if (root.tagName && root.tagName.toLowerCase().includes('webmailer')) {
+                        var sr = root.shadowRoot;
+                        while (sr) {
+                            var mailContainer = sr.querySelector('mail-list-container') || sr.querySelector('[class*="mail-list-container"]');
+                            if (mailContainer && mailContainer.shadowRoot) {
+                                var listMailList = mailContainer.shadowRoot.querySelector('list-mail-list') || mailContainer.shadowRoot.querySelector('[class*="list-mail-list"]');
+                                if (listMailList && listMailList.shadowRoot) {
+                                    var container = listMailList.shadowRoot.querySelector('.list-mail-list') || listMailList.shadowRoot.querySelector('[class*="list-mail-list"]');
+                                    if (container) {
+                                        return container;
+}
+                            sr = sr.querySelector('*:not([class])') ? null : null;
+                            break;
+                        }
+                    }
+                    
+                    // Also try: find mail-list-container directly
+                    if (root.querySelector) {
+                        var mc = root.querySelector('mail-list-container');
+                        if (mc && mc.shadowRoot) {
+                            var lml = mc.shadowRoot.querySelector('list-mail-list') || mc.shadowRoot.querySelector('[class*="list-mail-list"]');
+                            if (lml && lml.shadowRoot) {
+                                var cont = lml.shadowRoot.querySelector('.list-mail-list') || lml.shadowRoot.querySelector('[class*="container"]');
+                                if (cont) return cont;
                             }
                         }
-                        return {found: false};
-                    })()""",
+                    }
+                    return null;
+                }
+                
+                // Try webmailer-mail-list first
+                var webmailer = document.querySelector('webmailer-mail-list#list') || document.querySelector('webmailer-mail-list');
+                if (!webmailer) {
+                    // Try any webmailer element
+                    var allEls = document.querySelectorAll('*');
+                    for (var i = 0; i < allEls.length; i++) {
+                        if (allEls[i].tagName && allEls[i].tagName.toLowerCase().includes('webmailer')) {
+                            webmailer = allEls[i];
+                            break;
+                        }
+                    }
+                }
+                
+                var emailContainer = null;
+                if (webmailer && webmailer.shadowRoot) {
+                    var sr1 = webmailer.shadowRoot;
+                    var mailContainer = sr1.querySelector('mail-list-container');
+                    if (mailContainer && mailContainer.shadowRoot) {
+                        var sr2 = mailContainer.shadowRoot;
+                        var listMailList = sr2.querySelector('list-mail-list');
+                        if (listMailList && listMailList.shadowRoot) {
+                            var sr3 = listMailList.shadowRoot;
+                            emailContainer = sr3.querySelector('.list-mail-list');
+                        }
+                    }
+                }
+                
+                // Fallback: search all shadow roots recursively
+                if (!emailContainer) {
+                    function findInShadow(node) {
+                        if (!node) return null;
+                        if (node.shadowRoot) {
+                            var found = node.shadowRoot.querySelector('.list-mail-list') || 
+                                        node.shadowRoot.querySelector('[class*="mail-list"]');
+                            if (found) return found;
+                        }
+                        if (node.children) {
+                            for (var c of node.children) {
+                                var result = findInShadow(c);
+                                if (result) return result;
+                            }
+                        }
+                        return null;
+                    }
+                    emailContainer = findInShadow(document.body);
+                }
+                
+                // Last fallback: search all iframes in document
+                if (!emailContainer) {
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        try {
+                            var idoc = iframes[i].contentDocument || iframes[i].contentWindow && iframes[i].contentWindow.document;
+                            if (idoc) {
+                                var found = idoc.querySelector('.list-mail-list') || idoc.querySelector('[class*="mail-list"]');
+                                if (found) {
+                                    emailContainer = found;
+                                    break;
+                                }
+                            }
+                        } catch(e) {}
+                    }
+                }
+                
+                if (!emailContainer) {
+                    // Debug: list all shadow roots found
+                    var shadowRoots = [];
+                    function listShadows(node, depth) {
+                        if (depth > 10 || !node) return;
+                        if (node.shadowRoot) {
+                            shadowRoots.push({tag: node.tagName, id: node.id, class: node.className});
+                            listShadows(node.shadowRoot, depth + 1);
+                        }
+                        if (node.children) {
+                            for (var c of node.children) listShadows(c, depth);
+                        }
+                    }
+                    listShadows(document.body, 0);
+                    return {found: false, debug: 'no container', shadowRoots: shadowRoots.slice(0, 20), bodyText: document.body ? document.body.innerText.substring(0, 200) : ''};
+                }
+                
+                // Now search for Fireworks email in the container
+                var items = emailContainer.querySelectorAll ? emailContainer.querySelectorAll('list-mail-item') : [];
+                if (items.length === 0) {
+                    items = emailContainer.querySelectorAll ? emailContainer.querySelectorAll('[class*="item"], [class*="mail-item"], [class*="list-item"]') : [];
+                }
+                
+                for (var i = 0; i < items.length; i++) {
+                    var item = items[i];
+                    var text = item.innerText ? item.innerText.toLowerCase() : '';
+                    var subjectEl = item.querySelector('[class*="subject"]') || item.querySelector('[class*="sender"]') || item;
+                    var subject = subjectEl ? subjectEl.innerText : text;
+                    
+                    if (text.includes('fireworks') || text.includes('app.fireworks') || subject.toLowerCase().includes('fireworks')) {
+                        // Try to extract URL from innerHTML
+                        var html = item.innerHTML || '';
+                        var urlMatch = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/verify[^\\s"'<>]+/);
+                        if (urlMatch) {
+                            return {found: true, url: urlMatch[0], method: 'direct_extract'};
+                        }
+                        
+                        // Click the item
+                        var clickTarget = item.querySelector('[class*="subject"]') || item.querySelector('a') || item;
+                        if (clickTarget) {
+                            clickTarget.dispatchEvent(new MouseEvent('click', {bubbles: true, composed: true}));
+                            return {
+                                found: true,
+                                method: 'clicked',
+                                text: text.substring(0, 100),
+                                subject: subject.substring(0, 80)
+                            };
+                        }
+                    }
+                }
+                
+                // Search all elements for Fireworks
+                var allItems = document.querySelectorAll ? document.querySelectorAll('*') : [];
+                for (var i = 0; i < allItems.length; i++) {
+                    var el = allItems[i];
+                    var text = (el.innerText || '').toLowerCase();
+                    if (text.includes('fireworks') && text.includes('verif')) {
+                        var html = el.innerHTML || '';
+                        var urlMatch = html.match(/https:\\/\\/app\\.fireworks\\.ai\\/signup\\/verify[^\\s"'<>]+/);
+                        if (urlMatch) {
+                            return {found: true, url: urlMatch[0], method: 'all_elements_direct'};
+                        }
+                        el.dispatchEvent(new MouseEvent('click', {bubbles: true, composed: true}));
+                        return {found: true, method: 'all_elements_clicked', text: text.substring(0, 100)};
+                    }
+                }
+                
+                return {found: false, containerChildren: emailContainer ? emailContainer.children.length : 0, itemsFound: items.length, bodyText: document.body ? document.body.innerText.substring(0, 300) : ''};
+            })()
+            """
+            
+            eval_result = await client.send_to_session(
+                session_id, "Runtime.evaluate", {
+                    "expression": shadow_dom_js,
                     "contextId": execution_context_id,
                     "returnByValue": True
                 }
             )
             result = eval_result.get("result", {}).get("value", {})
             
-            if not result.get("found"):
+            if not result:
+                logger.debug("[FW Register] No result from isolated world")
                 return ""
             
-            # If URL found directly, return it
-            if not result.get("clickNeeded") and result.get("url"):
-                return html.unescape(result.get("url"))
+            logger.info(f"[FW Register] Shadow DOM search result: {json.dumps(result)}")
             
-            # Need to click — dispatch mouse event in iframe context
-            x, y = result.get("x", 0), result.get("y", 0)
-            logger.info(f"[FW Register] Clicking email in iframe at ({x:.0f}, {y:.0f}): {result.get('text', '')}")
+            if not result.get("found"):
+                logger.debug(f"[FW Register] No Fireworks email found. Container children: {result.get('containerChildren')}, body: {result.get('bodyText', '')[:200]}")
+                return ""
             
-            await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-                "type": "mousePressed",
-                "x": x,
-                "y": y,
-                "button": "left",
-                "clickCount": 1
-            })
-            await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-                "type": "mouseReleased",
-                "x": x,
-                "y": y,
-                "button": "left",
-                "clickCount": 1
-            })
-            await asyncio.sleep(5)
+            # URL found directly
+            if result.get("url"):
+                logger.info(f"[FW Register] OTP URL found: {result['url'][:80]}...")
+                return html.unescape(result["url"])
             
-            # Now search for detail iframe
-            return await self._extract_otp_from_detail_iframe(client, session_id)
+            # Need to click — wait for navigation/email detail page
+            if result.get("method") in ("clicked", "all_elements_clicked"):
+                logger.info(f"[FW Register] Clicked Fireworks email: {result.get('subject', result.get('text', ''))}")
+                await asyncio.sleep(5)
+                
+                # Now search the email detail page for OTP URL
+                return await self._extract_otp_from_detail_iframe(client, session_id)
+            
+            return ""
             
         except Exception as e:
-            logger.debug(f"[FW Register] iframe OTP search failed: {e}")
+            logger.debug(f"[FW Register] Shadow DOM OTP search failed: {e}")
             return ""
 
     async def _click_fireworks_email_in_iframe(
@@ -1969,53 +2357,22 @@ class FireworksService:
                 }
             
             steps_completed.append("gmx_session_active")
-            logger.info(f"[FW Register] GMX Session OK: {session_result.get('sid', '')[:40]}...")
+            logger.info(f"[FW Register] GMX Session OK")
             
             # Re-connect CDP for OTP polling
             client, session_id = await self._connect(cdp_port)
             
-            # Navigate to GMX Inbox
-            await client.navigate(session_id, "https://www.gmx.net/")
-            await asyncio.sleep(3)
-
-            # Click "E-Mail" in Header
-            email_link_result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    const links = [...document.querySelectorAll('a, button')];
-                    for (const l of links) {
-                        const r = l.getBoundingClientRect();
-                        const t = (l.textContent || '').trim().toLowerCase();
-                        if (r.width > 0 && r.height > 0 &&
-                            (t === 'e-mail' || t === 'email')) {
-                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2};
-                        }
-                    }
-                    return {found: false};
-                })()
-                """,
-                return_by_value=True
-            )
-            email_link_val = email_link_result.get("result", {}).get("value", {})
-
-            if email_link_val.get("found"):
-                await client.click_at(session_id, x=email_link_val["x"], y=email_link_val["y"])
-            else:
-                # Fallback: Coordinates from AGENTS.md (Header-E-Mail Button)
-                await client.click_at(session_id, x=302, y=44)
-                logger.info("[FW Register] E-Mail link not found — used fallback coordinates (302, 44)")
-
-            await asyncio.sleep(5)
-
-            # Prüfe ob GMX-Inbox erreichbar
-            gmx_url_result = await client.evaluate(
-                session_id, "window.location.href", return_by_value=True
-            )
-            gmx_url = gmx_url_result.get("result", {}).get("value", "")
-
-            if "navigator.gmx.net/mail" not in gmx_url or "sid=" not in gmx_url:
-                steps_failed.append("gmx_session_invalid")
+            # Navigate DIRECTLY to navigator.gmx.net/mail using the SID from session_result
+            # This is more reliable than clicking the E-Mail header (which may go to SPA hash URL)
+            sid = session_result.get("sid", "")
+            if not sid and session_result.get("current_url"):
+                import re
+                match = re.search(r'sid=([^&]+)', session_result.get("current_url", ""))
+                if match:
+                    sid = match.group(1)
+            
+            if not sid:
+                steps_failed.append("gmx_sid_missing")
                 return {
                     "status": "failed",
                     "account_email": email,
@@ -2023,150 +2380,58 @@ class FireworksService:
                     "api_key": None,
                     "api_key_name": None,
                     "steps_completed": steps_completed,
-                    "steps_failed": steps_failed + ["gmx_session_invalid"],
+                    "steps_failed": steps_failed + ["gmx_sid_missing"],
                     "execution_time": f"{time.time() - start_time:.2f}s",
-                    "error": f"GMX session invalid — not on mail page. URL: {gmx_url}",
+                    "error": f"GMX SID not found in session_result. URL: {session_result.get('current_url', 'unknown')}",
+                }
+            
+            logger.info(f"[FW Register] Navigating to GMX Inbox with SID: {sid[:30]}...")
+            await client.navigate(session_id, f"https://navigator.gmx.net/mail?sid={sid}")
+            await asyncio.sleep(5)
+
+            # Verify GMX Inbox is reachable
+            gmx_url_result = await client.evaluate(
+                session_id, "window.location.href", return_by_value=True
+            )
+            gmx_url = gmx_url_result.get("result", {}).get("value", "")
+
+            if ("navigator.gmx.net/mail" not in gmx_url and "bap.navigator.gmx.net/mail" not in gmx_url) or "sid=" not in gmx_url:
+                steps_failed.append("gmx_inbox_nav_failed")
+                return {
+                    "status": "failed",
+                    "account_email": email,
+                    "fireworks_password": password,
+                    "api_key": None,
+                    "api_key_name": None,
+                    "steps_completed": steps_completed,
+                    "steps_failed": steps_failed + ["gmx_inbox_nav_failed"],
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": f"GMX Inbox navigation failed. URL: {gmx_url}",
                 }
 
             steps_completed.append("gmx_inbox_reached")
-            logger.info(f"[FW Register] GMX Inbox reached: {gmx_url[:60]}...")
+            logger.info(f"[FW Register] GMX Inbox reached: {gmx_url[:80]}...")
 
-            # OTP Polling: 30 retries × 6s = 180s total (email delivery can take 2-5 min)
-            otp_url = None
-            max_retries = 30
-            retry_delay = 6
-
-            async def goto_inbox():
-                await client.navigate(session_id, "https://www.gmx.net/")
-                await asyncio.sleep(2)
-                # Click "E-Mail" in GMX header via JS (more reliable than coords)
-                click_result = await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        // Find the E-Mail nav link in the GMX header
-                        const links = document.querySelectorAll('a[href*="mail"], nav a, header a');
-                        for (const link of links) {
-                            const text = (link.textContent || '').trim().toLowerCase();
-                            if (text === 'e-mail' || text === 'email' || text === 'postfach') {
-                                link.click();
-                                return {clicked: true, text: text};
-                            }
-                        }
-                        // Fallback: find by href pattern
-                        const mailLinks = document.querySelectorAll('a[href*="navigator.gmx.net/mail"]');
-                        if (mailLinks.length > 0) { mailLinks[0].click(); return {clicked: true, fallback: true}; }
-                        return {clicked: false};
-                    })()
-                    """,
-                    return_by_value=True
-                )
-                click_val = click_result.get("result", {}).get("value", {})
-                await asyncio.sleep(3)
-                url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-                url = url_result.get("result", {}).get("value", "")
-                return url
-
-            for attempt in range(max_retries):
-                logger.info(f"[FW Register] OTP Poll attempt {attempt + 1}/{max_retries}")
-
-                inbox_url = await goto_inbox()
-                logger.info(f"[FW Register] Inbox URL: {inbox_url[:80]}...")
-
-                # FIRST: Search in iframe via Page.getFrameTree + createIsolatedWorld
-                # GMX emails are in cross-origin iframe (3c.gmx.net/mail/client/start)
-                iframe_otp = await self._search_otp_in_iframe(client, session_id)
-                if iframe_otp:
-                    otp_url = iframe_otp
-                    logger.info(f"[FW Register] OTP URL found in iframe: {otp_url[:80]}...")
-                    break
-                
-                # SECOND: Search in main frame DOM (for non-iframe layouts)
-                otp_search_result = await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        // Look for emails in GMX navigator inbox
-                        // Try to find the email list
-                        const selectors = [
-                            '[class*="inbox-content"]',
-                            '[class*="maillist"]',
-                            '[class*="messagelist"]',
-                            '[class*="mail_list"]',
-                            'main [class*="list"]',
-                            '[data-testid="message-list"]',
-                            '[role="list"]'
-                        ];
-
-                        for (const sel of selectors) {
-                            const el = document.querySelector(sel);
-                            if (!el) continue;
-                            const text = el.innerText.toLowerCase();
-                            // Look for fireworks email in the list
-                            if (text.includes('fireworks')) {
-                                const html = el.innerHTML.toLowerCase();
-                                const fwIdx = html.indexOf('fireworks');
-                                if (fwIdx !== -1) {
-                                    const snippet = html.substring(Math.max(0, fwIdx-300), Math.min(html.length, fwIdx+600));
-                                    const urlMatch = snippet.match(/https:\/\/app\.fireworks\.ai\/[^"'>\s]{10,}/);
-                                    if (urlMatch) return {found: true, url: urlMatch[0], source: sel};
-                                }
-                            }
-                            // Also check subject lines for verification emails
-                            const lines = text.split('\\n').filter(l => l.trim());
-                            for (const line of lines) {
-                                if (line.includes('fireworks') && (line.includes('verif') || line.includes('confirm') || line.includes('bestätig'))) {
-                                    // Found a fireworks verification email in the list
-                                    // Need to click to open it
-                                    return {found: 'needs_click', subject: line.slice(0, 100)};
-                                }
-                            }
-                        }
-
-                        // Fallback: scan entire page
-                        const bodyText = document.body.innerText.toLowerCase();
-                        if (bodyText.includes('fireworks')) {
-                            const bodyHtml = document.body.innerHTML.toLowerCase();
-                            const idx = bodyHtml.indexOf('fireworks');
-                            const snippet = bodyHtml.substring(Math.max(0, idx-300), Math.min(bodyHtml.length, idx+600));
-                            const m = snippet.match(/https:\/\/app\.fireworks\.ai\/[^"'>\s]{10,}/);
-                            if (m) return {found: true, url: m[0]};
-                        }
-
-                        return {found: false, currentUrl: window.location.href};
-                    })()
-                    """,
-                    return_by_value=True
-                )
-
-                otp_search_val = otp_search_result.get("result", {}).get("value", {})
-
-                if isinstance(otp_search_val, dict):
-                    if otp_search_val.get("found") is True and otp_search_val.get("url"):
-                        otp_url = otp_search_val.get("url", "")
-                        if otp_url:
-                            logger.info(f"[FW Register] OTP URL found: {otp_url[:80]}...")
-                            break
-                    elif otp_search_val.get("found") == 'needs_click':
-                        subject = otp_search_val.get("subject", "")
-                        logger.info(f"[FW Register] Found fireworks email (needs click): {subject[:60]}...")
-                        # Find and click the email row in main frame or iframe
-                        clicked = await self._click_fireworks_email_in_iframe(client, session_id)
-                        if clicked:
-                            await asyncio.sleep(5)
-                            otp_url = await self._extract_otp_from_detail_iframe(client, session_id)
-                            if otp_url:
-                                break
-                        
-                        # Fallback: direct iframe search and click
-                        otp_url = await self._search_and_click_email_via_frametree(client, session_id)
-                        if otp_url:
-                            break
-
-                if attempt < max_retries - 1:
-                    await asyncio.sleep(retry_delay)
-
-            if not otp_url:
+# OTP Polling via GMX HTTP API (gmx_service.read_otp)
+            # This uses httpx to fetch mail bodies directly from GMX's internal API
+            # instead of trying to access the cross-origin iframe DOM.
+            # read_otp() creates its own CDP connection and handles the polling internally.
+            gmx_svc_instance = GmxService()
+            
+            logger.info(f"[FW Register] Starting GMX OTP poll with SID: {sid[:30]}...")
+            otp_result = await gmx_svc_instance.read_otp(
+                sender_filter="fireworks",
+                max_retries=10,
+                retry_delay=30,
+                cdp_port=cdp_port,
+                exclude_mail_ids=None,
+            )
+            
+            if otp_result.get("status") == "success" and otp_result.get("otp_url"):
+                otp_url = otp_result["otp_url"]
+                steps_completed.append("otp_url_received")
+                logger.info(f"[FW Register] OTP URL found: {otp_url[:80]}...")
+            elif otp_result.get("status") == "not_found":
                 steps_failed.append("otp_not_found")
                 return {
                     "status": "partial",
@@ -2177,19 +2442,21 @@ class FireworksService:
                     "steps_completed": steps_completed,
                     "steps_failed": steps_failed,
                     "execution_time": f"{time.time() - start_time:.2f}s",
-                    "error": f"OTP URL not found in GMX inbox after {max_retries * retry_delay}s of polling",
+                    "error": "OTP URL not found in GMX inbox after " + otp_result.get("execution_time", "unknown"),
                 }
-
-            steps_completed.append("otp_url_received")
-            logger.info(f"[FW Register] OTP URL: {otp_url}")
-
-            # ════════════════════════════════════════════════════════════════════════
-            # PHASE 7: OTP URL ÖFFNEN → ACCOUNT VERIFIZIEREN
-            # ════════════════════════════════════════════════════════════════════════
-            #
-            # Navigate zur OTP-URL (https://app.fireworks.ai/signup/confirm?token=...)
-            # Erwartetes Ergebnis: Redirect zu /dashboard oder Welcome-Page
-            #
+            else:
+                steps_failed.append("otp_polling_error")
+                return {
+                    "status": "partial",
+                    "account_email": email,
+                    "fireworks_password": password,
+                    "api_key": None,
+                    "api_key_name": None,
+                    "steps_completed": steps_completed,
+                    "steps_failed": steps_failed,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": "OTP polling error: " + str(otp_result.get("error", "unknown")),
+                }
             logger.info("[FW Register] Phase 7: Open OTP URL to verify account")
             await client.navigate(session_id, otp_url)
             await asyncio.sleep(5)

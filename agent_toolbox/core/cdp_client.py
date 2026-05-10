@@ -480,11 +480,28 @@ async def get_page_target(cdp_client: CDPClient, url_filter: str = "") -> Option
         Target info dict oder None
     """
     targets = await cdp_client.get_targets()
+    
+    # Collect all matching page targets
+    matching = []
     for target in targets:
         if target.get("type") == "page":
             if not url_filter or url_filter in target.get("url", ""):
-                return target
-    # Fallback: erstes page target
+                matching.append(target)
+    
+    # Prefer www.gmx.net over auth.gmx.net (auth.gmx.net has no ACCOUNT-AVATAR)
+    non_auth = [t for t in matching if "auth.gmx.net" not in t.get("url", "")]
+    if non_auth:
+        # Prefer root URL over hash URL (hash URL = SPA hash route, root URL = page entry point)
+        root = [t for t in non_auth if t.get("url", "").rstrip("/") == "https://www.gmx.net" or t.get("url", "").rstrip("/") == "http://www.gmx.net"]
+        if root:
+            return root[0]
+        return non_auth[0]
+    
+    # Fallback: first matching target (may be auth.gmx.net)
+    if matching:
+        return matching[0]
+    
+    # Last resort: first page target
     for target in targets:
         if target.get("type") == "page":
             return target

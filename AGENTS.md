@@ -6,7 +6,7 @@
 
 **Endprodukt:** `POST /rotation/full` liefert einen `fw-...` API-Key. Jeder Key = ein neuer GMX Alias + ein neuer Fireworks Account + $5 Credits.
 
-**Stack:** Python + FastAPI + Raw CDP Websocket (KEIN Playwright — Playwright crashed bei GMX SPA frame detachment).
+**Stack:** Python + FastAPI + **CUA-DRIVER** (Native macOS AX, NOT CDP!)
 
 **Start:** `python agent_toolbox/start_toolbox.py` → `http://localhost:8000/docs`
 
@@ -53,20 +53,223 @@ Chrome User:       simoneschulze (macOS login profile)
 CDP Endpoint:      ws://127.0.0.1:9222/devtools/browser/...
 ```
 
-**Chrome Start (DER EINZIG RICHTIGE WEG):**
+**Chrome Start (DER EINZIG RICHTIGE WEG) — OHNE accessibility flag:**
 ```bash
-rtk nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+# Chrome BEENDEN
+kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
+
+# Chrome STARTEN (OHNE --force-renderer-accessibility!)
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 901" \
   --remote-debugging-port=9222 \
   --no-first-run --no-default-browser-check \
   > /tmp/chrome_sinator.log 2>&1 &
+
 sleep 6 && curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print('Chrome OK')"
 ```
+
+**⚠️ WICHTIG: NIEMALS `--force-renderer-accessibility` verwenden!**
+- Mit dem Flag: GMX zeigt "Barrierefreies Postfach" (Email-Rows NICHT klickbar!)
+- Ohne dem Flag: GMX funktioniert normal + CUA-Driver AX-Tree funktioniert trotzdem
 
 **Chrome Beenden (SIGTERM, nicht SIGKILL):**
 ```bash
 kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
+```
+
+---
+
+## 🔧 CUA-DRIVER — NATIVE MACOS AX (NOT CDP!)
+
+**ENTDECKUNG:** 2026-05-10 — GMX erkennt CDP als Bot! HTTP requests return 413/302/403. 
+**LÖSUNG:** `cua-driver` nutzt native macOS Accessibility (AX) API — NICHT detectierbar!
+
+### CUA-DRIVER SETUP
+
+```bash
+# Start cua-driver daemon
+nohup cua-driver serve > /tmp/cua-driver.log 2>&1 &
+sleep 3 && cua-driver status
+
+# Ergebnis: socket: /Users/jeremy/Library/Caches/cua-driver/cua-driver.sock, pid: 87079
+```
+
+### WICHTIGE TOOLS
+
+| Tool | Beschreibung |
+|------|-------------|
+| `list_windows` | Alle Browser-Fenster mit pid, window_id, bounds |
+| `get_window_state` | AX-Tree als Markdown mit element_index |
+| `click` | AX-Press auf element_index (muss get_window_state VORHER im gleichen Turn) |
+| `press_key` | Key-Events an pid senden (cmd, shift, option, ctrl) |
+| `hotkey` | Tastenkombinationen (z.B. ["cmd", "left"]) |
+| `type_text` | Text an pid senden |
+| `screenshot` | PNG Screenshot |
+
+### GMX EMAIL WORKFLOW (HYBRID: CUA-DRIVER + CDP)
+
+**ENTDECKUNG:** GMX Email-Rows haben KEIN AXPress im AX-Tree. Email klicken funktioniert NUR via CDP JavaScript `item.click()`.
+
+```bash
+# 1. Chrome OHNE --force-renderer-accessibility starten!
+kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1) 2>/dev/null
+sleep 3
+/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 901" \
+  --remote-debugging-port=9222 \
+  --no-first-run --no-default-browser-check \
+  "https://www.gmx.net" &>/dev/null &
+sleep 8
+
+# 2. Chrome Window finden
+cua-driver call list_windows '{"query": "Chrome"}'
+# → wID: 10372, pid: 96377, title: 'GMX - kostenlose E-Mail...'
+
+# 3. GMX Homepage State checken
+echo '{"pid": 96377, "window_id": 10372}' | cua-driver call get_window_state | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+lines = d['tree_markdown'].split('\n')
+print('Title:', [l for l in lines if 'AXWindow' in l][0][:80])
+for i, line in enumerate(lines[:60]):
+    if 'E-Mail' in line:
+        print(f'[{i}] {line}')
+"
+# → [28] AXLink (E-Mail)
+
+# 4. E-Mail Header Link klicken (CUA-Driver für Navigation!)
+cua-driver call click '{"pid": 96377, "window_id": 10372, "element_index": 28}'
+# → ✅ Performed AXPress on [28] AXLink ""
+
+# 5. Warten und GMX FreeMail Inbox prüfen
+sleep 5
+echo '{"pid": 96377, "window_id": 10372}' | cua-driver call get_window_state | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+lines = d['tree_markdown'].split('\n')
+print([l for l in lines if 'AXWindow' in l][0][:80])
+"
+# → "GMX FreeMail - Google Chrome"
+
+# 6. Email klicken (CDP JavaScript - CUA-Driver funktioniert NICHT!)
+# Via CDP client.evaluate():
+async def _click_fireworks_email_in_iframe(client, session_id):
+    click_result = await client.evaluate(
+        session_id,
+        """
+        (function() {
+            const selectors = [
+                '[class*="inbox-content"]',
+                '[class*="maillist"]',
+                '[class*="mail_list"]',
+                'main [class*="list"]'
+            ];
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (!el) continue;
+                const items = el.querySelectorAll('[class*="item"], [class*="row"], tr');
+                for (const item of items) {
+                    const text = item.innerText.toLowerCase();
+                    if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
+                        item.click();
+                        return {clicked: true};
+                    }
+                }
+            }
+            return {clicked: false};
+        })()
+        """,
+        return_by_value=True
+    )
+    return click_result.get("result", {}).get("value", {}).get("clicked", False)
+```
+
+**HYBRID REGEL:**
+- **CUA-Driver** → Navigation (GMX Homepage → E-Mail Button → Inbox öffnen)
+- **CDP JavaScript** → Email klicken (GMX Email Rows haben kein AXPress!)
+
+**⚠️ KRITISCH: Chrome IMMER ohne --force-renderer-accessibility starten!**
+- MIT Flag: GMX zeigt "Barrierefreies Postfach" (NICHT klickbar!)
+- OHNE Flag: GMX zeigt normale Version (Email-Rows klickbar!)
+
+### AX-TREE STRUKTUR (GMX FREEMAIL)
+
+```
+AXApplication "Chrome"
+  - [0] AXWindow "GMX FreeMail..."
+    - [16] AXWebArea "GMX FreeMail"
+      - [28] AXButton "E-Mail"  ← Navigation
+      - [46] AXGroup (mail)
+        - [50] AXButton "E-Mail schreiben"
+        - [54] AXGroup (Posteingang 60/135)
+          - [56] AXButton "Posteingang"
+          - [192] AXGroup  ← Email Row Container
+            - [193] AXGroup  ← Star/Favorite
+            - [196] AXGroup  ← Sender
+              - [197] AXStaticText "no-reply@fireworks.ai"
+            - [198] AXGroup  ← Time
+              - [199] AXGroup (10.05.26 um 10:39 Uhr)
+            - [201] AXGroup  ← Subject
+              - [202] AXStaticText "Verify your Fireworks account"
+```
+
+### WICHTIGE FINDINGS (2026-05-10)
+
+1. **GMX zeigt accessible version** (Barrierefreies Postfach) bei `--force-renderer-accessibility`
+2. **Email rows haben KEIN AXPress** auf GMX accessible version — verified, all email rows only have AXShowMenu + AXScrollToVisible
+3. **AXLink Elements funktionieren** für externe Links (nicht für email rows!)
+4. **click_at() mit Koordinaten funktioniert NICHT** für email rows — tried y=160-210, x=400-600
+5. **double_click und right_click funktionieren NICHT** für email rows
+6. **Keyboard navigation (j, Enter) funktioniert NICHT** in GMX accessible version
+7. **JavaScript Apple Events lässt sich NICHT persistent aktivieren** — `page` tool execute_javascript fails even after enable_javascript_apple_events (Chrome relaunches but setting doesn't stick)
+8. **CDP wird als Bot erkannt** — GMX returns 413/302/403 für CDP requests
+9. **GMX FreeMail Radio Button** (element 86) navigiert zurück zu GMX mailbox
+
+### CUA-DRIVER EMAIL CLICK — BLOCKED
+
+**Problem:** GMX accessible version hat keine klickbaren email rows. Alle Elemente haben nur AXShowMenu + AXScrollToVisible, kein AXPress.
+
+**Versuchte Lösungsansätze (alle fehlgeschlagen):**
+- AXGroup time element [236] klicken → no-op
+- AXLink [223] klicken → öffnet Werbung (nicht email)
+- click_at(x=400-600, y=160-210) → keine Reaktion
+- double_click, right_click → keine Reaktion
+- Keyboard (j, Enter) → keine Reaktion
+- page tool execute_javascript → JS Apple Events deaktiviert
+
+**AX-Tree Struktur Email Row:**
+```
+[217] AXGroup (row container)
+  ├── [218] AXWebArea "generic_dach-adition" (WERBUNG!)
+  │   └── [223] AXLink (ad link - NICHT email!)
+  └── [229] AXGroup (email data - KEIN AXPress!)
+      ├── [230] AXGroup (icon "N")
+      ├── [233] AXGroup (sender)
+      │   └── [234] AXStaticText = "no-reply@fireworks.ai"
+      ├── [235] AXGroup (time)
+      │   └── [236] AXGroup (10.05.26 um 10:55 Uhr)
+      ├── [238] AXGroup (subject)
+      │   └── [239] AXStaticText = "Verify your Fireworks account"
+      └── [240] AXGroup (favorite button)
+```
+
+**Window IDs (Chrome pid 60032):**
+- GMX FreeMail: `window_id: 9790` (on screen, 1200x958 at x=367, y=76)
+
+**Nächste Versuche:**
+1. osascript direkt verwenden um JS Apple Events zu aktivieren
+2. Alternative: GMX mobile version oder andere Ansicht
+3. Direkt zu Fireworks verification URL navigieren
+4. GMX API für email access verwenden
+
+### SIN-CLIs/stealth-suite REPOS
+
+```bash
+# Explore SIN-CLIs/stealth-suite for cua-driver utilities
+gh repo view SIN-CLIs/stealth-suite
+# py-packages/drivers/ax_tree.py, cua_wrapper.py, cdp_client.py, apple_events.py
 ```
 
 ---
@@ -901,4 +1104,51 @@ GMX hat ACCOUNT-AVATAR zu einem Web Component (Custom Element) umgebaut.
 Shadow DOM Elemente sind für CDP nicht sichtbar (`getBoundingClientRect()` → 0×0).
 Nur JS Events innerhalb des Shadow DOM können die Elemente bedienen.
 
-*Letzte Aktualisierung: 2026-05-10 (Flow 0: GMX Shadow DOM + 2x Login)*
+### 2026-05-10: GMX OTP URL Discovery (GELÖST)
+
+**Was passiert ist:**
+GMX OTP Polling failed because clicking "E-Mail" header navigates to `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail` (SPA hash URL) which shows PUBLIC GMX homepage content in headless Chrome — NOT the logged-in inbox.
+
+**Symptom:**
+- URL shows `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail` (looks logged-in)
+- But `document.body.innerText` shows "Jetzt registrieren" + "GMX E-Mail - Sicher. Smart. Made in Germany." (PUBLIC content!)
+- OTP email not found in main frame DOM (0 email items)
+- GMX mail iframe (`about:blank`) never loads actual content
+
+**Root Cause:**
+GMX uses TWO URL formats for mail navigation:
+1. **SPA hash URL** (from header click): `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail`
+   - GMX SPA routes to mail component but content fails to load in headless Chrome
+   - Shows PUBLIC GMX homepage content instead of logged-in inbox
+2. **Direct navigator URL** (from login redirect): `navigator.gmx.net/mail?sid=<TOKEN>`
+   - Shows LOGGED-IN inbox with email list (accessible mailbox)
+   - Body shows "Barrierefreies Postfach" + email content
+   - SID extracted from this URL
+
+**Fix (2026-05-10) — `fireworks_service.py`:**
+1. `ensure_gmx_session()` returns `status: "success"` with `current_url: "navigator.gmx.net/mail?sid=..."` and `sid: <TOKEN>`
+2. OTP polling now navigates DIRECTLY to `https://navigator.gmx.net/mail?sid={sid}` instead of clicking "E-Mail" header
+3. `goto_inbox()` also uses direct URL navigation
+
+**Files geändert:**
+- `agent_toolbox/core/fireworks_service.py` — navigate to `navigator.gmx.net/mail?sid=` directly (lines ~1977-2030)
+
+**Test Ergebnis:**
+- Login redirects to `navigator.gmx.net/mail?sid=c1dbff3f2ef992b2870c72fe8ceb70e3a52b06abfe21567b0c5540190765f222b6d5e336705e0dce0da1212eaca41a04`
+- Body shows "Barrierefreies Postfach" (accessible mailbox) with email list
+- GMX cookies: `JSESSIONID`, `SESSION`, `iac_token`, `lps` available
+
+**WICHTIG:**
+- NIEMALS `www.gmx.net/mail/#.pc_page...` URL für OTP verwenden (zeigt PUBLIC content!)
+- IMMER `navigator.gmx.net/mail?sid=<SID>` verwenden
+- SID aus `session_result.current_url` oder `session_result.sid` extrahieren
+
+### 2026-05-11: Flow 2/3 GMX Session URL Fix
+
+**Problem:** GMX OTP Polling failed because GMX changed mail navigation from `navigator.gmx.net/mail?sid=...` (direct) to `www.gmx.net/mail/#.pc_page...` (SPA hash). SPA hash URL shows PUBLIC content in CDP headless Chrome.
+
+**Lösung:** Navigate directly to `navigator.gmx.net/mail?sid=<SID>` using the SID from `ensure_gmx_session()` return value.
+
+**Files:** `agent_toolbox/core/fireworks_service.py` (OTP polling navigation fix)
+
+*Letzte Aktualisierung: 2026-05-11 (GMX URL Discovery: SPA hash vs navigator direct URL)*
