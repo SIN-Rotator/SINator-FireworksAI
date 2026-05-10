@@ -64,6 +64,9 @@ from typing import Optional, Dict, Any, Tuple
 from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, get_page_target
 from pathlib import Path
 
+# Import GmxService for Flow 0 session recovery (VERIFIED, READ-ONLY)
+from agent_toolbox.core.gmx_service import GmxService
+
 logger = logging.getLogger(__name__)
 
 FIREWORKS_SIGNUP_URL = "https://app.fireworks.ai/signup"
@@ -1614,132 +1617,53 @@ class FireworksService:
                 steps_failed.append("account_creation_redirect_mismatch")
 
             # ════════════════════════════════════════════════════════════════════════
-            # PHASE 6: GMX BACKUP COOKIES INJECTIEREN (VOR OTP POLLING!)
-            # ════════════════════════════════════════════════════════════════════════
-            #
-            # KRITISCHER FIX (Bug aus vorherigen Versionen):
-            # Wenn Chrome mit frischem Profile 901 startet, gehen die GMX-
-            # Session-Cookies verloren. Die GMX-Session ist dann TOT.
-            #
-            # Lösung: Die gespeicherten GMX-Cookies aus `data/gmx-cookies.json`
-            # via CDP Network.setCookie injizieren BEVOR wir zur GMX-Inbox navigieren.
-            #
-            # Diese Cookies wurden in einer vorherigen, funktionierenden Session
-            # gespeichert (backup/session/gmx-cookies-master.json) und enthalten
-            # den eingeloggten Zustand für GMX (sid=... Token, Auth-Cookies etc.).
-            #
-            # WICHTIG: Dies ist der GRUND warum wir NICHT alle Cookies löschen!
-            # In Phase 1 löschen wir NUR Fireworks-Domain-Cookies.
-            # GMX-Cookies (domain enthält "gmx" oder "navigator") bleiben intakt.
-            # ABER: Nach einem Chrome-Neustart sind ALLE Cookies weg (auch GMX).
-            # → Daher müssen wir GMX-Cookies aktiv wiederherstellen.
-            #
-            # Alternativ: GMX-Cookies könnten auch in einem separaten Schritt
-            # (rotation.py → browser_manager) injiziert werden, aber das wäre
-            # ein zusätzlicher API-Call. Hier in register() ist es sauberer.
-            #
-            # Die Cookie-Injektion nutzt CDP Network.setCookie Command:
-            # - Setzt name, value, domain, path, secure, httpOnly, sameSite
-            # - Für Session-Cookies: expires=-1
-            # - Für persistente Cookies: expires als Unix-Timestamp
-            #
-            # Nach der Injektion: GMX Homepage zeigt direkt die eingeloggte UI.
-            #
-            # GMX Cookie Domains die wir injizieren:
-            # - .gmx.net (Haupt-Domain)
-            # - .navigator.gmx.net (Navigator SPA)
-            # - navigator.gmx.net
-            # - gmx.net
-            #
-            logger.info("[FW Register] Phase 6a: Inject GMX session cookies from backup/session/gmx-cookies-master.json")
-
-            cookies_file = Path("/Users/jeremy/dev/SINator-fireworksai/backup/session/gmx-cookies-master.json")
-            gmx_injected = 0
-
-            if cookies_file.exists():
-                try:
-                    with open(cookies_file, "r") as f:
-                        all_cookies = json.load(f)
-
-                    logger.info(f"[FW Register] Found {len(all_cookies)} cookies in backup file")
-
-                    for cookie in all_cookies:
-                        try:
-                            cookie_domain = cookie.get("domain", "")
-                            domain_lower = cookie_domain.lower()
-
-                            # Skip non-GMX cookies (keep trackers, Fireworks cleared separately)
-                            is_gmx = any(d in domain_lower for d in ["gmx", "navigator", "webmailer"])
-                            is_fireworks = "fireworks" in domain_lower
-                            if is_fireworks or not is_gmx:
-                                continue
-
-                            set_cookie_params = {
-                                "name": cookie.get("name", ""),
-                                "value": cookie.get("value", ""),
-                                "domain": cookie_domain,
-                                "path": cookie.get("path", "/"),
-                            }
-                            if cookie.get("secure"):
-                                set_cookie_params["secure"] = True
-                            if cookie.get("httpOnly"):
-                                set_cookie_params["httpOnly"] = True
-                            same_site = cookie.get("sameSite")
-                            if same_site and same_site not in ("None", ""):
-                                set_cookie_params["sameSite"] = same_site
-                            expires = cookie.get("expires", -1)
-                            if expires and expires != -1:
-                                try:
-                                    set_cookie_params["expires"] = float(expires)
-                                except (ValueError, TypeError):
-                                    pass
-
-                            result = await client.send_to_session(
-                                session_id, "Network.setCookie", set_cookie_params
-                            )
-                            if result and not result.get("error"):
-                                gmx_injected += 1
-
-                        except Exception as e:
-                            logger.debug(f"[FW Register] Cookie inject failed: {cookie.get('name', 'unknown')}: {e}")
-
-                    logger.info(f"[FW Register] GMX cookies injected: {gmx_injected}")
-                    if gmx_injected > 0:
-                        steps_completed.append("gmx_cookies_injected")
-                    await asyncio.sleep(1)
-
-                except Exception as e:
-                    logger.warning(f"[FW Register] Could not load cookies file: {e}")
-            else:
-                logger.error("[FW Register] CRITICAL: data/gmx-cookies.json NOT FOUND!")
-
-            # ════════════════════════════════════════════════════════════════════════
-            # PHASE 6b: GMX OTP POLLING
+            # PHASE 6: GMX SESSION SICHERSTELLEN + OTP POLLING
             # ════════════════════════════════════════════════════════════════════════
             #
             # Account ist erstellt aber noch nicht verifiziert.
             # Fireworks hat eine Bestätigungs-Email an die GMX Alias geschickt.
             # Wir müssen die Email in der GMX-Inbox finden und die OTP-URL extrahieren.
             #
-            # WICHTIG: GMX und Fireworks teilen sich dieselbe Browser-Session.
-            # Wir navigieren im SELBEN Tab zur GMX-Inbox.
-            # GMX-Cookies wurden in Phase 6a bereits injiziert.
+            # WICHTIG: Cookie-Injektion funktioniert NICHT zuverlässig (SameSite/Secure
+            # Restrictions, abgelaufene Cookies). Stattdessen verwenden wir
+            # GmxService.ensure_gmx_session() für einen frischen Login falls nötig.
             #
-            # GMX Session-Validierung:
-            # 1. Navigate zu https://www.gmx.net/ (mit injizierten GMX-Cookies)
-            # 2. Click "E-Mail" im Header (Koordinaten: x=262, y=44)
-            # 3. Prüfe URL enthält "navigator.gmx.net/mail?sid=..."
+            # Flow 0 (ensure_gmx_session) ist VERIFIED und funktioniert zuverlässig.
+            # Siehe agent_toolbox/core/gmx_service.py:_ensure_mail_session()
             #
-            # OTP-Poll-Strategie:
-            # 1. Suche Absender mit "fireworks" im Namen
-            # 2. Suche Betreff mit "verify" oder "bestätigen"
-            # 3. Extrahiere URL aus dem Email-Body
-            #    Pattern: https://app.fireworks.ai/signup/confirm?token=...
-            # 4. Retry: 12x mit je 5s Delay (60s total)
-            #
-            logger.info("[FW Register] Phase 6b: Poll GMX for OTP verification email")
-
-            # GMX Homepage → E-Mail Navigation
+            logger.info("[FW Register] Phase 6: Ensure GMX session via Flow 0")
+            
+            # Disconnect Fireworks client to allow GmxService to use its own connection
+            await client.disconnect()
+            
+            gmx_service = GmxService()
+            session_result = await gmx_service.ensure_gmx_session(
+                email="opensin@gmx.de",
+                password=gmx_password,
+                cdp_port=cdp_port,
+            )
+            
+            if session_result.get("status") != "success":
+                steps_failed.append("gmx_session_invalid")
+                return {
+                    "status": "partial",
+                    "account_email": email,
+                    "fireworks_password": password,
+                    "api_key": None,
+                    "api_key_name": None,
+                    "steps_completed": steps_completed,
+                    "steps_failed": steps_failed,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": f"GMX session invalid — not on mail page. URL: {session_result.get('current_url', 'unknown')}",
+                }
+            
+            steps_completed.append("gmx_session_active")
+            logger.info(f"[FW Register] GMX Session OK: {session_result.get('sid', '')[:40]}...")
+            
+            # Re-connect CDP for OTP polling
+            client, session_id = await self._connect(cdp_port)
+            
+            # Navigate to GMX Inbox
             await client.navigate(session_id, "https://www.gmx.net/")
             await asyncio.sleep(3)
 
