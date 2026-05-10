@@ -264,6 +264,58 @@ AXApplication "Chrome"
 3. Direkt zu Fireworks verification URL navigieren
 4. GMX API für email access verwenden
 
+### GMX MAILCHECK CHROME EXTENSION (2026-05-10) — NEUE LÖSUNG!
+
+**ENTDECKUNG:** GMX MailCheck Extension in Chrome-Toolbar kann für Email-Zugriff genutzt werden!
+
+**Extension ID:** `camnampocfohlcgbajligmemmabnljcm`
+
+**Popup URL:** `chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html`
+
+**Zugriff via CDP:**
+```python
+# Extension-Popup in neuem Tab öffnen
+new_target = await client.send("Target.createTarget", {
+    "url": "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html"
+})
+```
+
+**Email-Liste Struktur:**
+```html
+<a class="email" data-account="opensin@gmx.de" data-email-id="1778401259732654954">
+  <span class="email-sender">no-reply@fireworks.ai</span>
+  <span class="email-subject">Verify your Fireworks account</span>
+  <span class="email-datetime">10:20</span>
+</a>
+```
+
+**Email IDs:** Format `1778401259732654954` (18 Ziffern)
+
+**Output Example:**
+```
+MailCheck
+Aktualisieren    Logout
+56
+opensin@gmx.de
+ Neue E-Mail schreiben    Öffnen / Schliessen
+no-reply@fireworks.ai
+Verify your Fireworks account    10:20
+no-reply@fireworks.ai
+Verify your Fireworks account    10:09
+...
+```
+
+**WICHTIG:**
+- Extension zeigt Emails von `opensin@gmx.de` (Haupt-Account)
+- Alias-Emails (`phantom-beetle-xxx@gmx.de`) kommen auch hier an
+- Email-Detail öffnet sich als `popup/popup.html` (noch nicht funktional via CDP)
+- Click auf Email setzt `href="undefined"` → JavaScript-basierte Navigation
+
+**Nächste Schritte:**
+1. Email-Detail-Inhalt extrahieren (Popup oder Alternative)
+2. OTP-URL aus Email-Body lesen
+3. Navigation zu Fireworks confirmation URL
+
 ### SIN-CLIs/stealth-suite REPOS
 
 ```bash
