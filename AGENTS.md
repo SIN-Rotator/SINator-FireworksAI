@@ -1,5 +1,27 @@
 # AGENTS.md — SINator Fireworks AI Rotator
 
+## 🎯 VERIFIED ALIAS DELETE FLOW (2026-05-11) — READ-ONLY
+
+**HYBRID: CDP DOM + Input.dispatchMouseEvent + CUA**
+
+Alias content is in **3c.gmx.net CROSS-ORIGIN IFRAME**. Runtime.evaluate returns EMPTY on accessible GMX pages. Solution:
+
+```
+1. CUA → Navigiere zu E-Mail-Adressen Seite (GMX Settings)
+2. CDP DOM.performSearch "@gmx.de" → Alias text node + Koordinaten (skip opensin + JSON)
+3. CDP Input.dispatchMouseEvent type="mouseMoved" → HOVER über Alias Row
+   → CSS :hover triggered → Delete-Icon erscheint im DOM
+4. CDP DOM.performSearch "löschen" → a[title="E-Mail-Adresse löschen"] Koordinaten
+5. CDP Input.dispatchMouseEvent pressed+released → Klick auf Delete-Icon
+6. CUA get_window_state → "OK" Button im Dialog finden → CUA click "OK"
+```
+
+**WARNING:** Input.dispatchMouseEvent coords are relative to MAIN FRAME viewport, NOT iframe.
+DOM.getBoxModel returns iframe-local coords → need iframe offset if scrolled.
+
+**Implementation:** `agent_toolbox/core/gmx_service.py:551-804` (methods `_find_alias_coords_in_iframe`,
+`_cdp_hover`, `_find_delete_icon_coords`, `_cdp_click`, `_cua_click_ok_button`, `delete_existing_alias`)
+
 ## 🚨 MANDATORY SCAN PROTOCOL (PERMANENT)
 niemals wieder machst du auch nurrrr eine kleine aktion bevor du nicht gesamten mac alle elemente gescannt hast vor und nach JEDEM klick
 

@@ -1,6 +1,6 @@
 {
-  "command_registry_version": "1.0.0",
-  "last_updated": "2026-05-11T00:00:00Z",
+  "command_registry_version": "1.1.0",
+  "last_updated": "2026-05-11T03:30:00Z",
   "commands": {
     "CUA_PRIMARY": {
       "description": "CUA Driver ist IMMER die erste Wahl für Interaktionen",
@@ -14,25 +14,57 @@
       ]
     },
     "CDP_FALLBACK": {
-      "description": "CDP nur als Notlösung wenn CUA versagt",
+      "description": "CDP als Notlösung für spezifische Cases",
       "usage": "python3 - << 'PYEOF' ... CDPClient ... PYEOF",
       "when_to_use": [
+        "HOVER über Elemente um CSS :hover zu triggern (Input.dispatchMouseEvent mouseMoved)",
+        "DOM.performSearch um Elemente in cross-origin iframes zu finden",
         "React controlled inputs (CUA type_text funktioniert NICHT)",
-        "JavaScript evaluation im Page-Kontext",
         "Cookie extraction/inspection",
-        "Target management (neue Tabs)",
-        "Screenshot wenn CUA fails"
+        "Target management (neue Tabs)"
       ],
       "React_Input_Fix": "nativeInputValueSetter für React controlled inputs",
-      "code_snippet": "const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSetter.call(input, 'text'); input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));"
+      "code_snippet": "const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSetter.call(input, 'text'); input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));",
+      "WHEN_NOT_TO_USE": [
+        "Page.navigate = HTTP-Request = Bot-Detection (413/302/403)",
+        "Runtime.evaluate auf GMX accessible pages = leeres {}",
+        "Normale Button/Link Klicks = CUA statt CDP"
+      ]
+    },
+    "GMX_ALIAS_DELETE": {
+      "description": "GMX Alias Löschung — HYBRID CDP DOM + Input + CUA (VERIFIED 2026-05-11)",
+      "why": "Alias-Inhalt ist im 3c.gmx.net CROSS-ORIGIN IFRAME. Runtime.evaluate = leeres {} auf accessible pages. DOM.performSearch + Input.dispatchMouseEvent umgehen das.",
+      "flow": [
+        "1. CUA: Navigiere zur E-Mail-Adressen Seite (GMX Settings)",
+        "2. CDP DOM.performSearch '@gmx.de' → Alias text node + Koordinaten (skip opensin + JSON)",
+        "3. CDP Input.dispatchMouseEvent mouseMoved → Hover über Alias Row → CSS :hover triggers → Delete-Icon erscheint im DOM",
+        "4. CDP DOM.performSearch 'löschen' → a[title='E-Mail-Adresse löschen'] Koordinaten",
+        "5. CDP Input.dispatchMouseEvent pressed+released → Klick auf Delete-Icon",
+        "6. CUA get_window_state → Dialog 'OK' Button finden → CUA click 'OK'"
+      ],
+      "key_methods": {
+        "_find_alias_coords_in_iframe": "DOM.performSearch @gmx.de → filter opensin + JSON → box model",
+        "_cdp_hover": "Input.dispatchMouseEvent type=mouseMoved",
+        "_find_delete_icon_coords": "DOM.performSearch post-hover → filter title attrib",
+        "_cdp_click": "Input.dispatchMouseEvent pressed+released",
+        "_cua_click_ok_button": "CUA get_window_state → regex AXButton OK → CUA click"
+      },
+      "cdp_coord_warning": "Input.dispatchMouseEvent coordinates are relative to MAIN FRAME viewport, NOT iframe. If iframe is scrolled, add iframe offset."
     },
     "GMX_EXTENSION": {
       "description": "GMX MailCheck Chrome Extension für Email-Zugriff",
       "usage": "GMX MailCheck Extension clicken → Email Panel öffnet sich",
       "extension_id": "camnampocfohlcgbajligmemmabnljcm",
       "popup_url": "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html",
-      "allowed_urls": ["navigator.gmx.net/mail?sid=...", "app.gmx.net", "3c-bap.gmx.net"],
-      "forbidden": ["lightmailer-bs.gmx.net", "webmailer.gmx.net URLs direkt navigieren"],
+      "allowed_urls": [
+        "navigator.gmx.net/mail?sid=...",
+        "app.gmx.net",
+        "3c-bap.gmx.net"
+      ],
+      "forbidden": [
+        "lightmailer-bs.gmx.net",
+        "webmailer.gmx.net URLs direkt navigieren"
+      ],
       "email_ids": "Format: 18 Ziffern (z.B. 1778454231729833464)"
     },
     "PRE_FLIGHT_CHECK": {

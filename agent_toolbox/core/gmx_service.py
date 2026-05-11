@@ -11,36 +11,38 @@
 ║  GMX Session-Management, Alias-Erstellung/Löschung, OTP-Lesen               ║
 ║                                                                              ║
 ║  CUA PRIMÄR FÜR:                                                            ║
-║  ✅ Navigation: GMX Homepage → E-Mail Header Link klicken                   ║
-║  ✅ Settings: "E-Mail-Adressen" Navigation                                   ║
-║  ✅ Buttons: Hinzufügen, OK, Löschen-Icons                                   ║
-║  ✅ Element-Scanning für Koordinaten und element_index                       ║
+║  ✅ Navigation: GMX Homepage → E-Mail → Settings                             ║
+║  ✅ Dialog-Buttons: OK, Abbrechen (via AXPress nach Dialog-Scan)            ║
+║  ✅ Alias-Erstellungs-Input + Button                                         ║
+║                                                                              ║
+║  CDP NUR FÜR HOVER + DELETE-ICON (accessible mode workaround):              ║
+║  ✅ DOM.performSearch → Alias-Koordinaten im 3c.gmx.net Iframe finden       ║
+║  ✅ Input.dispatchMouseEvent mouseMoved → Hover über Alias-Row              ║
+║  ✅ DOM.performSearch → delete icon title="E-Mail-Adresse löschen"          ║
+║  ✅ Input.dispatchMouseEvent → Klick auf delete icon                        ║
+║  ❌ Runtime.evaluate auf GMX accessible pages = leeres {}                   ║
 ║                                                                              ║
 ║  GMX EXTENSION (GMX MailCheck) — FÜR OTP/EMAIL:                             ║
-║  ────────────────────────────────────────────────────────────────────────── ║
 ║  ✅ Extension ID: camnampocfohlcgbajligmemmabnljcm                           ║
-║  ✅ Popup: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/        ║
-║     mail-panel.html                                                          ║
-║  ✅ Email-Format: 18 Ziffern (z.B. 1778454231729833464)                     ║
-║  ✅ Extension öffnen via CUA auf angepinnt GMX Icon                          ║
+║  ✅ Email-Format: 18 Ziffern                                                ║
 ║                                                                              ║
 ║  ❌ VERBOTEN:                                                                ║
-║  ❌ lightmailer-bs.gmx.net URLs (HTTP 500 errors!)                           ║
-║  ❌ webmailer.gmx.net direkt navigieren                                      ║
-║  ❌ CDP evaluate im Page-Kontext für GMX                                     ║
+║  ❌ CDP Runtime.evaluate auf GMX (accessible mode = leer)                   ║
+║  ❌ CDP Page.navigate = HTTP Request = Bot-Detection (413/302/403)          ║
+║  ❌ lightmailer-bs.gmx.net URLs                                             ║
+║  ❌ Chrome killen (pkill -9)                                                ║
 ║                                                                              ║
-║  ALIAS LÖSCHEN (GMX SPA):                                                   ║
-║  1. Settings → "E-Mail-Adressen" (CUA click)                                 ║
-║  2. Force-Reveal: .js-template.is-hidden                                     ║
-║  3. Delete-Icon via CUA klicken                                              ║
-║  4. Confirm: OK-Button (CUA)                                                 ║
-║  5. Erfolg: "Ihr Eintrag wurde erfolgreich gelöscht"                        ║
+║  ALIAS LÖSCHEN (VERIFIED 2026-05-11):                                        ║
+║  1. CUA: zur E-Mail-Adressen Seite navigieren                                ║
+║  2. CDP DOM.performSearch: "@gmx.de" im Iframe → Alias-Koordinaten         ║
+║  3. CDP Input.dispatchMouseEvent mouseMoved → Hover → Delete-Icon erscheint ║
+║  4. CDP DOM.performSearch: "E-Mail-Adresse löschen" → Delete-Icon klicken   ║
+║  5. CUA get_window_state: Dialog "OK" Button finden                         ║
+║  6. CUA click: "OK" Button → Löschung bestätigen                            ║
 ║                                                                              ║
 ║  ALIAS ERSTELLEN:                                                            ║
 ║  1. Input[name*="localPart"] mit CDP nativeInputValueSetter                  ║
-║  2. Events dispatch: input, change, blur                                     ║
-║  3. Hinzufügen-Button via CUA click                                          ║
-║  4. Erfolg: Alias erscheint in .table_body-row                               ║
+║  2. Hinzufügen-Button via CUA click                                          ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
@@ -49,12 +51,12 @@ import random
 import logging
 import re
 import asyncio
+import subprocess
 import base64
 import json
 import html as html_module
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
-
 import httpx
 
 from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, get_page_target
@@ -548,192 +550,199 @@ class GmxService:
     #  ALIAS DELETION
     # ═══════════════════════════════════════════════════════════════════════════════
 
-    async def _find_alias_row_text(self, client: CDPClient, session_id: str) -> Optional[str]:
-        """Findet den Text des ersten Alias (nicht Standardadresse) auf allEmailAddresses.
+    # ═══════════════════════════════════════════════════════════════════════════════
+    #  ALIAS DELETION (VERIFIED 2026-05-11)
+    #  HYBRID: CDP DOM + Input.dispatchMouseEvent for hover/delete-icon
+    #          CUA for dialog OK button
+    #  Key: Alias content is in 3c.gmx.net CROSS-ORIGIN IFRAME
+    #       Runtime.evaluate returns EMPTY on accessible GMX pages
+    #       Use DOM.performSearch + Input.dispatchMouseEvent instead
+    # ═══════════════════════════════════════════════════════════════════════════════
 
-        WICHTIG: GMX FreeMail zeigt nur eine zusätzliche Alias-Adresse an.
-        Die Standardadresse enthält "(Standardadresse)" und darf NICHT gelöscht werden.
-        """
-        js = '''(function(){
-            const rows = document.querySelectorAll(".table_body-row, .table_row");
-            for (const row of rows) {
-                const rowText = row.textContent.trim();
-                // Skip standard address rows and header rows
-                if (!rowText.includes("@gmx.de") || rowText.includes("Standardadresse")) {
-                    continue;
-                }
-                // Look for child element with exact alias text ending in @gmx.de
-                const children = Array.from(row.querySelectorAll("*"));
-                for (const el of children) {
-                    const t = el.textContent.trim();
-                    if (t.endsWith("@gmx.de") && !t.includes("Standardadresse")) {
-                        return t;
-                    }
-                }
-                // Fallback: return the first line of the row text
-                const firstLine = rowText.split(/\\n/)[0].trim();
-                if (firstLine.endsWith("@gmx.de")) {
-                    return firstLine;
-                }
-            }
-            return null;
-        })()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        return result.get("result", {}).get("value")
+    async def _get_gmx_iframe_frame_id(self, client: CDPClient, session_id: str) -> Optional[str]:
+        """Findet die frameId des 3c.gmx.net Iframes im Haupt-Dokument."""
+        doc = await client.send_to_session(session_id, "DOM.getDocument", {"depth": 2})
+        result = await client.send_to_session(session_id, "DOM.querySelectorAll", {
+            "nodeId": doc['root']['nodeId'],
+            "selector": "iframe[src*='3c.gmx.net']"
+        })
+        if not result.get('nodeIds'):
+            logger.warning("3c.gmx.net iframe nicht gefunden")
+            return None
+        info = await client.send_to_session(session_id, "DOM.describeNode", {
+            "nodeId": result['nodeIds'][0], "depth": 1
+        })
+        return info['node'].get('frameId')
 
-    async def _click_alias_row(self, client: CDPClient, session_id: str, alias_text: str) -> bool:
-        """Clicks the alias row to trigger Wicket hover state (required before delete icon is interactive)."""
-        js = f'''(function(){{
-            const rows = document.querySelectorAll(".table_body-row, .table_row");
-            let targetRow = null;
-            for (const row of rows) {{
-                if (row.textContent.includes("{alias_text}")) {{
-                    targetRow = row;
-                    break;
-                }}
-            }}
-            if (!targetRow) return {{clicked: false, error: "row not found"}};
-            targetRow.click();
-            targetRow.dispatchEvent(new MouseEvent("mouseenter", {{bubbles: true, cancelable: true, view: window}}));
-            targetRow.dispatchEvent(new MouseEvent("mouseover", {{bubbles: true, cancelable: true, view: window}}));
-            return {{clicked: true, className: targetRow.className, id: targetRow.id}};
-        }})()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        val = result.get("result", {}).get("value", {})
-        logger.info(f"Alias row click: {val}")
-        return val.get("clicked", False) if isinstance(val, dict) else bool(val)
-
-    async def _force_reveal_delete_template(self, client: CDPClient, session_id: str) -> bool:
-        """Removes .is-hidden from .js-template containers.
+    async def _find_alias_coords_in_iframe(
+        self, client: CDPClient, session_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Findet den Alias (nicht opensin@gmx.de) via DOM.performSearch und gibt Koordinaten zurück.
         
-        Note: After clicking the alias row, Wicket restructures the DOM and the delete icon
-        already has a proper bounding rect. Removing .is-hidden ensures the template is fully
-        visible for subsequent interactions.
+        Returns: {text: str, x: float, y: float, w: float, h: float} oder None
         """
-        js = '''(function(){
-            const templates = document.querySelectorAll(".js-template");
-            let changed = false;
-            for (const t of templates) {
-                t.classList.remove("is-hidden");
-                t.style.display = "block";
-                t.style.visibility = "visible";
-                t.style.opacity = "1";
-                changed = true;
-            }
-            return changed;
-        })()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        return result.get("result", {}).get("value", False)
+        search = await client.send_to_session(session_id, "DOM.performSearch", {
+            "query": "@gmx.de",
+            "includeUserAgentShadowDOM": True
+        })
+        if search['resultCount'] == 0:
+            return None
 
-    async def _click_element_by_selector_cdp(self, client: CDPClient, session_id: str, selector: str) -> bool:
-        """Clicks an element via CDP Input.dispatchMouseEvent after fetching its coordinates.
-        
-        Uses real mouse events via CDP which reliably trigger Wicket's event handlers.
-        """
-        safe_selector = selector.replace("'", "\\'")
-        js = f'''(function(){{
-            const el = document.querySelector('{safe_selector}');
-            if (!el) return {{found: false, error: "not found"}};
-            const rect = el.getBoundingClientRect();
-            return {{
-                found: true,
-                x: rect.x + rect.width / 2,
-                y: rect.y + rect.height / 2,
-                w: rect.width,
-                h: rect.height,
-            }};
-        }})()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        val = result.get("result", {}).get("value", {})
-        if not val.get("found"):
-            logger.warning(f"Element '{selector}' not found or has zero rect")
-            return False
-        x, y = val["x"], val["y"]
-        logger.info(f"CDP click '{selector}' at ({x:.1f}, {y:.1f})")
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": x, "y": y,
+        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
+            "searchId": search['searchId'],
+            "fromIndex": 0,
+            "toIndex": search['resultCount']
         })
-        await asyncio.sleep(0.3)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        return True
 
-    async def _click_ok_confirm_button(self, client: CDPClient, session_id: str) -> bool:
-        """Finds the OK confirmation button and clicks it via CDP mouse events."""
-        js = '''(function(){
-            const btns = document.querySelectorAll("button, a[role=button], input[type=submit], .m-button");
-            for (const b of btns) {
-                const t = b.textContent.trim().toLowerCase();
-                if (t === "ok") {
-                    const rect = b.getBoundingClientRect();
+        for nid in nodes['nodeIds']:
+            try:
+                info = await client.send_to_session(session_id, "DOM.describeNode", {
+                    "nodeId": nid, "depth": 1
+                })
+                val = (info['node'].get('nodeValue', '') or '').strip()
+                tag = info['node'].get('nodeName', '')
+                # Skip JSON data, script content, main email
+                if not val or val.startswith('{') or val == 'opensin@gmx.de' or tag != '#text':
+                    continue
+                if '@gmx.de' not in val:
+                    continue
+
+                box = await client.send_to_session(session_id, "DOM.getBoxModel", {
+                    "nodeId": nid
+                })
+                c = box['model']['content']
+                w = c[2] - c[0]
+                h = c[7] - c[1]
+                if w < 30 or h < 8:
+                    continue
+
+                return {
+                    "text": val,
+                    "x": c[0],
+                    "y": c[1],
+                    "w": w,
+                    "h": h,
+                    "nodeId": nid
+                }
+            except Exception:
+                continue
+        return None
+
+    async def _cdp_hover(self, client: CDPClient, session_id: str, x: float, y: float):
+        """Sendet CDP Input.dispatchMouseEvent mouseMoved (triggert CSS :hover)."""
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": x, "y": y
+        })
+
+    async def _cdp_click(self, client: CDPClient, session_id: str, x: float, y: float):
+        """Sendet CDP Input.dispatchMouseEvent pressed + released."""
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": x, "y": y,
+            "button": "left", "clickCount": 1
+        })
+        await asyncio.sleep(0.1)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": x, "y": y,
+            "button": "left", "clickCount": 1
+        })
+
+    async def _find_delete_icon_coords(
+        self, client: CDPClient, session_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Sucht nach dem Delete-Icon (title='E-Mail-Adresse löschen') VOR oder NACH hover."""
+        for query in ["E-Mail-Adresse löschen", "löschen", "Löschen"]:
+            search = await client.send_to_session(session_id, "DOM.performSearch", {
+                "query": query,
+                "includeUserAgentShadowDOM": True
+            })
+            if search['resultCount'] == 0:
+                continue
+
+            nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
+                "searchId": search['searchId'],
+                "fromIndex": 0,
+                "toIndex": min(search['resultCount'], 10)
+            })
+
+            for nid in nodes['nodeIds']:
+                try:
+                    info = await client.send_to_session(session_id, "DOM.describeNode", {
+                        "nodeId": nid, "depth": 2
+                    })
+                    node = info['node']
+                    attrs = node.get('attributes', [])
+                    attr_dict = {}
+                    for j in range(0, len(attrs) - 1, 2):
+                        attr_dict[attrs[j]] = attrs[j + 1]
+                    title = attr_dict.get('title', '')
+
+                    if 'lösch' not in title.lower():
+                        continue
+
+                    box = await client.send_to_session(session_id, "DOM.getBoxModel", {
+                        "nodeId": nid
+                    })
+                    c = box['model']['content']
+                    w = c[2] - c[0]
+                    h = c[7] - c[1]
+                    if w < 5 or h < 5:
+                        continue
+
                     return {
-                        found: true,
-                        x: rect.x + rect.width / 2,
-                        y: rect.y + rect.height / 2,
-                        w: rect.width,
-                        h: rect.height,
-                        text: b.textContent.trim(),
-                        id: b.id,
-                    };
-                }
-            }
-            return {found: false, available: Array.from(btns).map(b => b.textContent.trim()).filter(t => t.length > 0).slice(0, 20)};
-        })()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        val = result.get("result", {}).get("value", {})
-        if not val.get("found"):
-            logger.warning(f"OK button not found: {val}")
-            return False
-        x, y = val["x"], val["y"]
-        logger.info(f"CDP click OK button '{val.get('text')}' ({val.get('id')}) at ({x:.1f}, {y:.1f})")
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": x, "y": y,
-        })
-        await asyncio.sleep(0.3)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        return True
+                        "x": c[0] + w / 2,
+                        "y": c[1] + h / 2,
+                        "w": w,
+                        "h": h,
+                        "title": title,
+                        "nodeId": nid
+                    }
+                except Exception:
+                    continue
+        return None
 
-    async def _check_deletion_success(self, client: CDPClient, session_id: str, alias_text: str) -> Dict[str, bool]:
-        """Checks if alias was deleted by looking for success message and absence of alias."""
-        js = f'''(function(){{
-            const bodyText = document.body.textContent;
-            const rows = document.querySelectorAll(".table_body-row, .table_row");
-            let stillInRow = false;
-            for (const row of rows) {{
-                if (row.textContent.includes("{alias_text}")) {{
-                    stillInRow = true;
-                    break;
-                }}
-            }}
-            return {{
-                stillExists: stillInRow || bodyText.includes("{alias_text}"),
-                hasSuccess: /erfolgreich gelöscht|wurde gelöscht/.test(bodyText),
-                hasError: /fehler|nicht möglich/.test(bodyText),
-            }};
-        }})()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        return result.get("result", {}).get("value", {})
+    async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
+        """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken."""
+        import subprocess, re
+        result = subprocess.run(
+            ["cua-driver", "call", "get_window_state"],
+            input=json.dumps({"pid": pid, "window_id": window_id}),
+            capture_output=True, text=True, timeout=15
+        )
+        state = json.loads(result.stdout)
+        lines = state.get('tree_markdown', '').split('\n')
+
+        for line in lines:
+            s = line.strip()
+            if 'AXButton "OK"' not in s and 'AXButton "Abbrechen"' not in s:
+                continue
+            if 'OK' not in s:
+                continue
+            # Extract element_index from [pid] - [element_index] pattern
+            m = re.search(r'\]\s*-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
+            if m:
+                el = int(m.group(1))
+                logger.info(f"CUA click OK button at element_index {el}")
+                subprocess.run(
+                    ["cua-driver", "call", "click"],
+                    input=json.dumps({
+                        "pid": pid, "window_id": window_id, "element_index": el
+                    }),
+                    capture_output=True, text=True, timeout=10
+                )
+                return True
+        logger.warning("OK button not found in CUA AX tree")
+        return False
 
     async def delete_existing_alias(self, cdp_port: int = 9222) -> Dict[str, Any]:
         """Löscht einen existierenden GMX Alias.
         
-        Flow:
-        1. Navigiere zu allEmailAddresses
-        2. Finde Alias-Text (nicht Standardadresse)
-        3. Klicke Alias-Zeile (mouseenter/mouseover/click) — Wicket restructured DOM
-        4. Entferne .is-hidden von .js-template
-        5. Klicke Delete-Icon via CDP mouse events
-        6. Klicke OK-Button via CDP mouse events
-        7. Verifiziere: Alias nicht mehr vorhanden + Erfolgsmeldung
+        VERIFIED FLOW (2026-05-11):
+        1. Navigiere zu E-Mail-Adressen (CUA, done externally or before)
+        2. CDP DOM.performSearch "@gmx.de" → Alias-Koordinaten im Iframe
+        3. CDP Input.dispatchMouseEvent mouseMoved → Hover → Delete-Icon erscheint
+        4. CDP DOM.performSearch "löschen" → Delete-Icon Koordinaten
+        5. CDP Input.dispatchMouseEvent → Klick auf Delete-Icon
+        6. CUA scan + click → "OK" Button im Dialog
         
         Returns:
             {"status": "success"|"no_alias"|"not_logged_in"|"error", "deleted": bool, "alias": str|None}
@@ -741,62 +750,79 @@ class GmxService:
         client = None
         try:
             client, session_id, _ = await self._connect_to_browser(cdp_port)
-            
-            # Navigate to allEmailAddresses
+            await client.send_to_session(session_id, "DOM.enable")
+            await asyncio.sleep(0.5)
+
+            # Step 1: Ensure we're on E-Mail-Adressen page
             nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
             if not nav_ok:
-                return {"status": "not_logged_in", "deleted": False, "error": "Konnte nicht zu allEmailAddresses navigieren"}
-            
-            await self._screenshot(client, session_id, "delete_before")
-            
-            # Find alias
-            alias_text = await self._find_alias_row_text(client, session_id)
-            if not alias_text:
-                logger.info("Kein existierender Alias gefunden")
+                return {"status": "not_logged_in", "deleted": False,
+                        "error": "Konnte nicht zu allEmailAddresses navigieren"}
+
+            # Step 2: Find alias in iframe via CDP DOM
+            alias_info = await self._find_alias_coords_in_iframe(client, session_id)
+            if not alias_info:
+                logger.info("Kein Alias gefunden")
                 return {"status": "no_alias", "deleted": True, "alias": None}
-            
-            logger.info(f"Alias gefunden: {alias_text}")
-            
-            # Step 1: Click alias row (CRITICAL — triggers Wicket DOM restructure)
-            row_clicked = await self._click_alias_row(client, session_id, alias_text)
-            if not row_clicked:
-                return {"status": "error", "deleted": False, "alias": alias_text, "error": "Alias-Zeile nicht gefunden"}
+
+            alias_text = alias_info['text']
+            logger.info(f"Alias gefunden: {alias_text} at ({alias_info['x']:.0f},{alias_info['y']:.0f})")
+
+            # Step 3: CDP HOVER over alias row (triggers CSS :hover → delete icon appears)
+            hover_x = alias_info['x'] + alias_info['w'] / 2
+            hover_y = alias_info['y'] + alias_info['h'] / 2
+            logger.info(f"Hover at ({hover_x:.0f}, {hover_y:.0f})")
+            await self._cdp_hover(client, session_id, hover_x, hover_y)
             await asyncio.sleep(1)
-            
-            # Step 2: Reveal .js-template
-            revealed = await self._force_reveal_delete_template(client, session_id)
-            logger.info(f"Template revealed: {revealed}")
-            await asyncio.sleep(0.5)
-            
-            # Step 3: Click delete icon via CDP mouse events
-            delete_clicked = await self._click_element_by_selector_cdp(
-                client, session_id,
-                'a[title="E-Mail-Adresse löschen"]'
-            )
-            if not delete_clicked:
-                return {"status": "error", "deleted": False, "alias": alias_text, "error": "Löschen-Icon nicht gefunden"}
+
+            # Step 4: Find delete icon (now visible after hover)
+            delete_info = await self._find_delete_icon_coords(client, session_id)
+            if not delete_info:
+                return {"status": "error", "deleted": False, "alias": alias_text,
+                        "error": "Delete-Icon nicht gefunden nach Hover"}
+
+            logger.info(f"Delete icon at ({delete_info['x']:.0f},{delete_info['y']:.0f})")
+
+            # Step 5: CDP click on delete icon
+            await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
             await asyncio.sleep(3)
-            
-            await self._screenshot(client, session_id, "delete_after_trash_click")
-            
-            # Step 4: Click OK confirm via CDP mouse events
-            ok_clicked = await self._click_ok_confirm_button(client, session_id)
-            if not ok_clicked:
-                return {"status": "error", "deleted": False, "alias": alias_text, "error": "OK-Button nicht gefunden"}
-            await asyncio.sleep(5)
-            
-            await self._screenshot(client, session_id, "delete_after_confirm")
-            
-            # Verify
-            check = await self._check_deletion_success(client, session_id, alias_text)
-            logger.info(f"Deletion check: {check}")
-            
-            if check.get("hasSuccess") or not check.get("stillExists"):
-                logger.info(f"✅ Alias gelöscht: {alias_text}")
-                return {"status": "success", "deleted": True, "alias": alias_text}
-            else:
-                return {"status": "error", "deleted": False, "alias": alias_text, "error": "Alias scheint noch zu existieren"}
-            
+
+            # Step 6: CUA click OK button in dialog
+            # We need the Chrome window pid + window_id
+            # Use a known/fixed pid: 85447, or detect dynamically
+            try:
+                import subprocess as sp
+                res = sp.run(
+                    ["cua-driver", "call", "list_windows"],
+                    input=json.dumps({"query": "Chrome"}),
+                    capture_output=True, text=True, timeout=10
+                )
+                windows_data = json.loads(res.stdout)
+                cua_pid = None
+                cua_wid = None
+                for w in windows_data.get('windows', []):
+                    if 'GMX' in w.get('title', '') and w.get('is_on_screen'):
+                        cua_pid = w['pid']
+                        cua_wid = w['window_id']
+                        break
+
+                if cua_pid and cua_wid:
+                    ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
+                    if ok_clicked:
+                        await asyncio.sleep(3)
+                        logger.info(f"✅ Alias gelöscht: {alias_text}")
+                        return {"status": "success", "deleted": True, "alias": alias_text}
+                    else:
+                        return {"status": "error", "deleted": False, "alias": alias_text,
+                                "error": "OK-Button nicht gefunden im Dialog"}
+                else:
+                    return {"status": "error", "deleted": False, "alias": alias_text,
+                            "error": "GMX Chrome window nicht gefunden via CUA"}
+            except Exception as e:
+                logger.error(f"CUA OK click failed: {e}")
+                return {"status": "error", "deleted": False, "alias": alias_text,
+                        "error": f"CUA dialog interaction failed: {e}"}
+
         except Exception as e:
             logger.error(f"Alias-Löschung fehlgeschlagen: {e}")
             return {"status": "error", "deleted": False, "error": str(e)}
@@ -1069,39 +1095,60 @@ class GmxService:
                 }
             steps_completed.append("navigated_to_addresses")
 
-            # --- STEP 2: Delete existing alias ---
-            alias_text = await self._find_alias_row_text(client, session_id)
-            if alias_text:
-                logger.info(f"Alias gefunden: {alias_text}")
-                
-                # Click alias row first (CRITICAL for Wicket DOM restructure)
-                row_clicked = await self._click_alias_row(client, session_id, alias_text)
-                if row_clicked:
-                    await asyncio.sleep(1)
-                    
-                    await self._force_reveal_delete_template(client, session_id)
-                    await asyncio.sleep(0.5)
-                    
-                    delete_clicked = await self._click_element_by_selector_cdp(
-                        client, session_id, 'a[title="E-Mail-Adresse löschen"]'
+            # --- STEP 2: Delete existing alias (HYBRID CDP DOM + CUA) ---
+            await client.send_to_session(session_id, "DOM.enable")
+            await asyncio.sleep(0.3)
+
+            alias_info = await self._find_alias_coords_in_iframe(client, session_id)
+            if alias_info:
+                alias_text = alias_info['text']
+                logger.info(f"Alias gefunden: {alias_text} at ({alias_info['x']:.0f},{alias_info['y']:.0f})")
+
+                # CDP HOVER over alias row
+                hover_x = alias_info['x'] + alias_info['w'] / 2
+                hover_y = alias_info['y'] + alias_info['h'] / 2
+                await self._cdp_hover(client, session_id, hover_x, hover_y)
+                await asyncio.sleep(1)
+
+                # Find delete icon (now visible after hover)
+                delete_info = await self._find_delete_icon_coords(client, session_id)
+                if delete_info:
+                    await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
+                    await asyncio.sleep(3)
+
+                    # CUA click OK button
+                    import subprocess as sp
+                    res = sp.run(
+                        ["cua-driver", "call", "list_windows"],
+                        input=json.dumps({"query": "Chrome"}),
+                        capture_output=True, text=True, timeout=10
                     )
-                    if delete_clicked:
-                        await asyncio.sleep(3)
-                        ok_clicked = await self._click_ok_confirm_button(client, session_id)
-                        if ok_clicked:
-                            await asyncio.sleep(5)
-                            check = await self._check_deletion_success(client, session_id, alias_text)
-                            if check.get("hasSuccess") or not check.get("stillExists"):
-                                deleted_alias = alias_text
-                                steps_completed.append("alias_deleted")
+                    try:
+                        wd = json.loads(res.stdout)
+                        cua_pid, cua_wid = None, None
+                        for w in wd.get('windows', []):
+                            if 'GMX' in w.get('title', '') and w.get('is_on_screen'):
+                                cua_pid = w['pid']; cua_wid = w['window_id']
+                                break
+                        if cua_pid and cua_wid:
+                            ok = await self._cua_click_ok_button(cua_pid, cua_wid)
+                            if ok:
+                                await asyncio.sleep(3)
+                                # Verify: search again to confirm deletion
+                                alias_check = await self._find_alias_coords_in_iframe(client, session_id)
+                                if alias_check and alias_check['text'] == alias_text:
+                                    steps_failed.append("alias_delete_verify")
+                                else:
+                                    deleted_alias = alias_text
+                                    steps_completed.append("alias_deleted")
                             else:
-                                steps_failed.append("alias_delete_verify")
+                                steps_failed.append("confirm_button_not_found")
                         else:
-                            steps_failed.append("confirm_button_not_found")
-                    else:
-                        steps_failed.append("trash_icon_not_found")
+                            steps_failed.append("cua_window_not_found")
+                    except Exception:
+                        steps_failed.append("cua_confirm_error")
                 else:
-                    steps_failed.append("alias_row_not_found")
+                    steps_failed.append("trash_icon_not_found")
             else:
                 steps_completed.append("no_existing_alias")
                 deleted_alias = None

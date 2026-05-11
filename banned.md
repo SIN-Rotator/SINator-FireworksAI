@@ -222,3 +222,46 @@ echo '...' | cua-driver call click
 ```bash
 echo '{"pid": 123, "window_id": 456, "element_index": 74, "value": "Create API Key"}' | cua-driver call set_value
 ```
+
+---
+
+## ❌ BANNED: CDP Runtime.evaluate auf GMX Accessible Pages (2026-05-11)
+
+```python
+# FALSCH — client.evaluate() gibt LEERES {} zurück auf accessible GMX!
+result = await client.evaluate(sid, "document.querySelector('...')")
+# → {"result": {"type": "function", "value": {}}}  ← LEER!
+```
+
+**Symptom:** Runtime.evaluate-Ergebnisse sind `{}` auf allen GMX-Seiten wenn Chrome im Accessibility-Mode läuft. ALLE JS-basierten DOM-Queries schlagen fehl.
+
+**Warum gebannt:** Wenn cua-driver Daemon läuft, erkennt Chrome "Assistive Technology" und aktiviert den Accessibility-Mode. In diesem Modus funktioniert `Runtime.evaluate` NICHT für GMX-Seiten (vermutlich wegen iframe/cross-origin restrictions in der accessible rendering pipeline).
+
+**Fix:** DOM.performSearch + DOM.getBoxModel verwenden STATT Runtime.evaluate:
+```python
+# ✅ RICHTIG — DOM domain funktioniert auch auf accessible pages!
+await client.send_to_session(sid, "DOM.performSearch", {
+    "query": "@gmx.de",
+    "includeUserAgentShadowDOM": True
+})
+# → findet text nodes in iframes!
+```
+
+**Alternativ:** `Input.dispatchMouseEvent` funktioniert ebenfalls (andere Domain als Runtime).
+
+---
+
+## ❌ BANNED: CDP Page.navigate für GMX (2026-05-11)
+
+```python
+# FALSCH — Page.navigate ist ein HTTP Request der als Bot erkannt wird!
+await client.send_to_session(sid, "Page.navigate", {"url": "https://navigator.gmx.net/..."})
+# → GMX antwortet mit 413/302/403 (Bot Detection)!
+```
+
+**Symptom:** Session ist sofort tot, redirects zu Login-Page oder Cookie-Fehler-Seite.
+
+**Warum gebannt:** GMX's CDN/Load-Balancer (Akamai/DataDome) erkennt CDP-generierte HTTP-Requests und blockiert sie.
+
+**Fix:** CUA für ALLE Navigation nutzen (AXPress auf Links/Buttons).
+CDP nur für: DOM.performSearch, Input.dispatchMouseEvent, Cookie-Management.

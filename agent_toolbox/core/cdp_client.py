@@ -3,43 +3,27 @@
 ║              SINATOR AGENT-TOOLBOX — Raw CDP Client                          ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
-║  ⚠️  WICHTIG: CDP IST NUR FALLBACK!                                          ║
-║  CUA DRIVER IST IMMER DIE ERSTE WAHL!                                        ║
-║  Siehe command_registry.json für vollständige Dokumentation.                 ║
-║                                                                              ║
 ║  ZWECK:                                                                      ║
 ║  Chrome DevTools Protocol (CDP) via raw websocket.                            ║
-║  NUR für React Inputs und Target Management.                                  ║
+║  BYPASST Playwright's frame-tracking crash auf GMX SPA.                   ║
 ║                                                                              ║
-║  WANN CDP VERWENDEN (und wann NICHT):                                        ║
+║  WARUM RAW CDP?                                                              ║
+║  Playwright crashed bei GMX Navigator SPA mit:                               ║
+║    ValueError: list.remove(x): x not in list                                 ║
+║    playwright/_impl/_page.py:279                                               ║
+║  Ursache: GMX entfernt iframes/shadow-roots dynamisch. Playwright's          ║
+║  internal frame-registry kann nicht damit umgehen.                           ║
 ║                                                                              ║
-║  ✅ CDP OK für:                                                              ║
-║  • React controlled inputs (CUA type_text funktioniert NICHT!)               ║
-║  • Target management (neue Tabs erstellen)                                    ║
-║  • Cookie extraction/inspection                                              ║
-║  • JavaScript evaluation im Page-Kontext                                     ║
-║  • GMX Extension Email-Zugriff                                               ║
+║  LÖSUNG: Direkte CDP-Websocket-Kommunikation ohne Playwright-Page-Wrapper.  ║
+║  Wir sprechen direkt mit Chrome's DevTools Protocol über websocket.          ║
 ║                                                                              ║
-║  ❌ CDP VERBOTEN für:                                                        ║
-║  • Normale Button/Link/Checkbox Klicks (→ CUA click)                         ║
-║  • Navigation zwischen Pages (→ CUA click auf Links)                         ║
-║  • Menus und Popups (→ CUA click + set_value)                                ║
-║  • Element-Coordinaten finden (→ CUA get_window_state)                       ║
-║                                                                              ║
-║  REACT INPUT FIX (CRITICAL):                                                 ║
-║  React controlled inputs akzeptieren keinen normalen value setter.           ║
-║  Lösung: nativeInputValueSetter + Event dispatch:                            ║
-║                                                                              ║
-║  const nativeSetter = Object.getOwnPropertyDescriptor(                       ║
-║      HTMLInputElement.prototype, 'value').set;                               ║
-║  nativeSetter.call(input, 'mein-text');                                      ║
-║  input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));   ║
-║                                                                              ║
-║  CDP COMMANDS:                                                               ║
-║  • Runtime.evaluate          → JS ausführen im Page-Kontext                  ║
+║  CDP COMMANDS (wichtige für GMX):                                            ║
+║  • Input.dispatchMouseEvent  → Klicks im Shadow DOM / SPA                    ║
+║  • Runtime.evaluate          → JS ausführen (auch in iframes)                ║
+║  • Page.captureScreenshot    → Screenshots für Debugging                     ║
 ║  • Page.navigate             → URL laden                                     ║
-║  • Target.createTarget       → Neuen Tab öffnen                              ║
-║  • Target.attachToTarget     → An Tab attachen                               ║
+║  • DOM.querySelector         → Elemente finden                               ║
+║  • DOM.getBoxModel           → Koordinaten für Klicks                       ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
