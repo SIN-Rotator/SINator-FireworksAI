@@ -82,7 +82,7 @@ class GmxService:
             "vader", "runner", "hawk", "wolf", "fox", "tiger", "eagle", "shark",
             "dragon", "phoenix", "falcon", "panther", "cobra", "lynx", "raven", "jaguar",
             "bear", "lion", "whale", "dolphin", "puma", "cheetah", "otter", "badger",
-            "wolverine", "raptor", "condor", "falcon", "scorpion", "spider", "mantis", "beetle",
+            "wolverine", "raptor", "condor", "viper", "scorpion", "spider", "mantis", "beetle",
         ]
 
     def generate_alias_name(self) -> str:

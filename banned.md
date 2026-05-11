@@ -128,10 +128,10 @@ chrome --user-data-dir=/tmp/chrome-profile --remote-debugging-port=9222
 
 ## ✅ KORREKTE METHODE (siehe AGENTS.md für Details)
 
-```bash
-# Chrome BEENDEN (SIGTERM, nicht SIGKILL!)
-kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
+**⚠️ WICHTIG: Chrome NIEMALS killen! pkill -9, SIGKILL, `kill` = ABSOLUT BANNED!**
+Session persists across Chrome restarts via Profile 901 cookies.
 
+```bash
 # Chrome STARTEN mit ORIGINAL Profil 901 (KEINE Kopie!)
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \

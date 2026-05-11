@@ -83,7 +83,7 @@ async def cmd_status():
                 print(f"   Current Alias: {result['alias_email']}")
         elif result.get("status") == "not_logged_in":
             print(f"❌ GMX Session DEAD — Session Recovery nötig!")
-            print(f"   → POST /cookies/recover um Session wiederherzustellen")
+            print(f"   → POST /cookies/inject um Session wiederherzustellen")
         else:
             print(f"❌ GMX Error: {result.get('error', 'unknown')}")
         

@@ -617,7 +617,7 @@ Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
 
 ---
 
-### Flow #3: GMX OTP Email Detection (innerhalb Phase 7)
+### Flow #3: GMX OTP Email Detection (innerhalb Flow #2 — GMX OTP Polling)
 
 ---
 
@@ -715,7 +715,7 @@ State: LOGGED_IN (wieder)
 
 ---
 
-### Flow #3: GMX OTP Email Detection (innerhalb Phase 7)
+### Flow #3: GMX OTP Email Detection (innerhalb Flow #2 — GMX OTP Polling)
 
 ```
 Herausforderung: GMX Emails sind im iframe (3c-bap.gmx.net/mail/client/start)
@@ -739,7 +739,7 @@ Falls "needs_click":
 
 ---
 
-### Flow #4: Fireworks Login + Setup (Phase 9-17)
+### Flow #4: Fireworks Login + Setup (Phase 6-12)
 
 ```
 Phase 9:  Navigate zu /login → "Sign In" Button klicken
@@ -780,7 +780,7 @@ Phase 20: API Key erstellen
          → "Create API Key" Button klicken
          → Name eingeben: alias-YYYY-MM-DD
          → "Generate Key" Button klicken
-         → Key extrahieren:fw-[a-zA-Z0-9]{32,} Pattern
+         → Key extrahieren: fw-[a-zA-Z0-9]{20,} Pattern
          → Key speichern in data/fireworksai-pool.json via pool_manager.add_key()
 ```
 
@@ -887,7 +887,7 @@ curl -X POST http://localhost:8000/gmx/alias/delete
 
 ### WICHTIG: Browser muss laufen!
 Vor Nutzung: `curl -X POST http://localhost:8000/browser/start`
-Falls Session tot: `curl -X POST http://localhost:8000/cookies/recover`
+Falls Session tot: `curl -X POST http://localhost:8000/cookies/inject`
 
 ---
 
@@ -981,21 +981,18 @@ API-Key Pool im Plain-Array Format:
 |---|---|---|---|
 | POST | `/fireworks/register` | `{email, password}` | `{status, account_email}` |
 | POST | `/fireworks/confirm` | `{confirm_url, email, password}` | `{status, account_confirmed}` |
-| POST | `/fireworks/api-key` | `{key_name}` | `{status, api_key, key_name}` |
+| POST | `/fireworks/apikey` | `{key_name}` | `{status, api_key, key_name}` |
 
 ### Cookies
 | Methode | Endpoint | Request | Response |
 |---|---|---|---|
 | POST | `/cookies/extract` | `{domain_filter, save_to_file}` | `{status, cookie_count, saved_to}` |
 | POST | `/cookies/inject` | `{filename, verify_session}` | `{status, injected_count, session_active}` |
-| POST | `/cookies/recover` | — | `{status, session_active}` |
-| POST | `/cookies/backup` | — | `{status, backup_path}` |
 
 ### Pool
 | Methode | Endpoint | Request | Response |
 |---|---|---|---|
 | GET | `/pool/stats` | — | `{status, total, used, available, keys}` |
-| GET | `/pool/key` | — | `{api_key, alias_email, key_name}` oder `{status: "empty"}` |
 | POST | `/pool/key/use` | `{key_id}` | `{status, key_id}` |
 | POST | `/pool/add` | `{api_key, alias_email, key_name}` | `{status, key_id}` |
 
@@ -1157,12 +1154,12 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 |---|---|---|
 | Verbannte Methoden | `banned.md` | — |
 | CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session, **get_browser_ws_endpoint (urllib)** |
-| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_alias, check_session, _inject_saved_cookies |
+| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_existing_alias, check_session, _inject_saved_cookies |
 | GMX Alias CLI Tool | `tools/gmx_alias_tool.py` | status, check, rotate, create, delete — **READ-ONLY VERIFIED, NEVER CHANGE** |
-| Fireworks E2E | `agent_toolbox/core/fireworks_service.py:875` | register(email, password, gmx_password) |
+| Fireworks E2E | `agent_toolbox/core/fireworks_service.py` | register(email, password, gmx_password) |
 | Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` | POST /rotation/full |
 | Pool Manager | `agent_toolbox/core/pool_manager.py:33` | add_key, get_available_key, mark_used, get_stats |
-| Browser Lifecycle | `agent_toolbox/core/browser_manager.py:75` | start, stop, is_running |
+| Browser Lifecycle | `agent_toolbox/core/browser_manager.py:138` | start, stop, is_running |
 | GMX API Routes | `agent_toolbox/api/routes/gmx.py` | POST /gmx/alias/rotate, /gmx/alias/create, /gmx/alias/delete |
 | API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, RotationResponse, alle Models |
 | FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app registration |
