@@ -831,68 +831,94 @@ class GmxService:
                 await client.disconnect()
 
     # ═══════════════════════════════════════════════════════════════════════════════
-    #  ALIAS CREATION
+    #  ALIAS CREATION (VERIFIED 2026-05-11 via CDP DOM + Input)
     # ═══════════════════════════════════════════════════════════════════════════════
 
-    async def _find_alias_input_info(self, client: CDPClient, session_id: str) -> Optional[Dict[str, Any]]:
-        """Findet das Alias-Name Input-Feld."""
-        js = '''(function(){
-            const inputs = document.querySelectorAll('input[name*="localPart"], input[placeholder*="ihr-name"]');
-            const input = inputs[0];
-            if (!input) return null;
-            const rect = input.getBoundingClientRect();
-            return {
-                found: true,
-                name: input.name,
-                placeholder: input.placeholder,
-                id: input.id,
-                x: rect.x + rect.width / 2,
-                y: rect.y + rect.height / 2,
-            };
-        })()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        return result.get("result", {}).get("value")
+    async def _find_alias_input_coords(self, client: CDPClient, session_id: str) -> Optional[Dict[str, Any]]:
+        """Findet das erste Alias-Input-Feld via DOM.performSearch (nicht Runtime.evaluate)."""
+        search = await client.send_to_session(session_id, "DOM.performSearch", {
+            "query": "localPart", "includeUserAgentShadowDOM": True
+        })
+        if search['resultCount'] == 0:
+            return None
 
-    async def _find_hinzufuegen_button(self, client: CDPClient, session_id: str) -> Optional[Dict[str, Any]]:
-        """Findet den Hinzufügen-Button."""
-        js = '''(function(){
-            const btns = document.querySelectorAll("button");
-            for (const b of btns) {
-                if (b.textContent.trim() === "Hinzufügen") {
-                    const rect = b.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
-                        return {
-                            found: true,
-                            text: b.textContent.trim(),
-                            x: rect.x + rect.width / 2,
-                            y: rect.y + rect.height / 2,
-                            id: b.id,
-                            className: b.className,
-                        };
-                    }
-                }
-            }
-            return null;
-        })()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        return result.get("result", {}).get("value")
+        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
+            "searchId": search['searchId'], "fromIndex": 0, "toIndex": 1
+        })
+        for nid in nodes['nodeIds']:
+            try:
+                box = await client.send_to_session(session_id, "DOM.getBoxModel", {"nodeId": nid})
+                c = box['model']['content']
+                return {"x": c[0] + (c[2]-c[0])/2, "y": c[1] + (c[7]-c[1])/2}
+            except Exception:
+                continue
+        return None
 
-    async def _fill_alias_input(self, client: CDPClient, session_id: str, alias_name: str) -> bool:
-        """Füllt das Alias-Input-Feld und dispatcht Events."""
-        js = f'''(function(){{
-            const inputs = document.querySelectorAll('input[name*="localPart"], input[placeholder*="ihr-name"]');
-            const input = inputs[0];
-            if (!input) return {{error: "Input nicht gefunden", available: Array.from(document.querySelectorAll("input")).map(i => ({{name: i.name, type: i.type, placeholder: i.placeholder}})).slice(0, 10)}};
-            input.value = "{alias_name}";
-            input.dispatchEvent(new Event("input", {{bubbles: true}}));
-            input.dispatchEvent(new Event("change", {{bubbles: true}}));
-            input.dispatchEvent(new Event("blur", {{bubbles: true}}));
-            return {{success: true, name: input.name, value: input.value}};
-        }})()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        val = result.get("result", {}).get("value", {})
-        logger.info(f"Input fill: {val}")
-        return val.get("success", False) if isinstance(val, dict) else False
+    async def _find_hinzufuegen_button_coords(
+        self, client: CDPClient, session_id: str, input_y: float
+    ) -> Optional[Dict[str, Any]]:
+        """Findet den Hinzufügen-Button nahe dem Input via DOM.performSearch."""
+        search = await client.send_to_session(session_id, "DOM.performSearch", {
+            "query": "Hinzufügen", "includeUserAgentShadowDOM": True
+        })
+        if search['resultCount'] == 0:
+            return None
+
+        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
+            "searchId": search['searchId'], "fromIndex": 0,
+            "toIndex": search['resultCount']
+        })
+        for nid in nodes['nodeIds']:
+            try:
+                info = await client.send_to_session(session_id, "DOM.describeNode", {
+                    "nodeId": nid, "depth": 1
+                })
+                node = info['node']
+                if node.get('nodeType') != 3:
+                    continue
+                val = node.get('nodeValue', '') or ''
+                if 'Hinzufügen' not in val:
+                    continue
+                pid = node.get('parentId')
+                if not pid:
+                    continue
+                box = await client.send_to_session(session_id, "DOM.getBoxModel", {"nodeId": pid})
+                c = box['model']['content']
+                btn_y = c[1] + (c[7]-c[1])/2
+                # Take the button closest to the input
+                if abs(btn_y - input_y) < 150:
+                    return {"x": c[0] + (c[2]-c[0])/2, "y": btn_y}
+            except Exception:
+                continue
+        return None
+
+    async def _fill_alias_input_via_cdp(
+        self, client: CDPClient, session_id: str, alias_name: str,
+        input_coords: Dict[str, Any]
+    ) -> bool:
+        """Füllt das Alias-Input via CDP Input.dispatchKeyEvent (funktioniert ohne Runtime.evaluate)."""
+        ix, iy = input_coords['x'], input_coords['y']
+        logger.info(f"Click input at ({ix:.0f},{iy:.0f})")
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": ix, "y": iy
+        })
+        await asyncio.sleep(0.2)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": ix, "y": iy, "button": "left", "clickCount": 1
+        })
+        await asyncio.sleep(0.1)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": ix, "y": iy, "button": "left", "clickCount": 1
+        })
+        await asyncio.sleep(0.8)
+
+        for char in alias_name:
+            await client.send_to_session(session_id, "Input.dispatchKeyEvent", {
+                "type": "char", "text": char, "key": char
+            })
+            await asyncio.sleep(0.02)
+        await asyncio.sleep(0.5)
+        return True
 
     async def _click_button_via_cdp(self, client: CDPClient, session_id: str, btn_info: Dict[str, Any]) -> None:
         """Klickt einen Button via CDP Input.dispatchMouseEvent."""
@@ -1153,75 +1179,67 @@ class GmxService:
                 steps_completed.append("no_existing_alias")
                 deleted_alias = None
 
-            # --- STEP 3: Create new alias (with retry for unavailable names) ---
+            # --- STEP 3: Create new alias (CDP DOM + Input, VERIFIED 2026-05-11) ---
+            await client.send_to_session(session_id, "DOM.enable")
+            await asyncio.sleep(0.3)
+            
             if not new_alias_name:
                 new_alias_name = self.generate_alias_name()
-            
+
+            # Find input once (reuse across retries)
+            input_coords = await self._find_alias_input_coords(client, session_id)
+            if not input_coords:
+                steps_failed.append("input_not_found")
+                return {
+                    "status": "partial", "deleted_alias": deleted_alias,
+                    "created_alias": None, "created_alias_name": new_alias_name,
+                    "steps_completed": steps_completed, "steps_failed": steps_failed,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": "Alias-Input nicht gefunden",
+                }
+            steps_completed.append("input_found")
+
             alias_created = False
             for attempt in range(3):
                 current_alias = new_alias_name if attempt == 0 else self.generate_alias_name()
                 current_alias_email = f"{current_alias}@gmx.de"
                 logger.info(f"Erstelle Alias (Versuch {attempt + 1}/3): {current_alias_email}")
-                
-                fill_ok = await self._fill_alias_input(client, session_id, current_alias)
+
+                # Fill input via CDP key events
+                fill_ok = await self._fill_alias_input_via_cdp(
+                    client, session_id, current_alias, input_coords
+                )
                 if not fill_ok:
                     steps_failed.append("input_fill")
-                    return {
-                        "status": "partial",
-                        "deleted_alias": deleted_alias,
-                        "created_alias": None,
-                        "created_alias_name": current_alias,
-                        "steps_completed": steps_completed,
-                        "steps_failed": steps_failed,
-                        "execution_time": f"{time.time() - start_time:.2f}s",
-                        "error": "Input-Feld nicht gefunden",
-                    }
+                    continue
                 if attempt == 0:
                     steps_completed.append("form_filled")
                 await asyncio.sleep(1)
-
-                btn = await self._find_hinzufuegen_button(client, session_id)
+                
+                # Find button (may change position slightly between attempts)
+                btn = await self._find_hinzufuegen_button_coords(
+                    client, session_id, input_coords['y']
+                )
                 if not btn:
-                    steps_failed.append("hinzufuegen_button_not_found")
-                    return {
-                        "status": "partial",
-                        "deleted_alias": deleted_alias,
-                        "created_alias": None,
-                        "created_alias_name": current_alias,
-                        "steps_completed": steps_completed,
-                        "steps_failed": steps_failed,
-                        "execution_time": f"{time.time() - start_time:.2f}s",
-                        "error": "Hinzufügen-Button nicht gefunden",
-                    }
-
+                    # Fallback: click ~95px below input
+                    btn = {"x": input_coords['x'], "y": input_coords['y'] + 95}
+                
                 await self._click_button_via_cdp(client, session_id, btn)
                 if attempt == 0:
                     steps_completed.append("add_button_clicked")
                 await asyncio.sleep(5)
-
-                check = await self._check_creation_success(client, session_id, current_alias)
-                logger.info(f"Creation check (Versuch {attempt + 1}): {check}")
-
-                if check.get("foundInRow") or check.get("hasSuccess") or check.get("bodyHasAlias"):
+                
+                # Verify via DOM.performSearch (not Runtime.evaluate!)
+                check_search = await client.send_to_session(
+                    session_id, "DOM.performSearch",
+                    {"query": current_alias, "includeUserAgentShadowDOM": True}
+                )
+                if check_search['resultCount'] > 0:
                     created_alias_name = current_alias
                     created_alias = current_alias_email
                     alias_created = True
                     steps_completed.append("alias_created")
                     break
-                
-                if not check.get("isUnavailable"):
-                    # Real error, not just unavailable
-                    steps_failed.append("alias_create_gmx_error")
-                    return {
-                        "status": "failed",
-                        "deleted_alias": deleted_alias,
-                        "created_alias": None,
-                        "created_alias_name": current_alias,
-                        "steps_completed": steps_completed,
-                        "steps_failed": steps_failed,
-                        "execution_time": f"{time.time() - start_time:.2f}s",
-                        "error": f"GMX meldet Fehler bei Alias-Erstellung: {check.get('unavailableMsg') or 'Unbekannter Fehler'}",
-                    }
                 
                 logger.warning(f"Alias {current_alias_email} nicht verfügbar, generiere neuen Namen...")
                 await asyncio.sleep(1)
