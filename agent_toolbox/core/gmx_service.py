@@ -620,31 +620,103 @@ class GmxService:
         self, client: CDPClient, top_session_id: str
     ) -> Optional[OopifContext]:
         """
-        Löst den 3c.gmx.net Cross-Origin-Iframe für die aktuelle GMX-Settings-Seite auf.
+        Löst den GMX-Alias-Settings-Kontext auf für DOM-Operationen.
 
-        Liefert einen OopifContext mit:
-          • child_session_id  — eigene CDP-Session, attached an das Iframe-Target.
-                                Hier laufen DOM.performSearch / getBoxModel mit
-                                iframe-lokalen NodeIds und iframe-lokalen Koords.
-          • parent_session_id — die übergebene Top-Session.
-          • offset_x/offset_y/width/height — Bounding-Box des <iframe>-Elements im
-                                Parent-Viewport. `oopif.to_top(lx, ly)` wandelt
-                                iframe-lokale in Top-Viewport-Koordinaten.
+        ═══════════════════════════════════════════════════════════════════════════
+        BUG-FIX 2026-05-11 (Diagnose durch User):
+        ═══════════════════════════════════════════════════════════════════════════
 
-        Returns None falls das Iframe (noch) nicht im Tab existiert (z.B. weil wir
-        nicht auf der Email-Adressen-Settings-Seite sind).
+        PROBLEM: Der alte Code suchte nach `3c.gmx.net` via `Target.getTargets`
+        (type="iframe"). Aber:
+          1. `3c.gmx.net` (Iframe 4) ist der Mail-Client (Inbox), NICHT die
+             Alias-Settings — und ist oft offscreen bei `rect=(-2400, -1742)`
+          2. Der aktive Alias-Settings-Iframe ist
+             `navigator.gmx.net/navigator/jump/to/mail_settings` (Iframe 7)
+          3. KEINER der Content-Iframes erscheint als CDP iframe-Target —
+             Chrome isoliert sie nicht als OOPIF (contentDocument ist null)
 
-        ⚠️ STALENESS-WARNUNG: NodeIds und der Viewport-Offset sind FLÜCHTIG.
-        Diese Methode wird VOR JEDER Koordinaten-basierten Operation NEU aufgerufen.
-        Niemals OopifContext zwischen High-Level-Schritten cachen.
+        LÖSUNG: Wir navigieren den Top-Frame DIREKT zu
+        `navigator.gmx.net/navigator/jump/to/mail_settings?sid=...`. Das
+        funktioniert und zeigt die Settings-Seite ohne Iframe-Indirection.
+        Der "Iframe-Inhalt" ist dann der ganze Tab — wir arbeiten direkt auf
+        dem Top-Frame. OopifContext wird weiter verwendet für API-Kompatibilität,
+        aber offset_x/offset_y sind 0 (kein Transform nötig).
 
-        Hintergrund: siehe cdp_client.py header "OOPIF SUPPORT".
+        Returns:
+            OopifContext mit child_session_id = parent_session_id (gleiche Session,
+            kein echter OOPIF mehr). offset_x/offset_y = 0.
+            None bei Fehler (kein SID, Navigation fehlgeschlagen).
+
+        ═══════════════════════════════════════════════════════════════════════════
         """
-        return await client.resolve_oopif(
+        # Hole SID aus aktueller URL oder Cookies
+        url_result = await client.evaluate(top_session_id, "window.location.href", return_by_value=True)
+        current_url = url_result.get("result", {}).get("value", "") or ""
+
+        # Wenn wir bereits auf der Settings-Seite sind (direkt oder nach Navigation)
+        if "mail_settings" in current_url or "email_addresses" in current_url or "allEmailAddresses" in current_url:
+            # Bereits auf Settings — DOM-Operationen laufen direkt auf top_session
+            logger.info(f"Bereits auf GMX Settings: {current_url[:80]}")
+            return OopifContext(
+                parent_session_id=top_session_id,
+                child_session_id=top_session_id,  # gleiche Session!
+                offset_x=0.0,
+                offset_y=0.0,
+                width=1200.0,  # Viewport-Breite (geschätzt, für contains-Check)
+                height=800.0,
+                target_id="",
+                iframe_url=current_url,
+            )
+
+        # SID extrahieren (für direkte Navigation)
+        sid = None
+        sid_match = re.search(r'[?&]sid=([a-f0-9]{70,})', current_url)
+        if sid_match:
+            sid = sid_match.group(1)
+
+        if not sid:
+            # Fallback: aus Targets suchen
+            targets = await client.get_targets()
+            for t in targets:
+                t_url = t.get("url", "")
+                if t.get("type") == "page" and "gmx.net" in t_url:
+                    m = re.search(r'[?&]sid=([a-f0-9]{70,})', t_url)
+                    if m:
+                        sid = m.group(1)
+                        break
+
+        if not sid:
+            logger.warning("_resolve_gmx_oopif: Kein SID gefunden — nicht eingeloggt?")
+            return None
+
+        # Direkte Navigation zu mail_settings
+        settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+        logger.info(f"Navigiere direkt zu Settings: {settings_url[:80]}")
+        await client.navigate(top_session_id, settings_url)
+        await asyncio.sleep(4)
+
+        # DOM.enable für Suche/getBoxModel
+        try:
+            await client.send_to_session(top_session_id, "DOM.enable")
+        except Exception as e:
+            logger.debug(f"DOM.enable nach Navigation: {e}")
+
+        # Verifiziere dass wir auf der Settings-Seite sind
+        url_result2 = await client.evaluate(top_session_id, "window.location.href", return_by_value=True)
+        new_url = url_result2.get("result", {}).get("value", "") or ""
+        if "mail_settings" not in new_url and "gmx.net" not in new_url:
+            logger.warning(f"Navigation zu Settings fehlgeschlagen: {new_url[:80]}")
+            return None
+
+        return OopifContext(
             parent_session_id=top_session_id,
-            url_substring="3c.gmx.net",
-            iframe_selector="iframe[src*='3c.gmx.net']",
-            enable_dom=True,
+            child_session_id=top_session_id,
+            offset_x=0.0,
+            offset_y=0.0,
+            width=1200.0,
+            height=800.0,
+            target_id="",
+            iframe_url=new_url,
         )
 
     async def _find_alias_coords_in_iframe(
@@ -2501,7 +2573,7 @@ class GmxService:
         eintreffen) verarbeitet.
 
         GMX WEBMAILER RENDERING DELAY:
-        ────────────────────────────────────────────────────────────────────────────────
+        ─���──────────────────────────────────────────────────────────────────────────────
         Auf frischer Navigation zum Webmailer (z.B. nach Browser-Restart oder
         nachdem der Tab auf `about:blank` war) braucht die SPA 8-15
         Sekunden bis <list-mail-item> Elemente im DOM erscheinen.
@@ -2770,7 +2842,7 @@ class GmxService:
                             "Referer": "https://3c-bap.gmx.net/mail/client/start",
                         }
 
-                        # ════════════════════════════════════════════════════════════════
+                        # ═════════════���══════════════════════════════════════════════════
                         # PHASE 5: EMAIL BODY FETCHING VIA GMX INTERNAL API
                         # ──────────────────────────────────────────────────────────────
                         # Wir iterieren über die ersten 5 matching Emails.

@@ -1,137 +1,99 @@
 # AGENTS.md — SINator Fireworks AI Rotator
 
-## ⚠️ OOPIF BUG FIX (2026-05-11) — MUST READ BEFORE TOUCHING GMX-ALIAS CODE
+## ⚠️ GMX ALIAS BUG-FIX (2026-05-11 v2) — DIRECT NAVIGATION STATT OOPIF
 
-**Problem (Bug-Report aus Chat-Session):**
-> Alias-Formular liegt in 3c.gmx.net Cross-Origin-Iframe. CDP DOM.getBoxModel
-> crasht weil Node-IDs stale/null sind. Input.dispatchMouseEvent mit
-> hartcodierten Koordinaten (350, 340) klickt ins Leere.
+**Ursprüngliches Problem (Bug-Report):**
+> Alias-Formular liegt in Cross-Origin-Iframe. CDP DOM.getBoxModel crasht,
+> Input.dispatchMouseEvent mit hartcodierten Koordinaten (350, 340) klickt ins Leere.
 
-**Ursache:**
-3c.gmx.net ist ein **Out-Of-Process Iframe (OOPIF)**. Seit Chrome 67 läuft Site
-Isolation default-on und Cross-Origin-Iframes laufen in einem EIGENEN
-Renderer-Prozess mit EIGENEM CDP-Target und EIGENER DOM-Agent-Session.
+**Erste Diagnose (v1 — FALSCH):**
+> `3c.gmx.net` ist ein OOPIF. Wir müssen `Target.getTargets` nutzen, das
+> iframe-Target finden, eine separate child_session attachen, und dort
+> DOM-Operationen ausführen.
 
-Die alte Implementierung machte `DOM.performSearch` + `DOM.getBoxModel` auf der
-TOP-Session — die OOPIF-DOM ist von dort aus aber unsichtbar.
+**Echte Ursache (User-Diagnose 2026-05-11):**
+1. `3c.gmx.net` (Iframe 4) ist der **Mail-Client (Inbox)**, NICHT die Alias-Settings!
+   Dieser Iframe ist offscreen bei `rect=(-2400, -1742)`.
+2. Der aktive Alias-Settings-Iframe ist `navigator.gmx.net/navigator/jump/to/mail_settings`
+   (Iframe 7) mit `rect=(0, 80)` und `class app-stack__children--active`.
+3. **KEINER der Content-Iframes erscheint als CDP iframe-Target** — Chrome isoliert
+   sie NICHT als OOPIF. `Target.getTargets` liefert nur den Top-Level-Page-Target.
+4. **Direkte Navigation zu der Iframe-URL funktioniert:**
+   `https://bap.navigator.gmx.net/mail_settings?sid=...` zeigt die Settings-Seite
+   als vollständiges Dokument (kein Iframe nötig).
 
-Symptome (exakt das was der frühere Code zeigte):
-- `resultCount=0` obwohl Alias sichtbar im Iframe.
-- `getBoxModel` returnt undefined / crasht mit "Could not find node".
-- Fallback auf hartcodierte `(350, 340)` Koordinaten → klickt ins Leere.
-- "Verifikation" via `DOM.performSearch(query=alias_name)` resultCount>0 →
-  self-confirming bias (eigener Tipp-Input wurde als Erfolg gewertet).
+**Fix v2 — DIRECT NAVIGATION:**
+`_resolve_gmx_oopif` wurde komplett umgebaut:
+- Statt `Target.getTargets` + iframe-attach → **direkte Navigation** zu
+  `bap.navigator.gmx.net/mail_settings?sid={session_id}`
+- Der "Iframe-Inhalt" ist jetzt der **Top-Frame** — keine OOPIF-Transformation nötig
+- `OopifContext` wird weiterhin für API-Kompatibilität genutzt, aber:
+  - `child_session_id = parent_session_id` (gleiche Session)
+  - `offset_x = offset_y = 0` (kein Transform)
+- `dom_search`, `node_content_box` etc. laufen direkt auf dem Top-Frame
 
-**Fix — Architektur:**
-- `agent_toolbox/core/cdp_client.py`:
-  - Neue Dataclass `OopifContext` (parent_session_id, child_session_id, offset_x,
-    offset_y, width, height, `to_top()`, `contains()`).
-  - Neue Methoden auf `CDPClient`:
-    `find_iframe_target(url_substring)`,
-    `attach_to_iframe(url_substring) -> (child_session_id, target)`,
-    `get_iframe_viewport_box(parent_session_id, iframe_selector)`,
-    `resolve_oopif(parent_session_id, url_substring, iframe_selector) -> OopifContext`,
-    `dom_search(session_id, query)`, `node_content_box(session_id, node_id)`,
-    `node_describe(session_id, node_id)`, statisches `node_attrs_to_dict(node)`.
-- `agent_toolbox/core/gmx_service.py`:
-  - Neuer Helfer `_resolve_gmx_oopif(client, top_session_id)` —
-    URL-Substring="3c.gmx.net", Selektor="iframe[src*='3c.gmx.net']".
-  - **`_find_alias_coords_in_iframe`** → sucht jetzt in child_session, transformiert
-    via `oopif.to_top()`. Returnt TOP-VIEWPORT-Koords. Liefert None statt Müll
-    wenn OOPIF nicht auflösbar.
-  - **`_find_delete_icon_coords`** → dito.
-  - **`_find_hinzufuegen_button_coords`** → dito; Proximity-Filter auf
-    TOP-VIEWPORT-Y (vorher unbrauchbar wegen Mischung der Koordinatensysteme);
-    `input_y=None` erlaubt jetzt ungefilterte Suche (CUA-only Fallback-Pfad).
-  - **`_find_alias_input_coords`** → 2-Stufen:
-    Stufe 1 OOPIF-CSS-Lookup (`input[name*='alias']`, `input[type='email']`,
-    Label-Heuristik "Neue E-Mail-Adresse"); Stufe 2 CUA-AXTextField-Click +
-    NACHSPÜREN per OOPIF für echte Button-Proximity-Koords. **Kein
-    `(350, 340)` Fallback mehr.** Wenn keine echten Koords ermittelbar:
-    `{"x": None, "y": None, "via": "cua_only", "cua_element": int}` —
-    Caller muss damit umgehen.
-  - **Neu `_find_alias_input_via_cdp(client, oopif)`** — reine OOPIF-Suche
-    nach dem Input-Element, separate Methode damit man sie sowohl pre- als
-    post-CUA-Click rufen kann.
-  - **Neu `_verify_alias_in_iframe(client, session_id, alias_email, present, max_wait_s, poll_interval_s)`** —
-    EHRLICHE Server-State-Verifikation. Polling in child_session, sucht nach
-    voller `name@gmx.de` Adresse, akzeptiert nur sichtbare Text-Nodes (kein
-    JSON-Datenfragment). Wird sowohl für CREATE (present=True) als auch DELETE
-    (present=False) genutzt. Ersetzt die alte self-confirming `DOM.performSearch`
-    in Top-Session.
-  - `create_alias`, `rotate_alias`, `delete_existing_alias` rufen jetzt
-    `_verify_alias_in_iframe` statt der alten DOM.performSearch-Verifikation.
-  - `create_alias` + `rotate_alias` brechen sauber ab statt zu raten, wenn
-    weder DOM-Button-Treffer noch echte Input-Koords vorliegen.
-
-**Anti-Pattern — wenn du das siehst, sofort fixen:**
+**Anti-Pattern — NIEMALS:**
 ```python
-# FALSCH — Top-Session-Suche findet OOPIF-Inhalte nicht:
-search = await client.send_to_session(top_session, "DOM.performSearch",
-                                       {"query": "@gmx.de"})
+# FALSCH — Chrome isoliert GMX-Iframes NICHT als CDP-Targets:
+iframe = await client.find_iframe_target("3c.gmx.net")  # → None!
+
+# FALSCH — falscher Iframe (3c.gmx.net = Mail-Client, NICHT Alias-Settings):
+url_substring="3c.gmx.net"  # → Inbox, nicht Settings!
+
 # FALSCH — hartcodierte Klick-Koords:
 return {"x": 350, "y": 340}
-# FALSCH — self-confirming Verifikation:
-if (await client.send_to_session(session_id, "DOM.performSearch",
-                                  {"query": alias_name}))['resultCount'] > 0:
-    return success  # findet u.U. den Input-Wert wieder, nicht den Server-State
 ```
 
-Korrektes Pattern:
+**Korrektes Pattern:**
 ```python
+# Direct Navigation — navigiere zur Settings-URL und arbeite auf Top-Frame
 oopif = await self._resolve_gmx_oopif(client, top_session)
-if not oopif: return None  # NICHT raten
+if not oopif: return None  # Nicht eingeloggt
+# oopif.child_session_id == oopif.parent_session_id (gleiche Session!)
+# oopif.offset_x == oopif.offset_y == 0 (kein Transform)
 node_ids = await client.dom_search(oopif.child_session_id, "@gmx.de")
-for nid in node_ids:
-    box = await client.node_content_box(oopif.child_session_id, nid)
-    if not box: continue
-    top_x, top_y = oopif.to_top(box[0] + box[2]/2, box[1] + box[3]/2)
-    if oopif.contains(top_x, top_y):
-        ...
-# Verifikation:
-ok = await self._verify_alias_in_iframe(client, top_session,
-                                         f"{name}@gmx.de", present=True)
+# Koordinaten sind direkt Top-Viewport-Koords (kein to_top nötig)
 ```
 
-**Diagnose-Tool:**
+**Diagnose-Tool (aktualisiert für v2):**
 ```bash
-# Standalone OOPIF-Pipeline-Check (klickt NICHTS):
-python tools/diagnose_oopif.py
-python tools/diagnose_oopif.py --search "Hinzufügen"  # Button-Suche prüfen
+python tools/diagnose_oopif.py                      # Basis-Check
+python tools/diagnose_oopif.py --search "Hinzufügen"  # Button-Suche
+python tools/diagnose_oopif.py --search "E-Mail-Adressen"  # Nav-Link
 python tools/diagnose_oopif.py --verbose
 ```
-Druckt 8 Stufen: [1] iframe-Target, [2] attach, [3] DOM.enable child,
-[4] iframe-Element finden, [5] getBoxModel auf iframe, [6] performSearch in
-child, [7] getBoxModel auf Treffer, [8] to_top-Transformation. Bei Bruch sieht
-man sofort welche Stufe versagt.
+Prüft: [0] CDP Connect, [1] SID extrahieren, [2] Direct Navigation,
+[3] DOM.enable, [4] DOM.getDocument, [5] performSearch, [6] getBoxModel,
+[7] Koordinaten-Plausibilität.
 
-**Verifikations-Status:** Code-Fix gepusht direkt auf `main`. Echte Verifikation
-gegen GMX Live-UI steht aus (v0-Sandbox hat keinen Zugriff auf Profile 901 +
-cua-driver). Vor produktivem Einsatz: `python tools/diagnose_oopif.py` laufen
-lassen, dann `python tools/gmx_alias_tool.py status` und `rotate`.
+**Verifikations-Status:** v2-Fix gepusht auf `main`. User muss testen mit:
+```bash
+git pull origin main
+python tools/diagnose_oopif.py
+python tools/gmx_alias_tool.py status
+python tools/gmx_alias_tool.py rotate
+```
 
 ---
 
-## 🎯 ALIAS DELETE FLOW (Stand 2026-05-11, OOPIF-fixed)
+## 🎯 ALIAS DELETE FLOW (Stand 2026-05-11 v2, Direct Navigation)
 
-**HYBRID: CDP-OOPIF DOM + Input.dispatchMouseEvent + CUA**
+**HYBRID: CDP DOM auf Top-Frame + Input.dispatchMouseEvent + CUA**
 
-Alias-Inhalt lebt im **3c.gmx.net OOPIF**. Runtime.evaluate ist auf accessible
-GMX-Pages leer (`{}`), CDP-Top-Session-DOM enthält den Iframe-Inhalt nicht.
-Lösung: separate CDP-Session pro OOPIF + Viewport-Offset-Transformation
-(siehe OOPIF BUG FIX oben).
+Nach der direkten Navigation zu `bap.navigator.gmx.net/mail_settings?sid=...`
+ist der Alias-Content im **Top-Frame** (nicht mehr in einem Iframe).
+`child_session_id == parent_session_id`, `offset_x/y = 0`.
 
 ```
-1. CUA → Navigiere zu E-Mail-Adressen-Settings (GMX Settings)
-2. _resolve_gmx_oopif → OopifContext (parent_session, child_session, offset)
-3. dom_search(child_session, "@gmx.de") → Text-Node-Treffer im IFRAME
-4. node_content_box(child_session, nid) → iframe-LOKALE Koords
-5. oopif.to_top(...) → TOP-VIEWPORT-Koords
-6. Input.dispatchMouseEvent mouseMoved (auf parent_session) → HOVER → Delete-Icon rendert
-7. _resolve_gmx_oopif erneut + dom_search "löschen" → Delete-Icon → to_top
-8. Input.dispatchMouseEvent pressed+released auf top-koord → Klick
-9. CUA get_window_state → "OK"-Button im macOS-Dialog → CUA click "OK"
-10. _verify_alias_in_iframe(alias_email, present=False, max_wait_s=8) → echte Server-Verifikation
+1. _resolve_gmx_oopif → navigiert zu mail_settings, returnt OopifContext
+   (child_session = parent_session, offset = 0)
+2. dom_search(session, "@gmx.de") → Text-Node-Treffer direkt im Top-Frame
+3. node_content_box(session, nid) → Koords sind bereits Top-Viewport
+4. Input.dispatchMouseEvent mouseMoved → HOVER → Delete-Icon rendert
+5. dom_search("löschen") → Delete-Icon Koords
+6. Input.dispatchMouseEvent pressed+released → Klick auf Delete-Icon
+7. CUA get_window_state → "OK"-Button im macOS-Dialog → CUA click "OK"
+8. _verify_alias_in_iframe(alias_email, present=False) → Server-Verifikation
 ```
 
 **Implementation:** `agent_toolbox/core/gmx_service.py` Methoden
@@ -139,24 +101,20 @@ Lösung: separate CDP-Session pro OOPIF + Viewport-Offset-Transformation
 `_find_delete_icon_coords`, `_cdp_click`, `_cua_click_ok_button`,
 `_verify_alias_in_iframe`, `delete_existing_alias`.
 
-## 🎯 ALIAS CREATE FLOW (Stand 2026-05-11, OOPIF-fixed)
+## 🎯 ALIAS CREATE FLOW (Stand 2026-05-11 v2, Direct Navigation)
 
-**HYBRID: CDP-OOPIF DOM + Input.dispatchKeyEvent + CUA-Fallback**
+**HYBRID: CDP DOM auf Top-Frame + Input.dispatchKeyEvent + CUA-Fallback**
 
 ```
-1. _resolve_gmx_oopif → OopifContext
-2. _find_alias_input_via_cdp → CSS-Selektoren (input[name*='alias'], type='email'),
-   Label-Heuristik → iframe-lokale Input-Box → to_top → echter Center
-   Wenn OOPIF leer / kein Match: CUA-AXTextField-Click als Fallback,
-   danach NOCHMAL OOPIF-Lookup für Button-Proximity-Koords
-3. CDP Input.dispatchMouseEvent → click auf Input (echte Koords, nicht 350/340)
+1. _resolve_gmx_oopif → navigiert zu mail_settings, returnt OopifContext
+2. _find_alias_input_via_cdp → CSS-Selektoren (input[name*='alias'], type='email')
+   Koords sind direkt Top-Viewport (kein Transform). Falls kein CDP-Match:
+   CUA-AXTextField-Click als Fallback.
+3. CDP Input.dispatchMouseEvent → click auf Input
 4. CDP Input.dispatchKeyEvent type="char" → Zeichen tippen
-5. _find_hinzufuegen_button_coords mit input_y aus Schritt 2 →
-   dom_search("Hinzufügen") in child_session + Proximity-Filter
-6. CDP Input.dispatchMouseEvent pressed+released → Klick Hinzufügen
-7. _verify_alias_in_iframe(alias_email, present=True, max_wait_s=8) →
-   echte Server-State-Verifikation (polling in child_session nach voller
-   "name@gmx.de"-Adresse, keine self-confirming Input-Such-Trick mehr)
+5. _find_hinzufuegen_button_coords mit input_y → dom_search("Hinzufügen")
+6. CDP Input.dispatchMouseEvent → Klick Hinzufügen
+7. _verify_alias_in_iframe(alias_email, present=True) → Server-Verifikation
 ```
 
 **Implementation:** `agent_toolbox/core/gmx_service.py` Methoden
@@ -724,14 +682,14 @@ Phase 5: Cookie Banner dismissen
            → Falls still not found → hardcoded fallback coords (1113.7, 805.5)
            → CDP click_at() → mousePressed + mouseReleased
            → Validierung: .cky-consent-container height=0 oder display=none
-           → Wait 2s
+           ��� Wait 2s
 
 Phase 6: Email → Next → Password → Create Account
          └─ _fill_input(client, session_id, ['#email-display'], email)
            → KRITISCH: nativeInputValueSetter verwenden!
            → Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set
            → Plus: Event('input', {bubbles: true, composed: true})
-           → KeyEvents funktionieren NICHT für React controlled inputs!
+           → KeyEvents funktionieren NICHT f��r React controlled inputs!
          └─ _click_button(client, session_id, ['button:contains("Next")'])
            → JS text matching: (btn.textContent||'').trim().toLowerCase() === 'next'
            → CDP click_at() an Button-Center
