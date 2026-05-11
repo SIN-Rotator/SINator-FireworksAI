@@ -16,8 +16,8 @@
 ║  Der alte OOPIF-Ansatz (Target.getTargets für iframe-Targets) funktioniert   ║
 ║  NICHT, weil Chrome die GMX-Iframes nicht als separate CDP-Targets isoliert. ║
 ║                                                                              ║
-║  NEUER ANSATZ: Direkte Navigation zu bap.navigator.gmx.net/mail_settings    ║
-║  Der "Iframe-Inhalt" wird zum Top-Frame — keine OOPIF-Auflösung nötig.       ║
+║  v3: navigator.gmx.net/navigator/jump/to/mail_settings → 3c.gmx.net → Klick║
+║  E-Mail-Adressen → allEmailAddresses (kein Iframe, Top-Frame direkt)         ║
 ║                                                                              ║
 ║  VORAUSSETZUNGEN                                                             ║
 ║  ───────────────                                                             ║
@@ -108,9 +108,9 @@ async def diagnose(cdp_port: int, search_query: str, verbose: bool) -> int:
         ok("CDP connected")
 
         # Page-Target finden (irgendeinen GMX Tab)
-        page_target = await get_page_target(client, url_substring="mail_settings")
+        page_target = await get_page_target(client, url_filter="mail_settings")
         if not page_target:
-            page_target = await get_page_target(client, url_substring="gmx.")
+            page_target = await get_page_target(client, url_filter="gmx.")
         if not page_target:
             fail("Kein passender Page-Target (gmx.*) gefunden — bist du auf der GMX-Seite?")
             return 1
@@ -123,6 +123,10 @@ async def diagnose(cdp_port: int, search_query: str, verbose: bool) -> int:
         import re
         sid_match = re.search(r'[?&]sid=([a-f0-9]{70,})', current_url)
         sid = sid_match.group(1) if sid_match else None
+        if not sid:
+            # Fallback: navsid (3c.gmx.net verwendet navsid)
+            sid_match = re.search(r'[?&]navsid=([a-f0-9]{70,})', current_url)
+            sid = sid_match.group(1) if sid_match else None
         if not sid:
             # Fallback: aus anderen Targets suchen
             targets = await client.get_targets()
@@ -138,23 +142,58 @@ async def diagnose(cdp_port: int, search_query: str, verbose: bool) -> int:
             return 1
         ok(f"SID gefunden: {sid[:20]}...")
 
-        # ── [2] Direkte Navigation zu mail_settings ──────────────────────
-        section("[2] Direkte Navigation zu mail_settings")
-        if "mail_settings" not in current_url:
-            settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+        # ── [2] Direkte Navigation zu mail_settings (v3: Iframe-URL) ─────
+        section("[2] Direkte Navigation zu mail_settings (v3)")
+        if "allEmailAddresses" not in current_url:
+            settings_url = f"https://navigator.gmx.net/navigator/jump/to/mail_settings?sid={sid}"
             info(f"Navigiere zu: {settings_url[:80]}")
             await client.navigate(top_session, settings_url)
             import asyncio
-            await asyncio.sleep(4)
+            await asyncio.sleep(6)
             # URL verifizieren
             url_result = await client.send_to_session(top_session, "Runtime.evaluate", {
                 "expression": "window.location.href", "returnByValue": True
             })
             current_url = url_result.get("result", {}).get("value", "")
-            if "mail_settings" not in current_url and "gmx.net" not in current_url:
+            if "gmx.net" not in current_url:
                 fail(f"Navigation fehlgeschlagen, URL ist: {current_url[:80]}")
                 return 1
-        ok(f"Auf Settings-Seite: {current_url[:70]}")
+            ok(f"Nach Redirect: {current_url[:70]}")
+
+            # Falls auf 3c.gmx.net settings — klicke E-Mail-Adressen
+            if "settings" in current_url and "allEmailAddresses" not in current_url:
+                info("Klicke 'E-Mail-Adressen' in Navigation...")
+                try:
+                    await client.send_to_session(top_session, "DOM.enable")
+                    search_r = await client.send_to_session(top_session, "DOM.performSearch", {
+                        "query": "E-Mail-Adressen", "includeUserAgentShadowDOM": True
+                    })
+                    if search_r.get("resultCount", 0) > 0:
+                        nodes = await client.send_to_session(top_session, "DOM.getSearchResults", {
+                            "searchId": search_r["searchId"], "fromIndex": 0, "toIndex": 1
+                        })
+                        for nid in nodes.get("nodeIds", []):
+                            if nid == 0: continue
+                            box = await client.send_to_session(top_session, "DOM.getBoxModel", {"nodeId": nid})
+                            model = box.get("model", {})
+                            if model and model.get("content"):
+                                c_arr = model["content"]
+                                cx = (c_arr[0] + c_arr[2]) / 2
+                                cy = (c_arr[1] + c_arr[7]) / 2
+                                info(f"Klick auf E-Mail-Adressen bei ({cx:.0f},{cy:.0f})")
+                                await client.click_at(top_session, cx, cy)
+                                await asyncio.sleep(4)
+                                url_result2 = await client.send_to_session(top_session, "Runtime.evaluate", {
+                                    "expression": "window.location.href", "returnByValue": True
+                                })
+                                current_url = url_result2.get("result", {}).get("value", "")
+                                break
+                    ok(f"Nach E-Mail-Adressen Klick: {current_url[:70]}")
+                except Exception as e:
+                    fail(f"E-Mail-Adressen Klick fehlgeschlagen: {e}")
+                    return 1
+        else:
+            ok(f"Bereits auf allEmailAddresses: {current_url[:70]}")
 
         # ── [3] DOM.enable ───────────────────────────────────────────────
         section("[3] DOM.enable")

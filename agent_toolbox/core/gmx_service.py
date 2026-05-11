@@ -440,157 +440,101 @@ class GmxService:
 
     async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str) -> bool:
         """
-        Navigiert zur GMX E-Mail-Adressen Seite via CUA Klicks.
-        
-        FLOW:
-        1. Navigate to www.gmx.net — GMX homepage with E-Mail link
-        2. CUA click AXLink (E-Mail) → accessible inbox (Barrierefreies Postfach)
-        3. CUA click AXButton (Einstellungen für Ihr GMX Postfach) → settings
-        4. CUA find + click E-Mail-Adressen → email addresses page
-        
-        Uses raw cua-driver subprocess + CUA for all clicks.
+        Navigiert zur GMX E-Mail-Adressen Seite via direkten CDP/JS Flow (v3).
+
+        FLOW (2026-05-11 v3 — CUA durch CDP/JS ersetzt, da CUA-Navigation
+        SID-lose URLs produziert und GMX CDP Input.dispatchMouseEvent ignoriert):
+          1. Navigate zu www.gmx.net (Session via Cookies/SID)
+          2. JS click auf E-Mail → bekommt SID in URL
+          3. Navigate zu navigator.gmx.net/navigator/jump/to/mail_settings?sid=...
+             → redirect auf 3c.gmx.net/mail/client/settings/signature/
+          4. JS dispatchEvent(MouseEvent) auf E-Mail-Adressen
+             → navigiert zu 3c.gmx.net/mail/client/settings/allEmailAddresses
         """
-        import subprocess, json, re
-        import time as _time
+        import re
 
-        try:
-            # Step 0: Get SID and navigate to GMX homepage
+        # Already on allEmailAddresses?
+        ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+        url = ur.get("result", {}).get("value", "") or ""
+        if "allEmailAddresses" in url:
+            return True
+
+        # Step 1: Navigate to GMX homepage
+        await client.navigate(session_id, "https://www.gmx.net/")
+        await asyncio.sleep(4)
+
+        # Step 2: JS click on E-Mail link to get logged-in session
+        await client.evaluate(session_id, """(function() {
+            var as = document.querySelectorAll('a');
+            for (var i = 0; i < as.length; i++) {
+                if (as[i].textContent.trim() === 'E-Mail') { as[i].click(); return true; }
+            }
+            return false;
+        })()""", return_by_value=True)
+        await asyncio.sleep(5)
+
+        ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+        url = ur.get("result", {}).get("value", "") or ""
+        logger.info(f"Nach E-Mail click: {url[:100]}")
+
+        # Step 3: Extract SID and navigate to iframe URL
+        m = re.search(r'[?&]sid=([a-f0-9]{70,})', url)
+        sid = m.group(1) if m else None
+        if not sid:
+            # Fallback: try other targets for SID
             targets = await client.get_targets()
-            current_url = ""
-            sid = None
-            gmx_target_id = None
             for t in targets:
-                url = t.get("url", "")
-                if t.get("type") == "page" and "sid=" in url and "gmx.net" in url:
-                    current_url = url
-                    gmx_target_id = t.get("targetId")
-                    m = re.search(r'sid=([a-f0-9]{70,})', url)
-                    if m:
-                        sid = m.group(1)
-                    break
-
-            if 'email_addresses' in current_url:
-                return True
-
-            if not sid:
-                logger.error("Kein SID in Target-URL")
-                return False
-
-            # Attach to GMX tab if not already
-            if not gmx_target_id:
-                gmx_target_id = targets[1].get("targetId")
-
-            # Navigate GMX tab to homepage
-            gmx_url = f"https://www.gmx.net/?sid={sid}"
-            await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
-            await asyncio.sleep(6)
-
-            # Wait for CUA to see the page (takes a moment)
-            _time.sleep(2)
-
-            # Find GMX window via CUA — try multiple times
-            cua_pid = cua_wid = None
-            for attempt in range(3):
-                res = subprocess.run(
-                    ["cua-driver", "call", "list_windows"],
-                    capture_output=True, text=True, timeout=10,
-                    input=json.dumps({"query": "Chrome"})
-                )
-                wd = json.loads(res.stdout)
-                for w in wd.get('windows', []):
-                    title = w.get('title', '')
-                    app = w.get('app_name', '')
-                    if w.get('is_on_screen') and app == 'Google Chrome' and ('GMX' in title or 'kostenlose' in title.lower() or 'FreeMail' in title):
-                        cua_pid = w['pid']
-                        cua_wid = w['window_id']
-                        logger.info(f"CUA window: {title[:80]}")
+                t_url = t.get("url", "")
+                if t.get("type") == "page" and "gmx.net" in t_url:
+                    m2 = re.search(r'[?&]sid=([a-f0-9]{70,})', t_url)
+                    if m2:
+                        sid = m2.group(1)
                         break
-                if cua_pid:
-                    break
-                await asyncio.sleep(2)
-
-            if not cua_pid:
-                logger.warning("GMX window nicht via CUA gefunden")
-                return False
-
-            def cua_get_state():
-                r = subprocess.run(
-                    ["cua-driver", "call", "get_window_state"],
-                    capture_output=True, text=True, timeout=15,
-                    input=json.dumps({"pid": cua_pid, "window_id": cua_wid})
-                )
-                return json.loads(r.stdout).get('tree_markdown', '')
-
-            def cua_click(el):
-                subprocess.run(
-                    ["cua-driver", "call", "click"],
-                    capture_output=True, text=True, timeout=10,
-                    input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "element_index": el})
-                )
-
-            trees = cua_get_state()
-
-            # Already on email addresses?
-            if 'E-Mail-Adressen' in trees:
-                return True
-
-            def _find_el(lines_str: str, text: str, el_type: str = "") -> int:
-                """Extract element_index from CUA AX tree line matching text and optional type."""
-                for line in lines_str.split('\n'):
-                    s = line.strip()
-                    if text in s and (not el_type or el_type in s):
-                        m = re.search(r'\]?\s*-\s*\[(\d+)\]', s)
-                        if m:
-                            return int(m.group(1))
-                return -1
-
-            # Step 1: Click E-Mail AXLink
-            el = _find_el(trees, 'E-Mail', 'AXLink')
-            if el > 0:
-                logger.info(f"CUA click E-Mail [{el}]")
-                cua_click(el)
-                await asyncio.sleep(6)
-                trees = cua_get_state()
-
-            # Step 2: Click Einstellungen AXButton
-            el = _find_el(trees, 'Einstellungen', 'AXButton')
-            if el > 0:
-                logger.info(f"CUA click Einstellungen [{el}]")
-                cua_click(el)
-                await asyncio.sleep(6)
-                trees = cua_get_state()
-
-            # Step 3: Check for E-Mail-Adressen
-            if 'E-Mail-Adressen' in trees:
-                logger.info("E-Mail-Adressen Seite erreicht!")
-                # Verify via CDP target URL (CUA nav not tracked by CDP session)
-                await asyncio.sleep(2)
-                targets3 = await client.get_targets()
-                for t in targets3:
-                    url = t.get("url", "")
-                    if t.get("type") == "page" and "sid=" in url and "mail_settings" in url and "email_addresses" in url:
-                        logger.info(f"CDP confirms email_addresses URL: {url[:100]}")
-                        return True
-                # Fallback: page was reached via CUA but CDP doesn't see it
-                logger.info("E-Mail-Adressen via CUA (CDP may not see URL)")
-                return True
-
-            # Step 4: Click E-Mail-Adressen link
-            el = _find_el(trees, 'E-Mail-Adressen')
-            if el > 0:
-                logger.info(f"CUA click E-Mail-Adressen [{el}]")
-                cua_click(el)
-                await asyncio.sleep(6)
-                return True
-
-            logger.warning("E-Mail-Adressen nicht via CUA gefunden")
+        if not sid:
+            logger.error("_navigate_to_all_email_addresses: Kein SID gefunden")
             return False
 
-        except Exception as e:
-            logger.error(f"Navigation failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+        iframe_url = f"https://navigator.gmx.net/navigator/jump/to/mail_settings?sid={sid}"
+        logger.info(f"Navigiere zu iframe URL: {iframe_url[:80]}")
+        await client.navigate(session_id, iframe_url)
+        await asyncio.sleep(6)
+
+        ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+        url = ur.get("result", {}).get("value", "") or ""
+        logger.info(f"Nach redirect: {url[:100]}")
+
+        if "allEmailAddresses" in url:
+            return True
+
+        # Step 4: JS dispatchEvent click on E-Mail-Adressen
+        if "settings" in url and "3c.gmx.net" in url:
+            logger.info("Klicke E-Mail-Adressen via JS dispatchEvent")
+            click_result = await client.evaluate(session_id, """(function() {
+                var allEls = document.querySelectorAll('a, span, li, div, p');
+                for (var i = 0; i < allEls.length; i++) {
+                    var el = allEls[i];
+                    if (el.children.length === 0 && el.textContent.trim() === 'E-Mail-Adressen') {
+                        var rect = el.getBoundingClientRect();
+                        var cx = rect.x + rect.width / 2;
+                        var cy = rect.y + rect.height / 2;
+                        ['mousedown', 'mouseup', 'click'].forEach(function(evtType) {
+                            el.dispatchEvent(new MouseEvent(evtType, {
+                                bubbles: true, cancelable: true, view: window,
+                                clientX: cx, clientY: cy
+                            }));
+                        });
+                        return {clicked: true};
+                    }
+                }
+                return {clicked: false};
+            })()""", return_by_value=True)
+            await asyncio.sleep(5)
+
+            ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            url = ur.get("result", {}).get("value", "") or ""
+            logger.info(f"Nach E-Mail-Adressen click: {url[:100]}")
+
+        return "allEmailAddresses" in url
 
     # ═══════════════════════════════════════════════════════════════════════════════
     #  ALIAS DELETION (VERIFIED 2026-05-11)
@@ -623,7 +567,7 @@ class GmxService:
         Löst den GMX-Alias-Settings-Kontext auf für DOM-Operationen.
 
         ═══════════════════════════════════════════════════════════════════════════
-        BUG-FIX 2026-05-11 (Diagnose durch User):
+        BUG-FIX v3 2026-05-11 (Diagnose durch User + direkte Navigation):
         ═══════════════════════════════════════════════════════════════════════════
 
         PROBLEM: Der alte Code suchte nach `3c.gmx.net` via `Target.getTargets`
@@ -635,47 +579,48 @@ class GmxService:
           3. KEINER der Content-Iframes erscheint als CDP iframe-Target —
              Chrome isoliert sie nicht als OOPIF (contentDocument ist null)
 
-        LÖSUNG: Wir navigieren den Top-Frame DIREKT zu
-        `navigator.gmx.net/navigator/jump/to/mail_settings?sid=...`. Das
-        funktioniert und zeigt die Settings-Seite ohne Iframe-Indirection.
-        Der "Iframe-Inhalt" ist dann der ganze Tab — wir arbeiten direkt auf
-        dem Top-Frame. OopifContext wird weiter verwendet für API-Kompatibilität,
-        aber offset_x/offset_y sind 0 (kein Transform nötig).
+        v2-FIX: Navigierte zu `bap.navigator.gmx.net/mail_settings?sid=...`
+        ABER das zeigt nur die GMX-Shell — Content bleibt in Cross-Origin-Iframes.
+
+        v3-FIX: Navigiere zu `navigator.gmx.net/navigator/jump/to/mail_settings?sid=...`
+        → redirect auf `3c.gmx.net/mail/client/settings/signature/;jsessionid=...`
+        → Der Settings-Content ist jetzt direkt im Top-Frame (kein Iframe!)
+        → CDP DOM-Operationen (performSearch, getBoxModel) funktionieren direkt
+        → Klicke "E-Mail-Adressen" → `3c.gmx.net/mail/client/settings/allEmailAddresses`
 
         Returns:
-            OopifContext mit child_session_id = parent_session_id (gleiche Session,
-            kein echter OOPIF mehr). offset_x/offset_y = 0.
-            None bei Fehler (kein SID, Navigation fehlgeschlagen).
-
+            OopifContext mit child_session_id = parent_session_id (gleiche Session).
+            offset_x/offset_y = 0. None bei Fehler.
         ═══════════════════════════════════════════════════════════════════════════
         """
-        # Hole SID aus aktueller URL oder Cookies
+        # Hole aktuelle URL
         url_result = await client.evaluate(top_session_id, "window.location.href", return_by_value=True)
         current_url = url_result.get("result", {}).get("value", "") or ""
 
-        # Wenn wir bereits auf der Settings-Seite sind (direkt oder nach Navigation)
-        if "mail_settings" in current_url or "email_addresses" in current_url or "allEmailAddresses" in current_url:
-            # Bereits auf Settings — DOM-Operationen laufen direkt auf top_session
-            logger.info(f"Bereits auf GMX Settings: {current_url[:80]}")
+        # Wenn wir bereits auf der Alias-Seite sind: direkt zurück
+        if "allEmailAddresses" in current_url:
+            logger.info(f"Bereits auf allEmailAddresses: {current_url[:80]}")
             return OopifContext(
                 parent_session_id=top_session_id,
-                child_session_id=top_session_id,  # gleiche Session!
-                offset_x=0.0,
-                offset_y=0.0,
-                width=1200.0,  # Viewport-Breite (geschätzt, für contains-Check)
-                height=800.0,
-                target_id="",
-                iframe_url=current_url,
+                child_session_id=top_session_id,
+                offset_x=0.0, offset_y=0.0,
+                width=1200.0, height=800.0,
+                target_id="", iframe_url=current_url,
             )
 
-        # SID extrahieren (für direkte Navigation)
+        # SID extrahieren
         sid = None
         sid_match = re.search(r'[?&]sid=([a-f0-9]{70,})', current_url)
         if sid_match:
             sid = sid_match.group(1)
+        if not sid:
+            # Fallback: navsid (3c.gmx.net verwendet navsid statt sid)
+            sid_match = re.search(r'[?&]navsid=([a-f0-9]{70,})', current_url)
+            if sid_match:
+                sid = sid_match.group(1)
 
         if not sid:
-            # Fallback: aus Targets suchen
+            # Fallback: aus anderen Targets suchen
             targets = await client.get_targets()
             for t in targets:
                 t_url = t.get("url", "")
@@ -689,11 +634,11 @@ class GmxService:
             logger.warning("_resolve_gmx_oopif: Kein SID gefunden — nicht eingeloggt?")
             return None
 
-        # Direkte Navigation zu mail_settings
-        settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
-        logger.info(f"Navigiere direkt zu Settings: {settings_url[:80]}")
-        await client.navigate(top_session_id, settings_url)
-        await asyncio.sleep(4)
+        # v3: Navigiere zur Iframe-URL — redirectet auf 3c.gmx.net mit vollem Content
+        iframe_url = f"https://navigator.gmx.net/navigator/jump/to/mail_settings?sid={sid}"
+        logger.info(f"_resolve_gmx_oopif v3: Navigiere zu Iframe-URL → {iframe_url[:80]}")
+        await client.navigate(top_session_id, iframe_url)
+        await asyncio.sleep(6)
 
         # DOM.enable für Suche/getBoxModel
         try:
@@ -701,11 +646,65 @@ class GmxService:
         except Exception as e:
             logger.debug(f"DOM.enable nach Navigation: {e}")
 
-        # Verifiziere dass wir auf der Settings-Seite sind
+        # URL nach Redirect prüfen
         url_result2 = await client.evaluate(top_session_id, "window.location.href", return_by_value=True)
         new_url = url_result2.get("result", {}).get("value", "") or ""
-        if "mail_settings" not in new_url and "gmx.net" not in new_url:
-            logger.warning(f"Navigation zu Settings fehlgeschlagen: {new_url[:80]}")
+        logger.info(f"Nach Navigation: {new_url[:100]}")
+
+        if "gmx.net" not in new_url:
+            logger.warning(f"Navigation fehlgeschlagen: {new_url[:80]}")
+            return None
+
+        # Wenn wir bereits auf allEmailAddresses sind (Redirect hat uns direkt dahin gebracht)
+        if "allEmailAddresses" in new_url:
+            logger.info("Bereits auf allEmailAddresses nach Redirect")
+            return OopifContext(
+                parent_session_id=top_session_id,
+                child_session_id=top_session_id,
+                offset_x=0.0, offset_y=0.0,
+                width=1200.0, height=800.0,
+                target_id="", iframe_url=new_url,
+            )
+
+        # Auf settings/signature gelandet → "E-Mail-Adressen" klicken
+        if "settings" in new_url and "3c.gmx.net" in new_url:
+            logger.info("Auf 3c.gmx.net Settings gelandet — klicke E-Mail-Adressen via JS dispatchEvent")
+            try:
+                click_result = await client.evaluate(top_session_id, """(function() {
+                    var allEls = document.querySelectorAll('a, span, li, div, p');
+                    for (var i = 0; i < allEls.length; i++) {
+                        var el = allEls[i];
+                        if (el.children.length === 0 && el.textContent.trim() === 'E-Mail-Adressen') {
+                            var rect = el.getBoundingClientRect();
+                            var cx = rect.x + rect.width / 2;
+                            var cy = rect.y + rect.height / 2;
+                            ['mousedown', 'mouseup', 'click'].forEach(function(evtType) {
+                                el.dispatchEvent(new MouseEvent(evtType, {
+                                    bubbles: true, cancelable: true, view: window,
+                                    clientX: cx, clientY: cy
+                                }));
+                            });
+                            return {clicked: true, x: Math.round(cx), y: Math.round(cy)};
+                        }
+                    }
+                    return {clicked: false};
+                })()""", return_by_value=True)
+                result = click_result.get("result", {}).get("value", {})
+                if result.get("clicked"):
+                    logger.info(f"E-Mail-Adressen geklickt bei ({result.get('x')},{result.get('y')})")
+                    await asyncio.sleep(4)
+                else:
+                    logger.warning("E-Mail-Adressen Element nicht gefunden")
+            except Exception as e:
+                logger.warning(f"E-Mail-Adressen JS-Klick fehlgeschlagen: {e}")
+
+        # Finale URL prüfen
+        url_result3 = await client.evaluate(top_session_id, "window.location.href", return_by_value=True)
+        final_url = url_result3.get("result", {}).get("value", "") or ""
+        logger.info(f"Final URL: {final_url[:100]}")
+
+        if "gmx.net" not in final_url:
+            logger.warning(f"Finale Navigation fehlgeschlagen: {final_url[:80]}")
             return None
 
         return OopifContext(
@@ -716,40 +715,59 @@ class GmxService:
             width=1200.0,
             height=800.0,
             target_id="",
-            iframe_url=new_url,
+            iframe_url=final_url,
         )
 
     async def _find_alias_coords_in_iframe(
         self, client: CDPClient, session_id: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Findet einen Alias-Eintrag (irgendein "xyz@gmx.de" außer "opensin@gmx.de")
-        im 3c.gmx.net OOPIF und liefert TOP-VIEWPORT-Koordinaten zurück, die direkt
-        an `Input.dispatchMouseEvent` auf der Parent-Session gegeben werden können.
-
-        OOPIF-Flow:
-          1. Resolve OOPIF → child_session + viewport-offset.
-          2. DOM.performSearch("@gmx.de") in der CHILD-SESSION (nicht top!).
-             Im top-Frame hätte die alte Implementierung hier resultCount=0
-             bekommen, weil der Iframe in einem eigenen Renderer-Prozess lebt.
-          3. Pro Treffer: DOM.getBoxModel (in child-session) liefert
-             iframe-lokale Koordinaten.
-          4. `oopif.to_top(local_x, local_y)` → Top-Viewport-Koords.
-          5. Sanity: liegt die transformierte Koordinate im Iframe-Rechteck?
-
-        Returns:
-            {text, x, y, w, h, nodeId} — x/y ist die TOP-LEFT-Ecke des Text-Nodes
-            in TOP-VIEWPORT-Koords. nodeId gilt in der child_session (nur als
-            informational, NICHT in einer anderen Session wiederverwenden).
-            None: kein Alias gefunden ODER Iframe nicht auflösbar.
+        Findet einen nicht-opensin Alias-Eintrag via JS evaluate.
+        Liefert Koordinaten im Viewport (kein OOPIF-Offset mehr nötig).
         """
-        oopif = await self._resolve_gmx_oopif(client, session_id)
-        if not oopif:
-            logger.warning(
-                "_find_alias_coords_in_iframe: 3c.gmx.net OOPIF nicht auflösbar "
-                "— sind wir auf der Email-Adressen-Settings-Seite?"
-            )
-            return None
+        result = await client.evaluate(session_id, """(function() {
+            var body = document.body.innerText;
+            var lines = body.split('\\n');
+            for (var i = 0; i < lines.length; i++) {
+                var line = lines[i].trim();
+                // Match email addresses
+                var idx = line.indexOf('@gmx.');
+                if (idx < 0) continue;
+                var at = line.substring(0, idx + 9); // up to @gmx.xx
+                var parts = at.split(/\\s+/);
+                var email = parts[parts.length - 1];
+                if (!email.includes('@gmx.')) continue;
+                // Skip the main account
+                if (email === 'opensin@gmx.de') continue;
+                // Find the DOM element containing this email
+                var allEls = document.querySelectorAll('span, div, td, p, a');
+                for (var j = 0; j < allEls.length; j++) {
+                    var el = allEls[j];
+                    if (el.children.length === 0 && el.textContent.trim().includes(email)) {
+                        var rect = el.getBoundingClientRect();
+                        if (rect.width > 30 && rect.height > 8) {
+                            return {
+                                text: email,
+                                x: Math.round(rect.x),
+                                y: Math.round(rect.y),
+                                w: Math.round(rect.width),
+                                h: Math.round(rect.height),
+                                cx: Math.round(rect.x + rect.width / 2),
+                                cy: Math.round(rect.y + rect.height / 2)
+                            };
+                        }
+                    }
+                }
+            }
+            return null;
+        })()""", return_by_value=True)
+
+        alias = result.get("result", {}).get("value")
+        if alias:
+            logger.info(f"Alias gefunden: '{alias['text']}' at ({alias['x']},{alias['y']}) {alias['w']}x{alias['h']}")
+            return alias
+        logger.info("Kein nicht-opensin Alias in der Liste gefunden")
+        return None
 
         node_ids = await client.dom_search(
             oopif.child_session_id, "@gmx.de", include_shadow=True, max_results=200
@@ -809,90 +827,67 @@ class GmxService:
         return None
 
     async def _cdp_hover(self, client: CDPClient, session_id: str, x: float, y: float):
-        """Sendet CDP Input.dispatchMouseEvent mouseMoved (triggert CSS :hover)."""
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": x, "y": y
-        })
+        """Sendet JS mouseover/mouseenter (GMX ignoriert CDP Input.dispatchMouseEvent)."""
+        await client.evaluate(session_id, f"""((function() {{
+            var el = document.elementFromPoint({x}, {y});
+            if (!el) return;
+            ['mouseover', 'mouseenter'].forEach(function(evtType) {{
+                el.dispatchEvent(new MouseEvent(evtType, {{
+                    bubbles: true, cancelable: true, view: window,
+                    clientX: {x}, clientY: {y}
+                }}));
+            }});
+        }})())""", return_by_value=True)
 
     async def _cdp_click(self, client: CDPClient, session_id: str, x: float, y: float):
-        """Sendet CDP Input.dispatchMouseEvent pressed + released."""
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": x, "y": y,
-            "button": "left", "clickCount": 1
-        })
-        await asyncio.sleep(0.1)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": x, "y": y,
-            "button": "left", "clickCount": 1
-        })
+        """Klickt via JS dispatchEvent (statt CDP Input.dispatchMouseEvent — GMX ignoriert CDP-Events)."""
+        await client.evaluate(session_id, f"""((function() {{
+            var el = document.elementFromPoint({x}, {y});
+            if (!el) return;
+            ['mousedown', 'mouseup', 'click'].forEach(function(evtType) {{
+                el.dispatchEvent(new MouseEvent(evtType, {{
+                    bubbles: true, cancelable: true, view: window,
+                    clientX: {x}, clientY: {y}
+                }}));
+            }});
+        }})())""", return_by_value=True)
 
     async def _find_delete_icon_coords(
         self, client: CDPClient, session_id: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Sucht das Delete-Icon (title='E-Mail-Adresse löschen') im 3c.gmx.net OOPIF
-        und liefert TOP-VIEWPORT-Klick-Koordinaten (Mittelpunkt des Icons).
-
-        Voraussetzung: vorher Hover über die Alias-Row, sonst rendert das Icon nicht.
-
-        OOPIF-Flow (siehe _find_alias_coords_in_iframe für Details):
-          • performSearch + describeNode + getBoxModel laufen alle in der
-            child_session des Iframe-Targets.
-          • Iframe-lokale Mittelpunkt-Koords werden via oopif.to_top()
-            in Top-Viewport umgerechnet.
+        Sucht das Delete-Icon via JS evaluate.
+        Delete-Icon ist sichtbar nach vorherigem Hover über die Alias-Row.
         """
-        oopif = await self._resolve_gmx_oopif(client, session_id)
-        if not oopif:
-            logger.warning("_find_delete_icon_coords: OOPIF nicht auflösbar")
-            return None
-
-        # Mehrere Such-Queries: Title kann je nach UI-Sprache/Version variieren.
-        # Wir akzeptieren jeden Treffer, dessen `title`-Attribut "lösch" enthält.
-        for query in ["E-Mail-Adresse löschen", "löschen", "Löschen"]:
-            node_ids = await client.dom_search(
-                oopif.child_session_id, query, include_shadow=True, max_results=20
-            )
-            if not node_ids:
-                continue
-
-            for nid in node_ids:
-                node = await client.node_describe(oopif.child_session_id, nid, depth=2)
-                if not node:
-                    continue
-                attrs = CDPClient.node_attrs_to_dict(node)
-                title = attrs.get('title', '')
-                if 'lösch' not in title.lower():
-                    continue
-
-                box = await client.node_content_box(oopif.child_session_id, nid)
-                if not box:
-                    continue
-                local_x, local_y, w, h = box
-                if w < 5 or h < 5:
-                    continue
-
-                # Mittelpunkt iframe-lokal -> top-viewport
-                top_x, top_y = oopif.to_top(local_x + w / 2, local_y + h / 2)
-
-                if not oopif.contains(top_x, top_y):
-                    logger.debug(
-                        f"Delete-Icon center ({top_x:.0f},{top_y:.0f}) liegt "
-                        f"außerhalb iframe rect — übersprungen"
-                    )
-                    continue
-
-                logger.info(
-                    f"Delete-Icon gefunden: title='{title}' "
-                    f"local=({local_x:.0f},{local_y:.0f}) -> top=({top_x:.0f},{top_y:.0f})"
-                )
-                return {
-                    "x": top_x,
-                    "y": top_y,
-                    "w": w,
-                    "h": h,
-                    "title": title,
-                    "nodeId": nid,
+        result = await client.evaluate(session_id, """(function() {
+            // Find elements with title containing "lösch" or "E-Mail-Adresse löschen"
+            var allEls = document.querySelectorAll('a, button, span, i, img');
+            for (var i = 0; i < allEls.length; i++) {
+                var el = allEls[i];
+                var title = (el.getAttribute('title') || '').toLowerCase();
+                var ariaLabel = (el.getAttribute('aria-label') || '').toLowerCase();
+                if (title.includes('lösch') || title.includes('email-adresse') || ariaLabel.includes('lösch')) {
+                    var rect = el.getBoundingClientRect();
+                    if (rect.width > 5 && rect.height > 5) {
+                        return {
+                            x: Math.round(rect.x + rect.width / 2),
+                            y: Math.round(rect.y + rect.height / 2),
+                            w: Math.round(rect.width),
+                            h: Math.round(rect.height),
+                            title: el.getAttribute('title') || '',
+                            tag: el.tagName
+                        };
+                    }
                 }
+            }
+            return null;
+        })()""", return_by_value=True)
+
+        icon = result.get("result", {}).get("value")
+        if icon:
+            logger.info(f"Delete-Icon gefunden: '{icon.get('title')}' at ({icon['x']},{icon['y']}) tag={icon.get('tag')}")
+            return icon
+        logger.info("Kein Delete-Icon gefunden (Hover nötig?)")
         return None
 
     async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
@@ -1198,11 +1193,14 @@ class GmxService:
             root_id = None
 
         selectors = [
+            "input[name*='localPart' i]",
+            "input[placeholder*='ihr-name' i]",
             "input[name*='alias' i]",
             "input[id*='alias' i]",
             "input[placeholder*='alias' i]",
             "input[placeholder*='E-Mail' i][type='text']",
             "input[type='email']:not([readonly])",
+            "input[type='text']:not([readonly]):not([name*='mdhDomain']):not([name*='displayName'])",
         ]
         if root_id:
             for sel in selectors:
@@ -1267,27 +1265,74 @@ class GmxService:
         self, client: CDPClient, session_id: str, input_y: Optional[float]
     ) -> Optional[Dict[str, Any]]:
         """
-        Findet den "Hinzufügen"-Button im 3c.gmx.net OOPIF und liefert
-        TOP-VIEWPORT-Klick-Koordinaten (Button-Center).
+        Findet den "Hinzufügen"-Button mittels JS evaluate (statt CDP DOM API,
+        die auf GMX/3c.gmx.net hängt bei getSearchResults/describeNode).
 
         Args:
-            input_y: Top-Viewport-Y des Input-Felds zur Proximity-Filterung
-                     (es kann mehrere "Hinzufügen"-Treffer geben — wir wollen den,
-                     der nahe am Alias-Input liegt, nicht den von "Filter
-                     hinzufügen" am Seitenrand). Wenn None: kein Filter
-                     (z.B. wenn _find_alias_input_coords keine Koords liefern konnte).
-
-        OOPIF-Flow:
-          • performSearch in child_session findet die Text-Nodes "Hinzufügen"
-            (in Top-Session: 0 Treffer wegen Site-Isolation).
-          • Pro Treffer: zum Parent-Element gehen (das ist der klickbare
-            Button/Span), getBoxModel in child_session → iframe-lokale Box.
-          • Proximity-Check geschieht in TOP-VIEWPORT-Koords (nach Transform).
+            input_y: Wenn bekannt, wird der Button nächst dem Input bevorzugt.
         """
-        oopif = await self._resolve_gmx_oopif(client, session_id)
-        if not oopif:
-            logger.warning("_find_hinzufuegen_button_coords: OOPIF nicht auflösbar")
+        # JS-Suche nach allen sichtbaren Buttons mit Text "Hinzufügen"
+        result = await client.evaluate(session_id, """(function() {
+            var buttons = document.querySelectorAll('button');
+            var matches = [];
+            for (var i = 0; i < buttons.length; i++) {
+                var btn = buttons[i];
+                var text = btn.textContent.trim();
+                if (text === 'Hinzufügen' || text === 'Hinzufuegen') {
+                    var rect = btn.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        matches.push({
+                            x: Math.round(rect.x + rect.width / 2),
+                            y: Math.round(rect.y + rect.height / 2),
+                            w: Math.round(rect.width),
+                            h: Math.round(rect.height),
+                            label: text,
+                            top: Math.round(rect.y)
+                        });
+                    }
+                }
+            }
+            // Auch spans/divs mit "Hinzufügen" Text die klickbar sind
+            var allEls = document.querySelectorAll('span, div, a');
+            for (var i = 0; i < allEls.length; i++) {
+                var el = allEls[i];
+                if (el.children.length === 0 && el.textContent.trim() === 'Hinzufügen') {
+                    var r = el.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        matches.push({
+                            x: Math.round(r.x + r.width / 2),
+                            y: Math.round(r.y + r.height / 2),
+                            w: Math.round(r.width),
+                            h: Math.round(r.height),
+                            label: 'Hinzufügen',
+                            top: Math.round(r.y)
+                        });
+                    }
+                }
+            }
+            return matches;
+        })()""", return_by_value=True)
+
+        candidates = result.get("result", {}).get("value", [])
+
+        if not candidates:
+            logger.warning("_find_hinzufuegen_button_coords: Kein Hinzufügen-Element gefunden")
             return None
+
+        if input_y is None:
+            chosen = candidates[0]
+            logger.info(f"Hinzufügen-Button ohne Proximity: ({chosen['x']},{chosen['y']})")
+            return chosen
+
+        # Mit Input-Y: nächstgelegenen Button bevorzugen, max 150px Distanz
+        candidates.sort(key=lambda b: abs(b['top'] - input_y))
+        for c in candidates:
+            if abs(c['top'] - input_y) < 150:
+                logger.info(f"Hinzufügen-Button: ({c['x']},{c['y']}) (Δy={c['top'] - input_y:+.0f})")
+                return c
+
+        logger.warning(f"Hinzufügen-Button zu weit vom Input (alle >150px entfernt)")
+        return None
 
         node_ids = await client.dom_search(
             oopif.child_session_id, "Hinzufügen", include_shadow=True, max_results=40
@@ -1355,75 +1400,33 @@ class GmxService:
         poll_interval_s: float = 1.0,
     ) -> bool:
         """
-        Ehrliche Server-State-Verifikation: existiert (oder fehlt) der Alias in
-        der ALIAS-LISTE des 3c.gmx.net OOPIF?
+        Server-State-Verifikation via JS evaluate (statt CDP DOM API die hängt).
 
-        Warum diese Methode existiert (Bug-Report 2026-05-11):
-          Die frühere Verifikation `DOM.performSearch(query=alias_name)` auf der
-          TOP-Session war self-confirming bias:
-            • Im Iframe (wo die echte Liste steht) wurde gar nicht gesucht.
-            • Im Top-Frame fand sie den getippten Input-Wert wieder.
-            • → resultCount>0 = "Erfolg" obwohl der Server gar nichts persistiert
-              hatte.
-
-        Korrekte Verifikation:
-          1. OOPIF auflösen (frische child_session — die alte ist nach Reload tot).
-          2. In der child_session nach dem VOLLEN "alias@gmx.de" suchen
-             (nicht nur dem Namen). Die Tabellen-Row rendert das volle Format,
-             das Input-Feld nur den Lokal-Teil → keine False-Positives mehr.
-          3. Polling bis `present` erreicht oder Timeout — GMX braucht manchmal
-             1-3 Sekunden bis die neue Zeile in die Tabelle rendert.
-
-        Args:
-            alias_email: vollständige Adresse, z.B. "marathon-fox-7421@gmx.de"
-            present: True → warten bis Alias existiert.
-                     False → warten bis Alias verschwunden ist (Delete-Verifikation).
-            max_wait_s: Obergrenze des Polling-Loops.
-            poll_interval_s: Pause zwischen Polls.
-
-        Returns:
-            True wenn Zielzustand erreicht, False bei Timeout / OOPIF-Fehler.
+        Prüft ob ein bestimmter Alias (z.B. "swift-hawk-842@gmx.de") im sichtbaren
+        Text der Alias-Liste existiert oder nicht.
         """
         deadline = time.time() + max_wait_s
-        last_count = -1
         while time.time() < deadline:
-            oopif = await self._resolve_gmx_oopif(client, session_id)
-            if not oopif:
-                await asyncio.sleep(poll_interval_s)
-                continue
+            result = await client.evaluate(session_id, f"""(function() {{
+                var bodyText = document.body.innerText;
+                return bodyText.indexOf({json.dumps(alias_email)}) >= 0;
+            }})()""", return_by_value=True)
+            found = result.get("result", {}).get("value", False)
 
-            node_ids = await client.dom_search(
-                oopif.child_session_id, alias_email,
-                include_shadow=True, max_results=10,
-            )
-
-            # Nur echte Text-Vorkommen zählen (nicht z.B. Datenattribute mit
-            # JSON, falls die App so etwas rendert).
-            real_hits = 0
-            for nid in node_ids:
-                node = await client.node_describe(oopif.child_session_id, nid)
-                if not node:
-                    continue
-                val = (node.get('nodeValue', '') or '').strip()
-                # Akzeptiere wenn der Alias als sichtbarer Text vorkommt
-                # (nicht als Teil eines längeren JSON-Strings).
-                if alias_email in val and not val.startswith('{'):
-                    real_hits += 1
-                    break  # 1 Treffer reicht
-
-            if real_hits != last_count:
-                logger.debug(
-                    f"_verify_alias_in_iframe({alias_email}, present={present}): "
-                    f"real_hits={real_hits}"
-                )
-                last_count = real_hits
-
-            if present and real_hits > 0:
+            if present and found:
+                logger.info(f"Alias {alias_email} in Alias-Liste bestätigt")
                 return True
-            if not present and real_hits == 0:
+            if not present and not found:
+                logger.info(f"Alias {alias_email} nicht mehr in Alias-Liste")
                 return True
 
             await asyncio.sleep(poll_interval_s)
+
+        logger.warning(
+            f"_verify_alias_in_iframe TIMEOUT nach {max_wait_s}s: "
+            f"alias={alias_email} present-target={present}"
+        )
+        return False
 
         logger.warning(
             f"_verify_alias_in_iframe TIMEOUT nach {max_wait_s}s: "
@@ -1435,31 +1438,38 @@ class GmxService:
         self, client: CDPClient, session_id: str, alias_name: str,
         input_coords: Dict[str, Any]
     ) -> bool:
-        """Füllt das Alias-Input via CDP Input.dispatchKeyEvent (Input bereits CUA-fokussiert)."""
-        logger.info(f"CDP type '{alias_name}' into focused input")
-        for char in alias_name:
-            await client.send_to_session(session_id, "Input.dispatchKeyEvent", {
-                "type": "char", "text": char, "key": char
-            })
-            await asyncio.sleep(0.02)
-        await asyncio.sleep(0.5)
-        return True
+        """Füllt das Alias-Input via JS nativeInputValueSetter (GMX ignoriert CDP KeyEvents)."""
+        logger.info(f"JS type '{alias_name}' into alias input")
+        result = await client.evaluate(session_id, f"""(function() {{
+            var inp = document.querySelector('input[name*="localPart"]');
+            if (!inp) return {{ok: false, error: 'no input'}};
+            var ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            ns.call(inp, '{alias_name}');
+            inp.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+            inp.dispatchEvent(new Event('change', {{bubbles: true}}));
+            inp.dispatchEvent(new Event('blur', {{bubbles: true}}));
+            return {{ok: inp.value === '{alias_name}', value: inp.value}};
+        }})()""", return_by_value=True)
+        fill_result = result.get("result", {}).get("value", {})
+        ok = fill_result.get("ok", False) if fill_result else False
+        logger.info(f"Fill result: {fill_result}")
+        return ok
 
     async def _click_button_via_cdp(self, client: CDPClient, session_id: str, btn_info: Dict[str, Any]) -> None:
-        """Klickt einen Button via CDP Input.dispatchMouseEvent."""
-        btn_x = btn_info["x"]
-        btn_y = btn_info["y"]
-        logger.info(f"CDP Mouse click bei ({btn_x:.1f}, {btn_y:.1f})")
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": btn_x, "y": btn_y, "button": "left",
-        })
-        await asyncio.sleep(0.3)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1,
-        })
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1,
-        })
+        """Klickt den Hinzufügen-Button via form.submit() (JS dispatchEvent triggert GMX nicht)."""
+        btn_x = btn_info.get("x", 0)
+        btn_y = btn_info.get("y", 0)
+        logger.info(f"Hinzufügen-Button via form.submit() bei ({btn_x:.1f}, {btn_y:.1f})")
+        await client.evaluate(session_id, """(function() {
+            var btn = document.elementFromPoint(%f, %f);
+            if (btn) {
+                // Try form.submit() for the parent form
+                var form = btn.closest('form');
+                if (form) { form.submit(); return; }
+                // Fallback: click the button directly
+                btn.click();
+            }
+        })()""" % (btn_x, btn_y), return_by_value=True)
 
     async def create_alias(self, alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
         """Erstellt einen neuen GMX Alias.
