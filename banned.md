@@ -129,33 +129,22 @@ chrome --user-data-dir=/tmp/chrome-profile --remote-debugging-port=9222
 ## ✅ KORREKTE METHODE (siehe AGENTS.md für Details)
 
 ```bash
-# 1. GESAMTES user-data-dir kopieren (inkl. Local State!)
-TEMP_DIR="/tmp/sinator-chrome-$(date +%s)"
-mkdir -p "$TEMP_DIR"
-cp "/Users/jeremy/Library/Application Support/Google/Chrome/Local State" "$TEMP_DIR/"
-cp -R "/Users/jeremy/Library/Application Support/Google/Chrome/Profile 901" "$TEMP_DIR/"
+# Chrome BEENDEN (SIGTERM, nicht SIGKILL!)
+kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 
-# 2. Chrome mit kopiertem Profil + profile-directory Flag starten
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="$TEMP_DIR" \
+# Chrome STARTEN mit ORIGINAL Profil 901 (KEINE Kopie!)
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 901" \
   --remote-debugging-port=9222 \
-  --no-first-run \
-  --no-default-browser-check 2>&1 &
+  --no-first-run --no-default-browser-check \
+  > /tmp/chrome_sinator.log 2>&1 &
 
-# 3. Auf CDP warten
-sleep 8
-curl -s http://127.0.0.1:9222/json/version
+sleep 6 && curl -s http://127.0.0.1:9222/json/version
 ```
 
-```javascript
-// Node.js: puppeteer.connect() zum laufenden Chrome
-const puppeteer = require('puppeteer');
-const wsUrl = await getWebSocketUrl(9222);
-const browser = await puppeteer.connect({ browserWSEndpoint: wsUrl });
-const pages = await browser.pages();
-const page = pages[0]; // Bereits eingeloggt in GMX!
-```
+**⚠️ WICHTIG:** NIEMALS Profile kopieren oder nach /tmp verschieben!
+Original-Profil 901 nutzen — Cookies sind an Original-Pfad gebunden (macOS Keychain).
 
 ---
 
