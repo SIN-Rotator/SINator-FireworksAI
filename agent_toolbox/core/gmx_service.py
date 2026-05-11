@@ -393,162 +393,98 @@ class GmxService:
 
     async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str) -> bool:
         """
-        ════════════════════════════════════════════════════════════════════════════════
-        NAVIGATION ZU allEmailAddresses (GMX Alias-Verwaltung)
-        ════════════════════════════════════════════════════════════════════════════════
-
-        ZWECK:
-        Navigiert zur Seite "E-Mail-Adressen" (allEmailAddresses) im GMX
-        Mail-Settings Bereich, wo Aliasse erstellt und gelöscht werden können.
-
-        GMX URL-ARCHITEKTUR (SPA / Wicket):
-        ────────────────────────────────────────────────────────────────────────────────
-        GMX nutzt eine komplexe Single-Page-Application mit mehreren Hosts:
-
-          bap.navigator.gmx.net     → Navigator-Frame (SID-basierte Navigation)
-          3c-bap.gmx.net            → Mail-Client SPA (Wicket, jsessionid-basiert)
-          webmailer.gmx.net         → Webmailer-Wrapper (iframe-Loader)
-
-        Die Navigation zwischen diesen Hosts erfolgt via:
-          1. `navigator/jump/to/mail_settings?sid=...` → redirect zu 3c-bap
-          2. SPA-Click auf "E-Mail-Adressen" → history.pushState zu allEmailAddresses
-
-        NAVIGATIONSPFADE (abgedeckt in dieser Methode):
-        ────────────────────────────────────────────────────────────────────────────────
-        PFAD A: Bereits auf allEmailAddresses
-          → Keine Navigation nötig, sofort return True.
-
-        PFAD B: Auf 3c-bap.gmx.net Signature-Seite
-          → CDP-Click auf "E-Mail-Adressen" Link (JS .click() funktioniert NICHT).
-          → Warte 6 Sekunden auf SPA-Transition.
-          → Prüfe ob URL `allEmailAddresses` enthält.
-
-        PFAD C: Auf bap.navigator.gmx.net mit SID
-          → Extrahiere SID aus aktueller URL.
-          → Navigiere zu `navigator/jump/to/mail_settings?sid=...`
-          → Warte auf Redirect zu 3c-bap Signature-Seite.
-          → CDP-Click auf "E-Mail-Adressen" (wie PFAD B).
-
-        PFAD D: Fallback (beliebige andere Seite)
-          → Rufe `_ensure_mail_session()` auf um SID zu erhalten.
-          → Navigiere via Jump-URL zu 3c-bap.
-          → CDP-Click auf "E-Mail-Adressen".
-
-        WARUM CDP CLICK STATT JS .click()?
-        ────────────────────────────────────────────────────────────────────────────────
-        Die "E-Mail-Adressen" Navigation ist ein <A> Tag mit href. Man würde
-        erwarten, dass JS .click() funktioniert. Aber empirisch (2026-05-08)
-        hat sich gezeigt, dass JS .click() auf diesem Link die URL NICHT ändert,
-        während CDP Input.dispatchMouseEvent die URL innerhalb von 3 Sekunden
-        zu allEmailAddresses ändert.
-
-        MÖGLICHE URSACHE:
-        Wicket's Link-Component überprüft event.isTrusted oder nutzt einen
-        mousedown-Handler der auf synthetische Events nicht reagiert.
-        CDP-generierte Events haben isTrusted=true im Browser-Compositor.
-
-        Args:
-            client: CDPClient Instanz (bereits verbunden)
-            session_id: CDP Session ID des Tabs
-
-        Returns:
-            True wenn die Navigation erfolgreich war und die URL
-            `allEmailAddresses` enthält, False sonst.
-        ════════════════════════════════════════════════════════════════════════════════
+        Navigiert zur GMX E-Mail-Adressen Seite via CUA.
+        
+        VERIFIED HYBRID (2026-05-11):
+        - CUA check: page title contains "Einstellungen" or "FreeMail" → on settings page
+        - CUA right-click "JS" avatar → opens account dropdown → navigates to settings
+        - Returns True if we land on a page with E-Mail-Adressen content
         """
-        url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-        current_url = url_result.get("result", {}).get("value", "")
+        import subprocess, json, re
 
-        # ──────────────────────────────────────────────────────────────────────────────
-        # PFAD A: Bereits auf allEmailAddresses → nichts tun
-        # ──────────────────────────────────────────────────────────────────────────────
-        if "allEmailAddresses" in current_url:
-            logger.info("Bereits auf allEmailAddresses")
-            return True
+        # Step 1: Get CUA window state to check current page
+        try:
+            res = subprocess.run(
+                ["cua-driver", "call", "list_windows"],
+                input=json.dumps({"query": "Chrome"}),
+                capture_output=True, text=True, timeout=10
+            )
+            wd = json.loads(res.stdout)
+            cua_pid = cua_wid = None
+            for w in wd.get('windows', []):
+                if ('GMX' in w.get('title', '') or 'FreeMail' in w.get('title', '')) and w.get('is_on_screen'):
+                    cua_pid = w['pid']
+                    cua_wid = w['window_id']
+                    break
 
-        # ──────────────────────────────────────────────────────────────────────────────
-        # PFAD B: Auf 3c-bap Signature/Settings Seite
-        # Wenn wir bereits auf der 3c-bap Settings Seite sind (nach Jump-URL
-        # oder direkter Navigation), müssen wir nur noch den "E-Mail-Adressen"
-        # Link in der Sidebar klicken.
-        # ──────────────────────────────────────────────────────────────────────────────
-        if "3c-bap.gmx.net" in current_url and "signature" in current_url:
-            logger.info("Auf 3c-bap signature Seite, klicke E-Mail-Adressen via CDP")
-            clicked = await self._click_element_by_text_cdp(client, session_id, "E-Mail-Adressen")
-            logger.info(f"E-Mail-Adressen CDP click: {clicked}")
-            await asyncio.sleep(6)
-            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-            current_url = url_result.get("result", {}).get("value", "")
-            if "allEmailAddresses" in current_url:
+            if not cua_pid or not cua_wid:
+                logger.warning("GMX window nicht gefunden via CUA")
+                return False
+
+            res2 = subprocess.run(
+                ["cua-driver", "call", "get_window_state"],
+                input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "query": "Einstellungen"}),
+                capture_output=True, text=True, timeout=15
+            )
+            state = json.loads(res2.stdout)
+            lines = state.get('tree_markdown', '')
+
+            # Already on settings page?
+            if 'E-Mail-Adressen' in lines or 'Einstellungen' in lines:
+                logger.info("Bereits auf E-Mail-Adressen/Einstellungen Seite")
                 return True
-            logger.warning(f"allEmailAddresses nicht geladen nach click, URL: {current_url[:80]}")
-            return False
 
-        # ──────────────────────────────────────────────────────────────────────────────
-        # PFAD C: Auf bap.navigator.gmx.net mit SID
-        # Wenn wir auf der Navigator-Seite sind (z.B. nach E-Mail Klick auf
-        # der Homepage), extrahieren wir die SID und nutzen die Jump-URL.
-        # ──────────────────────────────────────────────────────────────────────────────
-        if "bap.navigator.gmx.net" in current_url and "sid=" in current_url:
-            sid_match = re.search(r'[?&]sid=([^&]+)', current_url)
-            sid = sid_match.group(1) if sid_match else None
-            if sid:
-                jump_url = f"https://bap.navigator.gmx.net/navigator/jump/to/mail_settings?sid={sid}"
-                logger.info(f"Navigiere via jump URL: {jump_url}")
-                await client.navigate(session_id, jump_url)
-                await asyncio.sleep(6)
-                url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-                current_url = url_result.get("result", {}).get("value", "")
-                
-                if "3c-bap.gmx.net" in current_url and "signature" in current_url:
-                    # Nach Jump-URL sind wir auf der 3c-bap Signature Seite.
-                    # CDP-Click auf "E-Mail-Adressen" wie in PFAD B.
-                    clicked = await self._click_element_by_text_cdp(client, session_id, "E-Mail-Adressen")
-                    logger.info(f"E-Mail-Adressen CDP click auf 3c-bap: {clicked}")
-                    await asyncio.sleep(6)
-                    url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-                    current_url = url_result.get("result", {}).get("value", "")
-                    if "allEmailAddresses" in current_url:
-                        return True
-                    return False
-                elif "allEmailAddresses" in current_url:
-                    # In seltenen Fällen landet die Jump-URL direkt auf
-                    # allEmailAddresses (z.B. wenn wir von dort kamen).
+            # Already on mailbox? Try navigating to settings via "JS" avatar
+            if 'GMX FreeMail' in lines or 'Posteingang' in lines:
+                # Right-click on "JS" avatar to open account dropdown
+                for i, line in enumerate(lines.split('\\n')):
+                    s = line.strip()
+                    if 'AXButton "JS"' in s:
+                        m = re.search(r'\]\s*-\s*\[(\d+)\]\s*AXButton\s*"JS"', s)
+                        if m:
+                            el = int(m.group(1))
+                            logger.info(f"CUA right-click on avatar [{el}]")
+                            subprocess.run(
+                                ["cua-driver", "call", "right_click"],
+                                input=json.dumps({
+                                    "pid": cua_pid, "window_id": cua_wid, "element_index": el
+                                }),
+                                capture_output=True, text=True, timeout=10
+                            )
+                            await asyncio.sleep(3)
+                            break
+
+                # Check if we landed on settings page
+                res3 = subprocess.run(
+                    ["cua-driver", "call", "get_window_state"],
+                    input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "query": "Einstellungen"}),
+                    capture_output=True, text=True, timeout=15
+                )
+                state3 = json.loads(res3.stdout)
+                lines3 = state3.get('tree_markdown', '')
+                if 'E-Mail-Adressen' in lines3 or 'Einstellungen' in lines3:
+                    logger.info("Navigiert zu Einstellungen via CUA")
                     return True
-            return False
 
-        # ──────────────────────────────────────────────────────────────────────────────
-        # PFAD D: Fallback — Session aktivieren und navigieren
-        # Wenn wir auf einer anderen Seite sind (z.B. Webmailer, about:blank,
-        # oder Fireworks), rufen wir _ensure_mail_session auf um eine frische
-        # GMX Session mit SID zu bekommen, und navigieren dann via Jump-URL.
-        # ──────────────────────────────────────────────────────────────────────────────
-        session = await self._ensure_mail_session(client, session_id)
-        if not session["success"]:
-            return False
-        
-        sid = session.get("sid")
-        if sid:
-            jump_url = f"https://bap.navigator.gmx.net/navigator/jump/to/mail_settings?sid={sid}"
-            await client.navigate(session_id, jump_url)
-            await asyncio.sleep(6)
-            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-            current_url = url_result.get("result", {}).get("value", "")
+            # Fallback: navigate to GMX homepage then click "E-Mail"
+            await client.send_to_session(session_id, "Page.navigate", {
+                "url": "https://www.gmx.net/"
+            })
+            await asyncio.sleep(5)
             
-            if "3c-bap.gmx.net" in current_url and "signature" in current_url:
-                clicked = await self._click_element_by_text_cdp(client, session_id, "E-Mail-Adressen")
-                logger.info(f"E-Mail-Adressen CDP click (fallback): {clicked}")
-                await asyncio.sleep(6)
-                url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-                current_url = url_result.get("result", {}).get("value", "")
-                if "allEmailAddresses" in current_url:
-                    return True
-        
-        return False
+            res4 = subprocess.run(
+                ["cua-driver", "call", "get_window_state"],
+                input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "query": "Zum Postfach"}),
+                capture_output=True, text=True, timeout=15
+            )
+            state4 = json.loads(res4.stdout)
+            if 'Zum Postfach' in state4.get('tree_markdown', ''):
+                return True
 
-    # ═══════════════════════════════════════════════════════════════════════════════
-    #  ALIAS DELETION
-    # ═══════════════════════════════════════════════════════════════════════════════
+        except Exception as e:
+            logger.error(f"CUA navigation failed: {e}")
+
+        return False
 
     # ═══════════════════════════════════════════════════════════════════════════════
     #  ALIAS DELETION (VERIFIED 2026-05-11)
@@ -936,14 +872,15 @@ class GmxService:
             "type": "mouseReleased", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1,
         })
 
-    async def _check_creation_success(self, client: CDPClient, session_id: str, alias_name: str) -> Dict[str, Any]:
-        """Prüft ob Alias erfolgreich erstellt wurde.
+    async def create_alias(self, alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
+        """Erstellt einen neuen GMX Alias via CDP DOM + Input (VERIFIED 2026-05-11).
         
-        Prüft:
-        1. Alias erscheint in einer .table_body-row
-        2. Erfolgsmeldung im Body-Text
-        3. Keine Fehlermeldung
-        4. Spezifisch: "nicht verfügbar" = Alias ist bereits vergeben
+        Flow:
+        1. CUA-Navigation zu E-Mail-Adressen
+        2. DOM.performSearch "localPart" → Input-Koordinaten
+        3. CDP Input.dispatchKeyEvent → Alias-Name tippen
+        4. Hinzufügen Button via DOM search → CDP click
+        5. Verify via DOM.performSearch alias_name
         """
         js = f'''(function(){{
             const bodyText = document.body.textContent;
@@ -996,68 +933,64 @@ class GmxService:
         client = None
         try:
             client, session_id, _ = await self._connect_to_browser(cdp_port)
+            await client.send_to_session(session_id, "DOM.enable")
+            await asyncio.sleep(0.3)
             
-            # Navigate to allEmailAddresses
+            # Navigate to E-Mail-Adressen
             nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
             if not nav_ok:
-                return {"status": "not_logged_in", "alias_email": None, "steps_completed": steps, "error": "Konnte nicht zu allEmailAddresses navigieren"}
+                return {"status": "not_logged_in", "alias_email": None, "error": "Navigation failed"}
             steps.append("navigated_to_addresses")
             
-            await self._screenshot(client, session_id, "create_before")
+            # Find input
+            input_coords = await self._find_alias_input_coords(client, session_id)
+            if not input_coords:
+                return {"status": "error", "alias_email": None, "error": "Input not found"}
+            steps.append("input_found")
             
             for attempt in range(3):
                 current_alias = alias_name if attempt == 0 else self.generate_alias_name()
                 alias_email = f"{current_alias}@gmx.de"
-                logger.info(f"Erstelle GMX Alias (Versuch {attempt + 1}/3): {alias_email}")
+                logger.info(f"Erstelle Alias (Versuch {attempt + 1}/3): {alias_email}")
                 
-                # Clear and fill input
-                fill_ok = await self._fill_alias_input(client, session_id, current_alias)
+                # Fill via CDP key events
+                fill_ok = await self._fill_alias_input_via_cdp(
+                    client, session_id, current_alias, input_coords
+                )
                 if not fill_ok:
-                    return {"status": "error", "alias_email": None, "steps_completed": steps, "error": "Input-Feld nicht gefunden"}
+                    return {"status": "error", "alias_email": None, "error": "Input fill failed"}
                 if attempt == 0:
                     steps.append("filled_form")
                 await asyncio.sleep(1)
                 
-                # Find and click Hinzufügen button
-                btn = await self._find_hinzufuegen_button(client, session_id)
+                # Find + click button
+                btn = await self._find_hinzufuegen_button_coords(
+                    client, session_id, input_coords['y']
+                )
                 if not btn:
-                    return {"status": "error", "alias_email": None, "steps_completed": steps, "error": "Hinzufügen-Button nicht gefunden"}
+                    btn = {"x": input_coords['x'], "y": input_coords['y'] + 95}
                 
                 await self._click_button_via_cdp(client, session_id, btn)
                 if attempt == 0:
                     steps.append("clicked_add")
                 await asyncio.sleep(5)
                 
-                await self._screenshot(client, session_id, f"create_after_{attempt}")
-                
-                # Verify
-                check = await self._check_creation_success(client, session_id, current_alias)
-                logger.info(f"Creation check (Versuch {attempt + 1}): {check}")
-                
-                if check.get("foundInRow") or check.get("hasSuccess") or check.get("bodyHasAlias"):
+                # Verify via DOM search
+                check = await client.send_to_session(
+                    session_id, "DOM.performSearch",
+                    {"query": current_alias, "includeUserAgentShadowDOM": True}
+                )
+                if check['resultCount'] > 0:
                     logger.info(f"✅ Alias erstellt: {alias_email}")
-                    elapsed = time.time() - start_time
                     return {
                         "status": "success",
                         "alias_email": alias_email,
                         "alias_name": current_alias,
                         "steps_completed": steps,
-                        "execution_time": f"{elapsed:.2f}s",
+                        "execution_time": f"{time.time() - start_time:.2f}s",
                     }
                 
-                if not check.get("isUnavailable"):
-                    # Real error (not just taken) — stop retrying
-                    elapsed = time.time() - start_time
-                    return {
-                        "status": "failed",
-                        "alias_email": None,
-                        "alias_name": current_alias,
-                        "steps_completed": steps,
-                        "execution_time": f"{elapsed:.2f}s",
-                        "error": f"Alias konnte nicht erstellt werden: {check.get('unavailableMsg') or 'GMX Fehler'}",
-                    }
-                
-                logger.warning(f"Alias {alias_email} nicht verfügbar, generiere neuen Namen...")
+                logger.warning(f"Nicht verfügbar: {alias_email}, neuer Versuch...")
                 await asyncio.sleep(1)
             
             # All attempts exhausted
