@@ -466,20 +466,9 @@ class GmxService:
                     logger.info("Navigiert zu Einstellungen via CUA")
                     return True
 
-            # Fallback: navigate to GMX homepage then click "E-Mail"
-            await client.send_to_session(session_id, "Page.navigate", {
-                "url": "https://www.gmx.net/"
-            })
-            await asyncio.sleep(5)
-            
-            res4 = subprocess.run(
-                ["cua-driver", "call", "get_window_state"],
-                input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "query": "Zum Postfach"}),
-                capture_output=True, text=True, timeout=15
-            )
-            state4 = json.loads(res4.stdout)
-            if 'Zum Postfach' in state4.get('tree_markdown', ''):
-                return True
+            # Fallback: return False (caller should use CUA navigation)
+            logger.warning("CUA navigation konnte E-Mail-Adressen nicht erreichen")
+            return False
 
         except Exception as e:
             logger.error(f"CUA navigation failed: {e}")
