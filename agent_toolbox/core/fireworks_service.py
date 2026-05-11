@@ -1,56 +1,67 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — Fireworks Service (CDP Edition)          ║
+║              SINATOR AGENT-TOOLBOX — Fireworks Service                        ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  ⚠️  WICHTIG: CUA DRIVER IST IMMER DIE ERSTE WAHL!                           ║
+║  CDP NUR FÜR React Inputs und Target Management!                             ║
+║  Siehe command_registry.json für vollständige Dokumentation.                 ║
 ║                                                                              ║
 ║  ZWECK:                                                                      ║
 ║  Fireworks AI Account-Registrierung, Bestätigung, API-Key-Erstellung         ║
-║  via RAW CDP (kein Playwright Page-Objekt für Fireworks nötig).              ║
 ║                                                                              ║
-║  KOMPLETTER 20-PHASEN FLOW (Exakte Reihenfolge):                            ║
+║  CUA PRIMÄR — WANN WELCHE METHODE:                                           ║
+║  ────────────────────────────────────────────────────────────────────────── ║
+║  ✅ CUA click         → Buttons, Links, Checkboxes, MenuItems, PopUpButtons  ║
+║  ✅ CUA type_text     → Normale Inputs (NICHT React controlled!)             ║
+║  ✅ CUA set_value     → PopUpButton Menus                                    ║
+║  ✅ CUA get_window_state → AX-Tree scannen für Elemente                      ║
+║                                                                              ║
+║  ✅ CDP nativeInputValueSetter → React controlled inputs (Email, Passwort)   ║
+║  ✅ CDP evaluate           → JavaScript im Page-Kontext                      ║
+║  ✅ CDP Target             → Tab Management                                  ║
+║  ✅ CDP Cookie Inspection   → Cookies lesen/analysieren                      ║
+║                                                                              ║
+║  KOMPLETTER FLOW (CUA + CDP):                                                ║
 ║  ─────────────────────────────────────────────────────────────────────────── ║
 ║                                                                              ║
 ║  FIREWORKS SIGNUP FLOW:                                                     ║
-║  Phase 1:  Clear Fireworks Cookies + LocalStorage (nur Fireworks-Domain!)    ║
-║  Phase 2:  Navigate zu https://app.fireworks.ai/signup (NICHT /login!)       ║
-║  Phase 3:  Cookie Banner dismissen → "Accept All" per CDP coordinate click   ║
-║  Phase 4:  Email eingeben + "Next" Button klicken                            ║
-║  Phase 5:  Passwort twice inline eingeben + "Create Account" klicken         ║
-║            → Account erstellt, Email gesendet, URL wechselt zu /signup/verify║
+║  Phase 1:  Navigate zu https://app.fireworks.ai/signup                       ║
+║  Phase 2:  Cookie Banner dismissen (CUA)                                     ║
+║  Phase 3:  Email eingeben (CDP nativeInputValueSetter)                       ║
+║  Phase 4:  "Next" Button klicken (CUA)                                       ║
+║  Phase 5:  Passwort twice eingeben (CDP nativeInputValueSetter)              ║
+║  Phase 6:  "Create Account" klicken (CUA) → /signup/verify URL               ║
 ║                                                                              ║
-║  GMX OTP FLOW:                                                              ║
-║  Phase 6a: GMX Session-Cookies injizieren (data/gmx-cookies.json)           ║
-║  Phase 6b: GMX Homepage → "E-Mail" Header-Klick → Inbox                     ║
-║  Phase 7:  OTP-Email finden (fireworks.ai im Absender/Betreff)               ║
-║  Phase 8:  OTP-URL öffnen → Account verifiziert                             ║
+║  GMX OTP FLOW (GMX Extension):                                              ║
+║  Phase 7:  GMX Extension öffnen → Email finden                               ║
+║  Phase 8:  OTP-URL klicken → Account verifiziert                             ║
 ║                                                                              ║
 ║  FIREWORKS LOGIN + SETUP FLOW:                                              ║
-║  Phase 9:  Navigate zu /login → "Sign In" Button klicken                    ║
-║  Phase 10: "Email Login" (oder "Use Email Instead") klicken                 ║
-║  Phase 11: Email + Password inline eingeben + "Next" klicken                 ║
-║  Phase 12: FirstName + LastName eingeben (aus Alias extrahieren)            ║
-║  Phase 13: Checkbox "I agree to Terms of Service" per CDP click             ║
-║  Phase 14: "Continue" Button klicken                                        ║
+║  Phase 9:  Navigate zu /login → "Sign In" (CUA)                              ║
+║  Phase 10: "Email Login" klicken (CUA)                                       ║
+║  Phase 11: Email + Password (CDP nativeInputValueSetter)                     ║
+║  Phase 12: FirstName + LastName (CUA type_text)                              ║
+║  Phase 13: Terms checkbox (CUA click)                                        ║
+║  Phase 14: "Continue" (CUA click)                                            ║
 ║                                                                              ║
 ║  USE CASE + CREDITS FLOW:                                                   ║
-║  Phase 15: Checkbox "Flexible capacity for production" per CDP click        ║
-║  Phase 16: Checkbox "Conversational AI" per CDP click                       ║
-║  Phase 17: "Submit to get $5 Credits" Button klicken                        ║
-║  Phase 18: 15s Timeout + 5x2s Polling auf Credits-Aktivierung               ║
+║  Phase 15: Checkbox "Flexible capacity" (CUA click)                          ║
+║  Phase 16: Checkbox "Conversational AI" (CUA click)                          ║
+║  Phase 17: "Submit to get $5 Credits" (CUA click)                            ║
+║  Phase 18: 15s Timeout + Polling auf Credits                                 ║
 ║                                                                              ║
 ║  API KEY ERSTELLUNG:                                                        ║
-║  Phase 19: Navigate zu /settings/workspace/api-keys                         ║
-║  Phase 20: "Create API Key" → Name eingeben → "Generate Key" → Key kopieren  ║
+║  Phase 19: Settings → Users & Access → API Keys (CUA Navigation)            ║
+║  Phase 20: "Create API Key" PopUpButton → Menu → API Key (CUA)               ║
+║  Phase 21: Name eingeben (CDP nativeInputValueSetter)                        ║
+║  Phase 22: "Generate Key" (CUA) → Key aus AX-Tree extrahieren                ║
 ║                                                                              ║
 ║  FIREWORKS URLS:                                                            ║
 ║  • Signup:     https://app.fireworks.ai/signup (PRIMÄR — hat Email-Form!)    ║
 ║  • Login:      https://app.fireworks.ai/login (nur OAuth: Google/GitHub)     ║
-║  • Dashboard:  https://app.fireworks.ai/dashboard                            ║
-║  • Settings:   https://app.fireworks.ai/settings/workspace/api-keys          ║
-║                                                                              ║
-║  WICHTIG: /signup ist der EINZIGE Weg für Email-Registrierung!               ║
-║  /login hat NUR OAuth-Buttons (Google/GitHub/LinkedIn) — kein Email-Form!   ║
-║  Erst nach "Sign In" → "Email Login" erscheint das Email-Form auf /login.   ║
+║  • Dashboard:  https://app.fireworks.ai/account/home                         ║
+║  • Settings:   https://app.fireworks.ai/settings/users/api-keys              ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """

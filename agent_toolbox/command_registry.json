@@ -1,0 +1,89 @@
+{
+  "command_registry_version": "1.0.0",
+  "last_updated": "2026-05-11T00:00:00Z",
+  "commands": {
+    "CUA_PRIMARY": {
+      "description": "CUA Driver ist IMMER die erste Wahl für Interaktionen",
+      "usage": "cua-driver call click/get_window_state/type_text/set_value",
+      "when_to_use": "Für ALLE interaktiven Elemente: Buttons, Links, TextFields, Checkboxes, PopUpButtons, MenuItems",
+      "pre_flight": "SCAN vollständiges AX-Tree VOR jedem Klick",
+      "post_flight": "SCAN AX-Tree NACH jedem Klick um Ergebnis zu verifizieren",
+      "examples": [
+        "echo '{\"pid\": 123, \"window_id\": 456, \"element_index\": 42}' | cua-driver call click",
+        "echo '{\"pid\": 123, \"window_id\": 456}' | cua-driver call get_window_state"
+      ]
+    },
+    "CDP_FALLBACK": {
+      "description": "CDP nur als Notlösung wenn CUA versagt",
+      "usage": "python3 - << 'PYEOF' ... CDPClient ... PYEOF",
+      "when_to_use": [
+        "React controlled inputs (CUA type_text funktioniert NICHT)",
+        "JavaScript evaluation im Page-Kontext",
+        "Cookie extraction/inspection",
+        "Target management (neue Tabs)",
+        "Screenshot wenn CUA fails"
+      ],
+      "React_Input_Fix": "nativeInputValueSetter für React controlled inputs",
+      "code_snippet": "const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; nativeSetter.call(input, 'text'); input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));"
+    },
+    "GMX_EXTENSION": {
+      "description": "GMX MailCheck Chrome Extension für Email-Zugriff",
+      "usage": "GMX MailCheck Extension clicken → Email Panel öffnet sich",
+      "extension_id": "camnampocfohlcgbajligmemmabnljcm",
+      "popup_url": "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html",
+      "allowed_urls": ["navigator.gmx.net/mail?sid=...", "app.gmx.net", "3c-bap.gmx.net"],
+      "forbidden": ["lightmailer-bs.gmx.net", "webmailer.gmx.net URLs direkt navigieren"],
+      "email_ids": "Format: 18 Ziffern (z.B. 1778454231729833464)"
+    },
+    "PRE_FLIGHT_CHECK": {
+      "description": "OBLIGATORISCH vor JEDER Aktion",
+      "steps": [
+        "1. Vollständiges AX-Tree scannen (get_window_state)",
+        "2. Element mit element_index und Text identifizieren",
+        "3. Element existiert IM aktuellen Tree?",
+        "4. Dann KLICKEN oder TYPE oder SET_VALUE",
+        "5. ERNEUT scannen um Ergebnis zu verifizieren"
+      ],
+      "rule": "SCAN → KLICK → SCAN → Ergebnis verifizieren"
+    },
+    "FIREWORKS_FLOWS": {
+      "register": {
+        "step1": "Cookie Banner dismissen (CUA)",
+        "step2": "Email eingeben (CDP nativeInputValueSetter)",
+        "step3": "Password eingeben (CDP nativeInputValueSetter)",
+        "step4": "Create Account klicken (CUA)",
+        "step5": "OTP via GMX Extension lesen",
+        "step6": "Confirm Link klicken (CUA)"
+      },
+      "onboarding": {
+        "step1": "First/Last Name (CUA type_text)",
+        "step2": "Terms checkbox (CUA click)",
+        "step3": "2x Checkboxes (CUA click)",
+        "step4": "Submit button (CUA click)"
+      },
+      "api_key": {
+        "step1": "Settings → Users & Access → API Keys (CUA navigation)",
+        "step2": "Create API Key dropdown (CUA click)",
+        "step3": "API Key menu item (CUA click MenuItem)",
+        "step4": "Name eingeben (CDP nativeInputValueSetter)",
+        "step5": "Generate Key (CUA click)",
+        "step6": "Key aus AX-Tree oder DOM extrahieren"
+      }
+    }
+  },
+  "learnings": {
+    "CUA_type_text_fails_on_React": "CUA type_text funktioniert NICHT für React controlled inputs. Lösung: CDP mit nativeInputValueSetter.",
+    "MenuItems_need_full_scan": "Nach PopUpButton click muss MENU gescannt werden für MenuItems. MenuItems haben element_index die nach dem Click erscheinen.",
+    "AX_element_index_is_secondary_id": "AX element_index ist die SECONDARY ID im Format [X].tree_line Y ist NICHT element_index!",
+    "Close_dialog_and_retry": "Bei Missing ... Fehler: Dialog schliessen (Close button) und von vorne beginnen.",
+    "GMX_extension_not_lightmailer": "GMX Extension für Email nutzen, NICHT lightmailer URLs die 500er werfen.",
+    "set_value_for_PopUpButton": "PopUpButtons haben set_value Methode. Nach click 'This is a popup/select button' → set_value verwenden."
+  },
+  "chrome_config": {
+    "profile": "Profile 901 (Jeremy)",
+    "user_data_dir": "/Users/jeremy/Library/Application Support/Google Chrome",
+    "cdp_port": 9222,
+    "binary": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "start_command": "nohup \"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --user-data-dir=\"/Users/jeremy/Library/Application Support/Google Chrome\" --profile-directory=\"Profile 901\" --remote-debugging-port=9222 --no-first-run --no-default-browser-check > /tmp/chrome_sinator.log 2>&1 &"
+  }
+}

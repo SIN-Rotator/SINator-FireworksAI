@@ -156,3 +156,80 @@ const browser = await puppeteer.connect({ browserWSEndpoint: wsUrl });
 const pages = await browser.pages();
 const page = pages[0]; // Bereits eingeloggt in GMX!
 ```
+
+---
+
+## ❌ BANNED: CDP JavaScript für Button/Link/Checkbox Klicks
+
+```python
+# FALSCH — CDP evaluate für normale Klicks!
+await cdp.evaluate(sid, "document.querySelector('button').click()")
+```
+
+**Warum gebannt:** CUA driver kann ALLE interaktiven Elemente klicken. CDP evaluate:
+- Läuft im falschen Kontext (Extension statt Page)
+- Macht uns abhängig von DOM-Struktur-Änderungen
+- Ist langsamer als CUA für einfache Klicks
+
+**Regel:** CUA für Buttons, Links, Checkboxes, MenuItems, PopUpButtons.
+CDP NUR für: React Inputs, Tab Management, Cookie Inspection.
+
+---
+
+## ❌ BANNED: CUA type_text auf React Inputs
+
+```bash
+# FALSCH — CUA type_text funktioniert NICHT für React!
+echo '{"pid": 123, "window_id": 456, "element_index": 94}' | cua-driver call type_text '{"text": "mein-email@gmx.de"}'
+# Result: "Missing ... Name!" Fehler!
+```
+
+**Warum gebannt:** React controlled inputs nutzen `useState` und ignorieren CUA keyboard events. Der DOM-Wert wird gesetzt aber React-State bleibt LEER.
+
+**Fix:** CDP nativeInputValueSetter verwenden (siehe AGENTS.md Regel 3).
+
+---
+
+## ❌ BANNED: lightmailer-bs.gmx.net URLs
+
+```bash
+# FALSCH — HTTP 500 errors!
+curl https://lightmailer-bs.gmx.net/mailbody/123456789/false
+# → "Diese Seite funktioniert nicht HTTP ERROR 500"
+```
+
+**Warum gebannt:** lightmailer URLs werfen 500er errors. GMX Extension ist der einzig erlaubte Weg für Email-Zugriff.
+
+**Fix:** GMX MailCheck Extension öffnen → Email klicken (siehe AGENTS.md Regel 4).
+
+---
+
+## ❌ BANNED: Nach Klick NICHT scannen
+
+```bash
+# FALSCH — Klick ohne Scan nachher!
+echo '...' | cua-driver call click
+echo 'nächste aktion'  # FEHLER! Kein Scan dazwischen!
+```
+
+**Warum gebannt:** Nach jedem Klick kann sich die UI ändern (Modal öffnet, Fehler erscheint, Element verschiebt). Ohne Scan weiß man nicht ob der Klick funktioniert hat.
+
+**Fix:** Immer SCAN → KLICK → SCAN → Ergebnis verifizieren.
+
+---
+
+## ❌ BANNED: PopUpButton nicht mit set_value behandeln
+
+```bash
+# FALSCH — Nach Popup-Warnung wieder click verwenden!
+echo '...' | cua-driver call click
+# → "This is a popup/select button. Use set_value."
+# NOCHMAL click = FEHLER!
+```
+
+**Warum gebannt:** CUA warnt dass es ein PopUpButton ist. Bei erneutem click wird das falsche Element (Image/StaticText) geklickt.
+
+**Fix:** Nach "This is a popup/select button" → set_value verwenden:
+```bash
+echo '{"pid": 123, "window_id": 456, "element_index": 74, "value": "Create API Key"}' | cua-driver call set_value
+```

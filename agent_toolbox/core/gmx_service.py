@@ -1,36 +1,46 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — GMX Service (Main Frame Edition)       ║
+║              SINATOR AGENT-TOOLBOX — GMX Service                              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
+║  ⚠️  WICHTIG: CUA DRIVER IST IMMER DIE ERSTE WAHL!                           ║
+║  GMX Extension für Email-Zugriff — NICHT lightmailer URLs!                   ║
+║  Siehe command_registry.json für vollständige Dokumentation.                 ║
+║                                                                              ║
 ║  ZWECK:                                                                      ║
-║  GMX Session-Management, Alias-Erstellung/Löschung via RAW CDP WEBSOCKET     ║
+║  GMX Session-Management, Alias-Erstellung/Löschung, OTP-Lesen               ║
 ║                                                                              ║
-║  ARCHITEKTUR-ENTSCHEIDUNGEN:                                                 ║
-║  • Playwright crashed bei GMX Navigator SPA (frame detachment)              ║
-║  • Lösung: CDP websocket für Navigation + Main Frame Default Context         ║
-║  • Direct Navigation: bap.navigator.gmx.net/navigator/jump/to/mail_settings ║
-║    → redirect zu 3c-bap.gmx.net/mail/client/settings/signature/;jsessionid  ║
-║  • SPA Navigation: Click "E-Mail-Adressen" im Main Frame → history.pushState ║
-║  • Wicket ist im Main Frame verfügbar (typeof Wicket !== 'undefined' === true)║
-║  • Keine isolierten Welten oder iframe-Komplexität mehr nötig              ║
+║  CUA PRIMÄR FÜR:                                                            ║
+║  ✅ Navigation: GMX Homepage → E-Mail Header Link klicken                   ║
+║  ✅ Settings: "E-Mail-Adressen" Navigation                                   ║
+║  ✅ Buttons: Hinzufügen, OK, Löschen-Icons                                   ║
+║  ✅ Element-Scanning für Koordinaten und element_index                       ║
 ║                                                                              ║
-║  ALIAS LÖSCHEN (GMX SPA allEmailAddresses):                                 ║
-║  1. Navigiere zu allEmailAddresses                                            ║
-║  2. Force-Reveal: .js-template.is-hidden → remove .is-hidden + style.display  ║
-║  3. Delete-Icon: a[title="E-Mail-Adresse löschen"] klicken                 ║
-║  4. Confirm: OK-Button klicken                                               ║
+║  GMX EXTENSION (GMX MailCheck) — FÜR OTP/EMAIL:                             ║
+║  ────────────────────────────────────────────────────────────────────────── ║
+║  ✅ Extension ID: camnampocfohlcgbajligmemmabnljcm                           ║
+║  ✅ Popup: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/        ║
+║     mail-panel.html                                                          ║
+║  ✅ Email-Format: 18 Ziffern (z.B. 1778454231729833464)                     ║
+║  ✅ Extension öffnen via CUA auf angepinnt GMX Icon                          ║
+║                                                                              ║
+║  ❌ VERBOTEN:                                                                ║
+║  ❌ lightmailer-bs.gmx.net URLs (HTTP 500 errors!)                           ║
+║  ❌ webmailer.gmx.net direkt navigieren                                      ║
+║  ❌ CDP evaluate im Page-Kontext für GMX                                     ║
+║                                                                              ║
+║  ALIAS LÖSCHEN (GMX SPA):                                                   ║
+║  1. Settings → "E-Mail-Adressen" (CUA click)                                 ║
+║  2. Force-Reveal: .js-template.is-hidden                                     ║
+║  3. Delete-Icon via CUA klicken                                              ║
+║  4. Confirm: OK-Button (CUA)                                                 ║
 ║  5. Erfolg: "Ihr Eintrag wurde erfolgreich gelöscht"                        ║
 ║                                                                              ║
 ║  ALIAS ERSTELLEN:                                                            ║
-║  1. Input[name*="localPart"] mit Alias-Namen füllen                         ║
+║  1. Input[name*="localPart"] mit CDP nativeInputValueSetter                  ║
 ║  2. Events dispatch: input, change, blur                                     ║
-║  3. Hinzufügen-Button via CDP Input.dispatchMouseEvent klicken              ║
-║  4. Erfolg: Alias erscheint in .table_body-row + "wurde erfolgreich angelegt" ║
-║                                                                              ║
-║  OTP/EMAIL (webmailer):                                                      ║
-║  • Navigate zu thirdPartyFrame_mail iframe URL (webmailer.gmx.net)           ║
-║  • Inbox scraping im Main Frame                                              ║
+║  3. Hinzufügen-Button via CUA click                                          ║
+║  4. Erfolg: Alias erscheint in .table_body-row                               ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """

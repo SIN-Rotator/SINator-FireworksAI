@@ -1246,3 +1246,166 @@ GMX uses TWO URL formats for mail navigation:
 **Files:** `agent_toolbox/core/fireworks_service.py` (OTP polling navigation fix)
 
 *Letzte Aktualisierung: 2026-05-11 (GMX URL Discovery: SPA hash vs navigator direct URL)*
+
+---
+
+## 🚨🚨🚨 KRITISCHE REGELN (2026-05-11) — SOFORT BEFOLGEN!
+
+### REGEL 1: CUA DRIVER IST IMMER DIE ERSTE WAHL!
+
+**CUA kann ALLES anklicken. Du musst nur fähig genug sein!**
+
+```
+✅ CUA click     → Buttons, Links, Checkboxes, MenuItems, PopUpButtons
+✅ CUA type_text → Normale Inputs (NICHT React controlled!)
+✅ CUA set_value → PopUpButton Menus nach click
+✅ CUA get_window_state → AX-Tree scannen für Elemente
+✅ CUA press_key → Keyboard Events
+```
+
+**CDP NUR ALS NOTLÖSUNG wenn du die nicht 100% korrekt erfasst hast im VORFELD!**
+
+```
+✅ CDP nur für:
+  - React controlled inputs (CUA type_text funktioniert NICHT!)
+  - Target management (neue Tabs)
+  - Cookie inspection
+  - GMX Extension Email-Zugriff
+```
+
+### REGEL 2: PRE-FLIGHT CHECK VOR JEDEM CLICK!
+
+```
+SCAN → KLICK → SCAN → Ergebnis verifizieren
+
+1. Vollständiges AX-Tree scannen (get_window_state)
+2. Element mit element_index UND Text identifizieren
+3. Element existiert IM aktuellen Tree? → KLICKEN
+4. ERNEUT scannen um Ergebnis zu verifizieren
+5. Bei Fehler: Dialog schliessen → von vorne beginnen
+```
+
+### REGEL 3: REACT INPUT FIX (CRITICAL)
+
+CUA `type_text` funktioniert NICHT für React controlled inputs!
+
+**Lösung: CDP nativeInputValueSetter**
+
+```python
+# JavaScript für React controlled inputs:
+const nativeSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype, 'value').set;
+nativeSetter.call(input, 'mein-text');
+input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
+```
+
+### REGEL 4: GMX EXTENSION FÜR EMAIL — NICHT lightmailer!
+
+**GMX Chrome Extension (GMX MailCheck) ist der EINZIG erlaubte Weg für Email-Zugriff!**
+
+```
+✅ Extension ID: camnampocfohlcgbajligmemmabnljcm
+✅ Popup URL: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
+✅ Email IDs: 18 Ziffern (z.B. 1778454231729833464)
+```
+
+**VERBOTEN:**
+```
+❌ lightmailer-bs.gmx.net URLs (HTTP 500 errors!)
+❌ webmailer.gmx.net direkt navigieren
+❌ CDP evaluate im Page-Kontext für GMX
+```
+
+### REGEL 5: PopUpButton Menu Pattern
+
+1. Click auf PopUpButton → Menu erscheint
+2. MenuItems scannen (element_index nach dem Click!)
+3. MenuItem klicken
+
+```bash
+# Beispiel: "Create API Key" PopUpButton
+1. Click [74] AXPopUpButton "Create API Key"
+2. SCAN → MenuItems finden [129], [132]
+3. Click [129] AXMenuItem "API Key"
+```
+
+### REGEL 6: Nach jedem KLICK ERNEUT SCANNEN!
+
+```
+❌ FALSCH: Klick → langsung weiter (ohne scan)
+✅ RICHTIG:  Klick → SCAN → Ergebnis verifizieren → nächste Aktion
+```
+
+### REGEL 7: Bei Fehler Dialog schliessen und retry
+
+```
+"Missing API Key Name!" → Close button klicken → von vorne beginnen
+```
+
+---
+
+## 📁 COMMAND REGISTRY
+
+Siehe: `agent_toolbox/command_registry.json`
+
+Enthält alle Commands mit:
+- Beschreibung wann zu verwenden
+- Pre-Flight Check Anweisungen
+- Code Snippets für jede Methode
+- Learnings aus Fehlschlägen
+
+---
+
+## 🔧 FIREWORKS API KEY FLOW (CUA + CDP)
+
+### Schritt 1: Navigation zu API Keys
+```
+Settings → Users & Access → API Keys (CUA click Navigation)
+```
+
+### Schritt 2: Create API Key PopUpButton
+```
+Click [74] AXPopUpButton "Create API Key"
+SCAN → Menu erscheint mit [129] AXMenuItem "API Key"
+Click [129]
+SCAN → Dialog "Create API Key" mit [94] AXTextField und [96] AXButton
+```
+
+### Schritt 3: Name eingeben (CDP für React!)
+```
+CDP: nativeInputValueSetter auf TextField mit "blaze-scorpion-746"
+SCAN → "Missing ... Name!" verschwindet? → weiter
+```
+
+### Schritt 4: Generate Key (CUA)
+```
+Click [97] AXButton "Generate Key"
+SCAN → "Copy your API Key" Modal → Key finden
+```
+
+### Schritt 5: Key extrahieren
+```
+SCAN AX-Tree → finde "fw_4SyZoeCFsyn5L4hpT63LGV" in AXStaticText
+ODER: CDP evaluate für DOM Text
+```
+
+---
+
+## ⚠️ WAS FUNKTIONIERT (VERIFIED 2026-05-11)
+
+✅ CUA click auf alle interaktiven Elemente
+✅ CUA MenuItems nach PopUpButton click
+✅ CUA PopUpButton mit set_value
+✅ CDP nativeInputValueSetter für React inputs
+✅ GMX Extension für Email-Zugriff
+✅ Fireworks API Key Erstellung
+
+## ❌ WAS NICHT FUNKTIONIERT
+
+❌ CUA type_text auf React controlled inputs → Wert wird nicht gesetzt
+❌ lightmailer-bs.gmx.net URLs → HTTP 500
+❌ CDP evaluate im extension context (nur Page-Kontext!)
+
+---
+
+*Alle Learnings in command_registry.json und Code-Dokumentation.*
