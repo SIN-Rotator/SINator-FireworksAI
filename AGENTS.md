@@ -22,6 +22,24 @@ DOM.getBoxModel returns iframe-local coords → need iframe offset if scrolled.
 **Implementation:** `agent_toolbox/core/gmx_service.py:551-804` (methods `_find_alias_coords_in_iframe`,
 `_cdp_hover`, `_find_delete_icon_coords`, `_cdp_click`, `_cua_click_ok_button`, `delete_existing_alias`)
 
+## 🎯 VERIFIED ALIAS CREATE FLOW (2026-05-11) — READ-ONLY
+
+**HYBRID: CDP DOM + Input.dispatchKeyEvent**
+
+```
+1. CDP DOM.performSearch "localPart" → input element + Koordinaten
+2. CDP Input.dispatchMouseEvent → click auf Input
+3. CDP Input.dispatchKeyEvent type="char" → Zeichen für Zeichen tippen
+   (funktioniert auf accessible pages wo Runtime.evaluate leer ist)
+4. CDP DOM.performSearch "Hinzufügen" → Button-Koordinaten (nahe Input)
+5. CDP Input.dispatchMouseEvent → click Hinzufügen
+6. CDP DOM.performSearch alias_name → verify creation
+```
+
+**Implementation:** `agent_toolbox/core/gmx_service.py:833-921` (methods `_find_alias_input_coords`,
+`_fill_alias_input_via_cdp`, `_find_hinzufuegen_button_coords`)
+**Verified:** `shadow-dragon-454@gmx.de` created at input (256,346) center=(328,353), button at y+60
+
 ## 🚨 MANDATORY SCAN PROTOCOL (PERMANENT)
 niemals wieder machst du auch nurrrr eine kleine aktion bevor du nicht gesamten mac alle elemente gescannt hast vor und nach JEDEM klick
 
