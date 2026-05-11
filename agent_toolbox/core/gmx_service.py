@@ -16,11 +16,37 @@
 ║  ✅ Alias-Erstellungs-Input + Button                                         ║
 ║                                                                              ║
 ║  CDP NUR FÜR HOVER + DELETE-ICON (accessible mode workaround):              ║
-║  ✅ DOM.performSearch → Alias-Koordinaten im 3c.gmx.net Iframe finden       ║
+║  ✅ DOM.performSearch im OOPIF (child session!) → Alias-Koordinaten         ║
 ║  ✅ Input.dispatchMouseEvent mouseMoved → Hover über Alias-Row              ║
 ║  ✅ DOM.performSearch → delete icon title="E-Mail-Adresse löschen"          ║
 ║  ✅ Input.dispatchMouseEvent → Klick auf delete icon                        ║
 ║  ❌ Runtime.evaluate auf GMX accessible pages = leeres {}                   ║
+║                                                                              ║
+║  OOPIF FIX (Bug-Report 2026-05-11):                                          ║
+║  Der frühere Code hat DOM.performSearch + DOM.getBoxModel auf der           ║
+║  TOP-Session gemacht — das findet die 3c.gmx.net Iframe-Inhalte NICHT,      ║
+║  weil 3c.gmx.net seit Chrome 67 (Site Isolation) als Out-Of-Process-Iframe  ║
+║  in einem eigenen Renderer-Prozess mit eigener DOM-Agent-Session läuft.    ║
+║                                                                              ║
+║  Symptome des alten Codes:                                                  ║
+║    • resultCount=0 obwohl Alias sichtbar im Iframe vorhanden                ║
+║    • getBoxModel crasht mit stale/null NodeIds                              ║
+║    • Fallback auf hartcodierte (350,340) klickt ins Leere                   ║
+║    • "Verifikation" via resultCount>0 = self-confirming bias (eigener      ║
+║      Tipp-Input wurde als Erfolg interpretiert)                             ║
+║                                                                              ║
+║  Korrektur (siehe `_resolve_gmx_oopif` + alle `_find_*` Methoden unten):    ║
+║    1. `client.resolve_oopif("3c.gmx.net", "iframe[src*='3c.gmx.net']")`     ║
+║       → liefert OopifContext mit child_session_id + offset_x/offset_y.      ║
+║    2. DOM.performSearch + DOM.getBoxModel in der CHILD-Session              ║
+║       → liefert iframe-lokale Koordinaten.                                  ║
+║    3. `oopif.to_top(local_x, local_y)` → Top-Viewport-Koordinaten.          ║
+║    4. Input.dispatchMouseEvent auf der PARENT-Session mit Top-Koords.       ║
+║                                                                              ║
+║  KEINE hartcodierten Koordinaten mehr — wenn Iframe nicht auflösbar:       ║
+║  die Methoden geben None zurück und der Caller meldet einen sauberen        ║
+║  Fehler (nicht ins Leere klicken und hinterher behaupten es hätte           ║
+║  geklappt).                                                                  ║
 ║                                                                              ║
 ║  GMX EXTENSION (GMX MailCheck) — FÜR OTP/EMAIL:                             ║
 ║  ✅ Extension ID: camnampocfohlcgbajligmemmabnljcm                           ║
@@ -59,7 +85,12 @@ from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 import httpx
 
-from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, get_page_target
+from agent_toolbox.core.cdp_client import (
+    CDPClient,
+    OopifContext,
+    get_browser_ws_endpoint,
+    get_page_target,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -585,58 +616,124 @@ class GmxService:
         })
         return info['node'].get('frameId')
 
+    async def _resolve_gmx_oopif(
+        self, client: CDPClient, top_session_id: str
+    ) -> Optional[OopifContext]:
+        """
+        Löst den 3c.gmx.net Cross-Origin-Iframe für die aktuelle GMX-Settings-Seite auf.
+
+        Liefert einen OopifContext mit:
+          • child_session_id  — eigene CDP-Session, attached an das Iframe-Target.
+                                Hier laufen DOM.performSearch / getBoxModel mit
+                                iframe-lokalen NodeIds und iframe-lokalen Koords.
+          • parent_session_id — die übergebene Top-Session.
+          • offset_x/offset_y/width/height — Bounding-Box des <iframe>-Elements im
+                                Parent-Viewport. `oopif.to_top(lx, ly)` wandelt
+                                iframe-lokale in Top-Viewport-Koordinaten.
+
+        Returns None falls das Iframe (noch) nicht im Tab existiert (z.B. weil wir
+        nicht auf der Email-Adressen-Settings-Seite sind).
+
+        ⚠️ STALENESS-WARNUNG: NodeIds und der Viewport-Offset sind FLÜCHTIG.
+        Diese Methode wird VOR JEDER Koordinaten-basierten Operation NEU aufgerufen.
+        Niemals OopifContext zwischen High-Level-Schritten cachen.
+
+        Hintergrund: siehe cdp_client.py header "OOPIF SUPPORT".
+        """
+        return await client.resolve_oopif(
+            parent_session_id=top_session_id,
+            url_substring="3c.gmx.net",
+            iframe_selector="iframe[src*='3c.gmx.net']",
+            enable_dom=True,
+        )
+
     async def _find_alias_coords_in_iframe(
         self, client: CDPClient, session_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Findet den Alias (nicht opensin@gmx.de) via DOM.performSearch und gibt Koordinaten zurück.
-        
-        Returns: {text: str, x: float, y: float, w: float, h: float} oder None
         """
-        search = await client.send_to_session(session_id, "DOM.performSearch", {
-            "query": "@gmx.de",
-            "includeUserAgentShadowDOM": True
-        })
-        if search['resultCount'] == 0:
+        Findet einen Alias-Eintrag (irgendein "xyz@gmx.de" außer "opensin@gmx.de")
+        im 3c.gmx.net OOPIF und liefert TOP-VIEWPORT-Koordinaten zurück, die direkt
+        an `Input.dispatchMouseEvent` auf der Parent-Session gegeben werden können.
+
+        OOPIF-Flow:
+          1. Resolve OOPIF → child_session + viewport-offset.
+          2. DOM.performSearch("@gmx.de") in der CHILD-SESSION (nicht top!).
+             Im top-Frame hätte die alte Implementierung hier resultCount=0
+             bekommen, weil der Iframe in einem eigenen Renderer-Prozess lebt.
+          3. Pro Treffer: DOM.getBoxModel (in child-session) liefert
+             iframe-lokale Koordinaten.
+          4. `oopif.to_top(local_x, local_y)` → Top-Viewport-Koords.
+          5. Sanity: liegt die transformierte Koordinate im Iframe-Rechteck?
+
+        Returns:
+            {text, x, y, w, h, nodeId} — x/y ist die TOP-LEFT-Ecke des Text-Nodes
+            in TOP-VIEWPORT-Koords. nodeId gilt in der child_session (nur als
+            informational, NICHT in einer anderen Session wiederverwenden).
+            None: kein Alias gefunden ODER Iframe nicht auflösbar.
+        """
+        oopif = await self._resolve_gmx_oopif(client, session_id)
+        if not oopif:
+            logger.warning(
+                "_find_alias_coords_in_iframe: 3c.gmx.net OOPIF nicht auflösbar "
+                "— sind wir auf der Email-Adressen-Settings-Seite?"
+            )
             return None
 
-        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
-            "searchId": search['searchId'],
-            "fromIndex": 0,
-            "toIndex": search['resultCount']
-        })
+        node_ids = await client.dom_search(
+            oopif.child_session_id, "@gmx.de", include_shadow=True, max_results=200
+        )
+        if not node_ids:
+            logger.info("Keine '@gmx.de' Text-Treffer im 3c.gmx.net Iframe-DOM")
+            return None
 
-        for nid in nodes['nodeIds']:
-            try:
-                info = await client.send_to_session(session_id, "DOM.describeNode", {
-                    "nodeId": nid, "depth": 1
-                })
-                val = (info['node'].get('nodeValue', '') or '').strip()
-                tag = info['node'].get('nodeName', '')
-                # Skip JSON data, script content, main email
-                if not val or val.startswith('{') or val == 'opensin@gmx.de' or tag != '#text':
-                    continue
-                if '@gmx.de' not in val:
-                    continue
-
-                box = await client.send_to_session(session_id, "DOM.getBoxModel", {
-                    "nodeId": nid
-                })
-                c = box['model']['content']
-                w = c[2] - c[0]
-                h = c[7] - c[1]
-                if w < 30 or h < 8:
-                    continue
-
-                return {
-                    "text": val,
-                    "x": c[0],
-                    "y": c[1],
-                    "w": w,
-                    "h": h,
-                    "nodeId": nid
-                }
-            except Exception:
+        for nid in node_ids:
+            node = await client.node_describe(oopif.child_session_id, nid)
+            if not node:
                 continue
+            val = (node.get('nodeValue', '') or '').strip()
+            tag = node.get('nodeName', '')
+            # Ausschluss-Filter: JSON-Datenfragmente, Skript-Strings, das Haupt-Konto,
+            # nicht-Text-Nodes.
+            if not val or val.startswith('{') or val == 'opensin@gmx.de' or tag != '#text':
+                continue
+            if '@gmx.de' not in val:
+                continue
+
+            box = await client.node_content_box(oopif.child_session_id, nid)
+            if not box:
+                continue
+            local_x, local_y, w, h = box
+            if w < 30 or h < 8:
+                continue
+
+            top_x, top_y = oopif.to_top(local_x, local_y)
+
+            # Sanity: der Mittelpunkt sollte im Iframe-Rechteck liegen — falls
+            # nicht, ist entweder unser Offset stale oder das Element gehört
+            # zu einem anderen (verschachtelten) Iframe.
+            if not oopif.contains(top_x + w / 2, top_y + h / 2):
+                logger.debug(
+                    f"Alias-Kandidat '{val}' top=({top_x:.0f},{top_y:.0f}) "
+                    f"liegt außerhalb iframe rect "
+                    f"({oopif.offset_x:.0f},{oopif.offset_y:.0f},"
+                    f"{oopif.width:.0f}x{oopif.height:.0f}) — übersprungen"
+                )
+                continue
+
+            logger.info(
+                f"Alias gefunden: '{val}' local=({local_x:.0f},{local_y:.0f}) "
+                f"-> top=({top_x:.0f},{top_y:.0f}) {w:.0f}x{h:.0f}"
+            )
+            return {
+                "text": val,
+                "x": top_x,
+                "y": top_y,
+                "w": w,
+                "h": h,
+                "nodeId": nid,
+            }
+
+        logger.info("Kein passender Alias-Text-Node im Iframe gefunden")
         return None
 
     async def _cdp_hover(self, client: CDPClient, session_id: str, x: float, y: float):
@@ -660,55 +757,70 @@ class GmxService:
     async def _find_delete_icon_coords(
         self, client: CDPClient, session_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Sucht nach dem Delete-Icon (title='E-Mail-Adresse löschen') VOR oder NACH hover."""
+        """
+        Sucht das Delete-Icon (title='E-Mail-Adresse löschen') im 3c.gmx.net OOPIF
+        und liefert TOP-VIEWPORT-Klick-Koordinaten (Mittelpunkt des Icons).
+
+        Voraussetzung: vorher Hover über die Alias-Row, sonst rendert das Icon nicht.
+
+        OOPIF-Flow (siehe _find_alias_coords_in_iframe für Details):
+          • performSearch + describeNode + getBoxModel laufen alle in der
+            child_session des Iframe-Targets.
+          • Iframe-lokale Mittelpunkt-Koords werden via oopif.to_top()
+            in Top-Viewport umgerechnet.
+        """
+        oopif = await self._resolve_gmx_oopif(client, session_id)
+        if not oopif:
+            logger.warning("_find_delete_icon_coords: OOPIF nicht auflösbar")
+            return None
+
+        # Mehrere Such-Queries: Title kann je nach UI-Sprache/Version variieren.
+        # Wir akzeptieren jeden Treffer, dessen `title`-Attribut "lösch" enthält.
         for query in ["E-Mail-Adresse löschen", "löschen", "Löschen"]:
-            search = await client.send_to_session(session_id, "DOM.performSearch", {
-                "query": query,
-                "includeUserAgentShadowDOM": True
-            })
-            if search['resultCount'] == 0:
+            node_ids = await client.dom_search(
+                oopif.child_session_id, query, include_shadow=True, max_results=20
+            )
+            if not node_ids:
                 continue
 
-            nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
-                "searchId": search['searchId'],
-                "fromIndex": 0,
-                "toIndex": min(search['resultCount'], 10)
-            })
-
-            for nid in nodes['nodeIds']:
-                try:
-                    info = await client.send_to_session(session_id, "DOM.describeNode", {
-                        "nodeId": nid, "depth": 2
-                    })
-                    node = info['node']
-                    attrs = node.get('attributes', [])
-                    attr_dict = {}
-                    for j in range(0, len(attrs) - 1, 2):
-                        attr_dict[attrs[j]] = attrs[j + 1]
-                    title = attr_dict.get('title', '')
-
-                    if 'lösch' not in title.lower():
-                        continue
-
-                    box = await client.send_to_session(session_id, "DOM.getBoxModel", {
-                        "nodeId": nid
-                    })
-                    c = box['model']['content']
-                    w = c[2] - c[0]
-                    h = c[7] - c[1]
-                    if w < 5 or h < 5:
-                        continue
-
-                    return {
-                        "x": c[0] + w / 2,
-                        "y": c[1] + h / 2,
-                        "w": w,
-                        "h": h,
-                        "title": title,
-                        "nodeId": nid
-                    }
-                except Exception:
+            for nid in node_ids:
+                node = await client.node_describe(oopif.child_session_id, nid, depth=2)
+                if not node:
                     continue
+                attrs = CDPClient.node_attrs_to_dict(node)
+                title = attrs.get('title', '')
+                if 'lösch' not in title.lower():
+                    continue
+
+                box = await client.node_content_box(oopif.child_session_id, nid)
+                if not box:
+                    continue
+                local_x, local_y, w, h = box
+                if w < 5 or h < 5:
+                    continue
+
+                # Mittelpunkt iframe-lokal -> top-viewport
+                top_x, top_y = oopif.to_top(local_x + w / 2, local_y + h / 2)
+
+                if not oopif.contains(top_x, top_y):
+                    logger.debug(
+                        f"Delete-Icon center ({top_x:.0f},{top_y:.0f}) liegt "
+                        f"außerhalb iframe rect — übersprungen"
+                    )
+                    continue
+
+                logger.info(
+                    f"Delete-Icon gefunden: title='{title}' "
+                    f"local=({local_x:.0f},{local_y:.0f}) -> top=({top_x:.0f},{top_y:.0f})"
+                )
+                return {
+                    "x": top_x,
+                    "y": top_y,
+                    "w": w,
+                    "h": h,
+                    "title": title,
+                    "nodeId": nid,
+                }
         return None
 
     async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
@@ -820,9 +932,23 @@ class GmxService:
                 if cua_pid and cua_wid:
                     ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
                     if ok_clicked:
-                        await asyncio.sleep(3)
-                        logger.info(f"✅ Alias gelöscht: {alias_text}")
-                        return {"status": "success", "deleted": True, "alias": alias_text}
+                        # Ehrliche Verifikation: ist der Alias TATSÄCHLICH weg?
+                        # alias_text ist hier "name@gmx.de" (mit Domain).
+                        verified = await self._verify_alias_in_iframe(
+                            client, session_id, alias_text,
+                            present=False, max_wait_s=8.0,
+                        )
+                        if verified:
+                            logger.info(f"Alias gelöscht + server-verified: {alias_text}")
+                            return {"status": "success", "deleted": True, "alias": alias_text}
+                        logger.warning(
+                            f"OK-Klick ausgeführt, aber Alias '{alias_text}' "
+                            f"ist immer noch in der Iframe-Liste sichtbar"
+                        )
+                        return {
+                            "status": "error", "deleted": False, "alias": alias_text,
+                            "error": "Löschung nicht in Iframe-Liste reflektiert (Timeout)",
+                        }
                     else:
                         return {"status": "error", "deleted": False, "alias": alias_text,
                                 "error": "OK-Button nicht gefunden im Dialog"}
@@ -846,15 +972,48 @@ class GmxService:
     # ═══════════════════════════════════════════════════════════════════════════════
 
     async def _find_alias_input_coords(self, client: CDPClient, session_id: str) -> Optional[Dict[str, Any]]:
-        """Findet und fokussiert das Alias-Input via CUA AXTextField.
-        
-        Cross-origin iframe (3c.gmx.net) verhindert CDP DOM box model.
-        CUA click auf AXTextField fokussiert das Input für CDP key events.
-        
-        Returns: {"x": center_x, "y": center_y} für Button-Positions-Berechnung
         """
+        Findet und fokussiert das Alias-Eingabe-Textfeld.
+
+        Zwei-Stufen-Strategie:
+
+          STUFE 1 — CDP-OOPIF-Lookup (primär):
+            Im 3c.gmx.net Iframe nach <input type="email" name="alias">,
+            <input ...placeholder*="alias"...> oder sichtbarem Label-Text
+            "Neue E-Mail-Adresse" suchen. Bei Treffer: echte iframe-lokale
+            Koordinaten → top-viewport-Center → Input.dispatchMouseEvent
+            zum Fokussieren. Liefert ECHTE Koordinaten für die spätere
+            Button-Proximity-Suche.
+
+          STUFE 2 — CUA AXTextField Fallback:
+            Falls OOPIF nicht auflösbar (z.B. Iframe noch nicht da) ODER
+            kein Input-Match: nutze cua-driver auf der macOS AX-Hierarchie.
+            CUA klickt das AXTextField → Fokus gesetzt. Für Button-Proximity
+            holen wir HINTERHER per OOPIF die echten Koordinaten — KEINE
+            hartcodierten (350,340) mehr.
+
+        Returns:
+            {"x": center_x, "y": center_y, "via": "cdp"|"cua", "cua_element": int?}
+            x/y in TOP-VIEWPORT-Koords (für späteren Proximity-Check des
+            Hinzufügen-Buttons). None bei totalem Fehlschlag.
+        """
+        # ── STUFE 1: CDP OOPIF ─────────────────────────────────────────────
+        oopif = await self._resolve_gmx_oopif(client, session_id)
+        if oopif:
+            cdp_coords = await self._find_alias_input_via_cdp(client, oopif)
+            if cdp_coords:
+                # Input mit echtem Klick fokussieren (nicht hartcodiert).
+                await self._cdp_click(client, session_id, cdp_coords['x'], cdp_coords['y'])
+                await asyncio.sleep(0.4)
+                logger.info(
+                    f"Alias-Input via CDP gefunden + fokussiert "
+                    f"({cdp_coords['x']:.0f},{cdp_coords['y']:.0f})"
+                )
+                return {**cdp_coords, "via": "cdp"}
+
+        # ── STUFE 2: CUA Fallback ──────────────────────────────────────────
         import subprocess, json, re as _re
-        
+
         res = subprocess.run(
             ["cua-driver", "call", "list_windows"],
             capture_output=True, text=True, timeout=10,
@@ -869,11 +1028,11 @@ class GmxService:
                 cua_pid = w['pid']
                 cua_wid = w['window_id']
                 break
-        
+
         if not cua_pid:
             logger.warning("GMX window nicht via CUA gefunden")
             return None
-        
+
         r = subprocess.run(
             ["cua-driver", "call", "get_window_state"],
             capture_output=True, text=True, timeout=15,
@@ -881,9 +1040,9 @@ class GmxService:
         )
         state = json.loads(r.stdout)
         lines = state.get('tree_markdown', '')
-        
-        # Find AXTextField (anonymous or labeled) in the page content area
-        # The alias input is typically unnamed, after "Fun- und Alias-Adressen"
+
+        # CUA-Klick auf das richtige AXTextField (anonymous, nach "Fun- und Alias-Adressen")
+        clicked_element = None
         found_fun = False
         for line in lines.split('\n'):
             s = line.strip()
@@ -893,72 +1052,312 @@ class GmxService:
             if found_fun and 'AXTextField' in s:
                 m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
                 if m:
-                    el = int(m.group(1))
-                    logger.info(f"CUA click input [{el}]")
-                    subprocess.run(
-                        ["cua-driver", "call", "click"],
-                        capture_output=True, text=True, timeout=10,
-                        input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "element_index": el})
+                    clicked_element = int(m.group(1))
+                    break
+        if clicked_element is None:
+            # Fallback: irgendein AXTextField das weder Adress- noch Suchleiste ist
+            for line in lines.split('\n'):
+                s = line.strip()
+                if 'AXTextField' in s and 'Adress' not in s and 'Suchleiste' not in s:
+                    m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
+                    if m:
+                        clicked_element = int(m.group(1))
+                        break
+
+        if clicked_element is None:
+            logger.warning("Kein passendes AXTextField in CUA-Tree gefunden")
+            return None
+
+        logger.info(f"CUA click input [{clicked_element}]")
+        subprocess.run(
+            ["cua-driver", "call", "click"],
+            capture_output=True, text=True, timeout=10,
+            input=json.dumps({
+                "pid": cua_pid, "window_id": cua_wid, "element_index": clicked_element,
+            })
+        )
+        await asyncio.sleep(0.5)
+
+        # Jetzt — fokus ist gesetzt — NOCHMAL OOPIF-Lookup für echte Koords.
+        # Das Iframe ist nach dem Klick möglicherweise lebendiger (Layout-Reflow).
+        oopif2 = await self._resolve_gmx_oopif(client, session_id)
+        if oopif2:
+            cdp_coords2 = await self._find_alias_input_via_cdp(client, oopif2)
+            if cdp_coords2:
+                logger.info(
+                    f"Echte Input-Koords nach CUA-Click bestimmt: "
+                    f"({cdp_coords2['x']:.0f},{cdp_coords2['y']:.0f})"
+                )
+                return {**cdp_coords2, "via": "cua+cdp", "cua_element": clicked_element}
+
+        # Letzter Resort: keine echten Koords, aber Input ist fokussiert.
+        # Caller MUSS damit umgehen können (z.B. `_find_hinzufuegen_button_coords`
+        # ohne y-Proximity-Check und der Fallback-Button bei `input_y + 95`).
+        # KEINE 350/340 zurückgeben — das hat in der Vergangenheit zu Klicks
+        # ins Leere geführt. Stattdessen: None für x/y → Caller-Logik muss
+        # ohne Proximity arbeiten.
+        logger.warning(
+            "CUA-Fokus gesetzt, aber OOPIF-Koords nicht ermittelbar — "
+            "Hinzufügen-Button wird ohne Proximity-Filter gesucht"
+        )
+        return {"x": None, "y": None, "via": "cua_only", "cua_element": clicked_element}
+
+    async def _find_alias_input_via_cdp(
+        self, client: CDPClient, oopif: OopifContext
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Sucht im 3c.gmx.net OOPIF nach dem Alias-Input-Element und liefert
+        Center-Koordinaten in TOP-VIEWPORT-Koords.
+
+        Strategie (mehrere Selektoren probieren, das erste sichtbare Match nehmen):
+          1. CSS-Selektoren: input[name*='alias'], input[type='email'][placeholder],
+             #aliasInput, input.alias
+          2. Per Label-Heuristik: Text-Node "Neue E-Mail-Adresse" → benachbartes input
+
+        Returns:
+            {"x": center_x_top, "y": center_y_top, "nodeId": int} oder None.
+        """
+        # Strategie 1: CSS-Selektoren via DOM.querySelector auf dem iframe-document
+        try:
+            doc = await client.send_to_session(oopif.child_session_id, "DOM.getDocument", {"depth": 1})
+            root_id = doc.get("root", {}).get("nodeId")
+        except Exception as e:
+            logger.debug(f"DOM.getDocument auf child session fehlgeschlagen: {e}")
+            root_id = None
+
+        selectors = [
+            "input[name*='alias' i]",
+            "input[id*='alias' i]",
+            "input[placeholder*='alias' i]",
+            "input[placeholder*='E-Mail' i][type='text']",
+            "input[type='email']:not([readonly])",
+        ]
+        if root_id:
+            for sel in selectors:
+                try:
+                    qs = await client.send_to_session(
+                        oopif.child_session_id, "DOM.querySelector",
+                        {"nodeId": root_id, "selector": sel},
                     )
-                    await asyncio.sleep(0.5)
-                    # Return estimated coordinates for button position calculation
-                    return {"x": 350, "y": 340, "cua_element": el}
-        
-        # Fallback: try all AXTextFields
-        for line in lines.split('\n'):
-            s = line.strip()
-            if 'AXTextField' in s and 'Adress' not in s and 'Suchleiste' not in s:
-                m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
-                if m:
-                    el = int(m.group(1))
-                    logger.info(f"CUA click fallback input [{el}]")
-                    subprocess.run(
-                        ["cua-driver", "call", "click"],
-                        capture_output=True, text=True, timeout=10,
-                        input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "element_index": el})
-                    )
-                    await asyncio.sleep(0.5)
-                    return {"x": 350, "y": 340, "cua_element": el}
-        
+                    nid = qs.get("nodeId", 0)
+                    if not nid:
+                        continue
+                    box = await client.node_content_box(oopif.child_session_id, nid)
+                    if not box:
+                        continue
+                    lx, ly, w, h = box
+                    if w < 30 or h < 10:
+                        continue
+                    top_x, top_y = oopif.to_top(lx + w / 2, ly + h / 2)
+                    if oopif.contains(top_x, top_y):
+                        return {"x": top_x, "y": top_y, "nodeId": nid}
+                except Exception as e:
+                    logger.debug(f"querySelector '{sel}' fehlgeschlagen: {e}")
+                    continue
+
+        # Strategie 2: Label-Heuristik — Text "Neue E-Mail-Adresse" finden,
+        # dann auf das nächste <input> in der Geschwister-/Eltern-Kette.
+        node_ids = await client.dom_search(
+            oopif.child_session_id, "Neue E-Mail-Adresse",
+            include_shadow=True, max_results=20,
+        )
+        for nid in node_ids:
+            node = await client.node_describe(oopif.child_session_id, nid, depth=3)
+            if not node:
+                continue
+            # Walk up to parent, then look for <input> child via querySelector
+            parent_id = node.get("parentId")
+            if not parent_id:
+                continue
+            try:
+                qs = await client.send_to_session(
+                    oopif.child_session_id, "DOM.querySelector",
+                    {"nodeId": parent_id, "selector": "input"},
+                )
+                inp_nid = qs.get("nodeId", 0)
+                if not inp_nid:
+                    continue
+                box = await client.node_content_box(oopif.child_session_id, inp_nid)
+                if not box:
+                    continue
+                lx, ly, w, h = box
+                if w < 30 or h < 10:
+                    continue
+                top_x, top_y = oopif.to_top(lx + w / 2, ly + h / 2)
+                if oopif.contains(top_x, top_y):
+                    return {"x": top_x, "y": top_y, "nodeId": inp_nid}
+            except Exception:
+                continue
+
         return None
 
     async def _find_hinzufuegen_button_coords(
-        self, client: CDPClient, session_id: str, input_y: float
+        self, client: CDPClient, session_id: str, input_y: Optional[float]
     ) -> Optional[Dict[str, Any]]:
-        """Findet den Hinzufügen-Button nahe dem Input via DOM.performSearch."""
-        search = await client.send_to_session(session_id, "DOM.performSearch", {
-            "query": "Hinzufügen", "includeUserAgentShadowDOM": True
-        })
-        if search['resultCount'] == 0:
+        """
+        Findet den "Hinzufügen"-Button im 3c.gmx.net OOPIF und liefert
+        TOP-VIEWPORT-Klick-Koordinaten (Button-Center).
+
+        Args:
+            input_y: Top-Viewport-Y des Input-Felds zur Proximity-Filterung
+                     (es kann mehrere "Hinzufügen"-Treffer geben — wir wollen den,
+                     der nahe am Alias-Input liegt, nicht den von "Filter
+                     hinzufügen" am Seitenrand). Wenn None: kein Filter
+                     (z.B. wenn _find_alias_input_coords keine Koords liefern konnte).
+
+        OOPIF-Flow:
+          • performSearch in child_session findet die Text-Nodes "Hinzufügen"
+            (in Top-Session: 0 Treffer wegen Site-Isolation).
+          • Pro Treffer: zum Parent-Element gehen (das ist der klickbare
+            Button/Span), getBoxModel in child_session → iframe-lokale Box.
+          • Proximity-Check geschieht in TOP-VIEWPORT-Koords (nach Transform).
+        """
+        oopif = await self._resolve_gmx_oopif(client, session_id)
+        if not oopif:
+            logger.warning("_find_hinzufuegen_button_coords: OOPIF nicht auflösbar")
             return None
 
-        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
-            "searchId": search['searchId'], "fromIndex": 0,
-            "toIndex": search['resultCount']
-        })
-        for nid in nodes['nodeIds']:
-            try:
-                info = await client.send_to_session(session_id, "DOM.describeNode", {
-                    "nodeId": nid, "depth": 1
-                })
-                node = info['node']
-                if node.get('nodeType') != 3:
-                    continue
-                val = node.get('nodeValue', '') or ''
-                if 'Hinzufügen' not in val:
-                    continue
-                pid = node.get('parentId')
-                if not pid:
-                    continue
-                box = await client.send_to_session(session_id, "DOM.getBoxModel", {"nodeId": pid})
-                c = box['model']['content']
-                btn_y = c[1] + (c[7]-c[1])/2
-                # Take the button closest to the input
-                if abs(btn_y - input_y) < 150:
-                    return {"x": c[0] + (c[2]-c[0])/2, "y": btn_y}
-            except Exception:
+        node_ids = await client.dom_search(
+            oopif.child_session_id, "Hinzufügen", include_shadow=True, max_results=40
+        )
+        if not node_ids:
+            return None
+
+        candidates: list[Dict[str, Any]] = []
+        for nid in node_ids:
+            node = await client.node_describe(oopif.child_session_id, nid, depth=1)
+            if not node:
                 continue
+            if node.get('nodeType') != 3:  # nur Text-Nodes
+                continue
+            val = node.get('nodeValue', '') or ''
+            if 'Hinzufügen' not in val:
+                continue
+            parent_id = node.get('parentId')
+            if not parent_id:
+                continue
+            box = await client.node_content_box(oopif.child_session_id, parent_id)
+            if not box:
+                continue
+            lx, ly, w, h = box
+            top_cx, top_cy = oopif.to_top(lx + w / 2, ly + h / 2)
+            if not oopif.contains(top_cx, top_cy):
+                continue
+            candidates.append({"x": top_cx, "y": top_cy, "w": w, "h": h, "label": val.strip()})
+
+        if not candidates:
+            return None
+
+        if input_y is None:
+            # Ohne Input-Y: ersten plausiblen Kandidaten zurückgeben.
+            chosen = candidates[0]
+            logger.info(
+                f"Hinzufügen-Button ohne Proximity-Filter gewählt: "
+                f"top=({chosen['x']:.0f},{chosen['y']:.0f})"
+            )
+            return chosen
+
+        # Mit Input-Y: nächstgelegenen Button bevorzugen, aber harte Schwelle 150px.
+        candidates.sort(key=lambda b: abs(b['y'] - input_y))
+        for c in candidates:
+            if abs(c['y'] - input_y) < 150:
+                logger.info(
+                    f"Hinzufügen-Button: top=({c['x']:.0f},{c['y']:.0f}) "
+                    f"(Δy={c['y'] - input_y:+.0f} vom Input)"
+                )
+                return c
+
+        logger.info(
+            f"Kein Hinzufügen-Button innerhalb 150px vom Input (input_y={input_y:.0f}). "
+            f"Kandidaten: " + ", ".join(f"y={c['y']:.0f}" for c in candidates)
+        )
         return None
+
+    async def _verify_alias_in_iframe(
+        self,
+        client: CDPClient,
+        session_id: str,
+        alias_email: str,
+        present: bool = True,
+        max_wait_s: float = 8.0,
+        poll_interval_s: float = 1.0,
+    ) -> bool:
+        """
+        Ehrliche Server-State-Verifikation: existiert (oder fehlt) der Alias in
+        der ALIAS-LISTE des 3c.gmx.net OOPIF?
+
+        Warum diese Methode existiert (Bug-Report 2026-05-11):
+          Die frühere Verifikation `DOM.performSearch(query=alias_name)` auf der
+          TOP-Session war self-confirming bias:
+            • Im Iframe (wo die echte Liste steht) wurde gar nicht gesucht.
+            • Im Top-Frame fand sie den getippten Input-Wert wieder.
+            • → resultCount>0 = "Erfolg" obwohl der Server gar nichts persistiert
+              hatte.
+
+        Korrekte Verifikation:
+          1. OOPIF auflösen (frische child_session — die alte ist nach Reload tot).
+          2. In der child_session nach dem VOLLEN "alias@gmx.de" suchen
+             (nicht nur dem Namen). Die Tabellen-Row rendert das volle Format,
+             das Input-Feld nur den Lokal-Teil → keine False-Positives mehr.
+          3. Polling bis `present` erreicht oder Timeout — GMX braucht manchmal
+             1-3 Sekunden bis die neue Zeile in die Tabelle rendert.
+
+        Args:
+            alias_email: vollständige Adresse, z.B. "marathon-fox-7421@gmx.de"
+            present: True → warten bis Alias existiert.
+                     False → warten bis Alias verschwunden ist (Delete-Verifikation).
+            max_wait_s: Obergrenze des Polling-Loops.
+            poll_interval_s: Pause zwischen Polls.
+
+        Returns:
+            True wenn Zielzustand erreicht, False bei Timeout / OOPIF-Fehler.
+        """
+        deadline = time.time() + max_wait_s
+        last_count = -1
+        while time.time() < deadline:
+            oopif = await self._resolve_gmx_oopif(client, session_id)
+            if not oopif:
+                await asyncio.sleep(poll_interval_s)
+                continue
+
+            node_ids = await client.dom_search(
+                oopif.child_session_id, alias_email,
+                include_shadow=True, max_results=10,
+            )
+
+            # Nur echte Text-Vorkommen zählen (nicht z.B. Datenattribute mit
+            # JSON, falls die App so etwas rendert).
+            real_hits = 0
+            for nid in node_ids:
+                node = await client.node_describe(oopif.child_session_id, nid)
+                if not node:
+                    continue
+                val = (node.get('nodeValue', '') or '').strip()
+                # Akzeptiere wenn der Alias als sichtbarer Text vorkommt
+                # (nicht als Teil eines längeren JSON-Strings).
+                if alias_email in val and not val.startswith('{'):
+                    real_hits += 1
+                    break  # 1 Treffer reicht
+
+            if real_hits != last_count:
+                logger.debug(
+                    f"_verify_alias_in_iframe({alias_email}, present={present}): "
+                    f"real_hits={real_hits}"
+                )
+                last_count = real_hits
+
+            if present and real_hits > 0:
+                return True
+            if not present and real_hits == 0:
+                return True
+
+            await asyncio.sleep(poll_interval_s)
+
+        logger.warning(
+            f"_verify_alias_in_iframe TIMEOUT nach {max_wait_s}s: "
+            f"alias='{alias_email}' present-target={present}, last_real_hits={last_count}"
+        )
+        return False
 
     async def _fill_alias_input_via_cdp(
         self, client: CDPClient, session_id: str, alias_name: str,
@@ -1042,26 +1441,45 @@ class GmxService:
                     steps.append("filled_form")
                 await asyncio.sleep(1)
                 
-                # Find + click button
+                # Find + click button. input_coords['y'] kann None sein
+                # (Fallback-Pfad in _find_alias_input_coords) — dann sucht
+                # _find_hinzufuegen_button_coords ohne Proximity-Filter.
+                input_y = input_coords.get('y')
+                input_x = input_coords.get('x')
                 btn = await self._find_hinzufuegen_button_coords(
-                    client, session_id, input_coords['y']
+                    client, session_id, input_y
                 )
                 if not btn:
-                    btn = {"x": input_coords['x'], "y": input_coords['y'] + 95}
-                
+                    if input_x is None or input_y is None:
+                        # Weder DOM-Treffer noch echte Input-Koords → wir können
+                        # nicht raten ohne (350,340)-Bug wieder einzuführen.
+                        return {
+                            "status": "error",
+                            "alias_email": None,
+                            "alias_name": current_alias,
+                            "steps_completed": steps,
+                            "execution_time": f"{time.time() - start_time:.2f}s",
+                            "error": (
+                                "Hinzufügen-Button nicht im Iframe gefunden und "
+                                "keine Input-Referenz für relativen Fallback verfügbar"
+                            ),
+                        }
+                    # Relativer Fallback NUR mit echten Input-Koords.
+                    btn = {"x": input_x, "y": input_y + 95}
+                    logger.info(
+                        f"Hinzufügen-Fallback: input_y+95 = ({btn['x']:.0f},{btn['y']:.0f})"
+                    )
+
                 await self._click_button_via_cdp(client, session_id, btn)
                 if attempt == 0:
                     steps.append("clicked_add")
-                await asyncio.sleep(5)
-                
-                # Verify via DOM search — suche full email "{alias}@gmx.de"
-                # Input-Feld hat NUR den Namen (ohne @gmx.de) → kein False-Positive!
-                check = await client.send_to_session(
-                    session_id, "DOM.performSearch",
-                    {"query": alias_email, "includeUserAgentShadowDOM": True}
+
+                # Verify: Server-State, nicht Input-State (siehe _verify_alias_in_iframe).
+                ok = await self._verify_alias_in_iframe(
+                    client, session_id, alias_email, present=True, max_wait_s=8.0,
                 )
-                if check['resultCount'] > 0:
-                    logger.info(f"✅ Alias erstellt: {alias_email}")
+                if ok:
+                    logger.info(f"Alias erstellt + server-verified: {alias_email}")
                     return {
                         "status": "success",
                         "alias_email": alias_email,
@@ -1069,8 +1487,8 @@ class GmxService:
                         "steps_completed": steps,
                         "execution_time": f"{time.time() - start_time:.2f}s",
                     }
-                
-                logger.warning(f"Nicht verfügbar: {alias_email}, neuer Versuch...")
+
+                logger.warning(f"Alias nicht in Iframe-Liste sichtbar: {alias_email} — neuer Versuch")
                 await asyncio.sleep(1)
             
             # All attempts exhausted
@@ -1101,7 +1519,7 @@ class GmxService:
 
     # ═══════════════════════════════════════════════════════════════════════════════
     #  FULL ROTATION
-    # ═══════════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════��═══════════════════
 
     async def rotate_alias(self, new_alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
         """Alias-Rotation: Löscht existierenden Alias und erstellt einen neuen.
@@ -1186,14 +1604,20 @@ class GmxService:
                         if cua_pid and cua_wid:
                             ok = await self._cua_click_ok_button(cua_pid, cua_wid)
                             if ok:
-                                await asyncio.sleep(3)
-                                # Verify: search again to confirm deletion
-                                alias_check = await self._find_alias_coords_in_iframe(client, session_id)
-                                if alias_check and alias_check['text'] == alias_text:
-                                    steps_failed.append("alias_delete_verify")
-                                else:
+                                # Ehrliche Verifikation: alias_text ist die volle
+                                # "name@gmx.de" Adresse. Wir warten bis sie WEG ist.
+                                # `_find_alias_coords_in_iframe` reicht NICHT, weil
+                                # nach Löschung ggf. ein ANDERER Alias zurückkommt
+                                # und wir denken fälschlich, der zu löschende sei
+                                # noch da (oder umgekehrt).
+                                if await self._verify_alias_in_iframe(
+                                    client, session_id, alias_text,
+                                    present=False, max_wait_s=8.0,
+                                ):
                                     deleted_alias = alias_text
                                     steps_completed.append("alias_deleted")
+                                else:
+                                    steps_failed.append("alias_delete_verify")
                             else:
                                 steps_failed.append("confirm_button_not_found")
                         else:
@@ -1243,32 +1667,48 @@ class GmxService:
                     steps_completed.append("form_filled")
                 await asyncio.sleep(1)
                 
-                # Find button (may change position slightly between attempts)
+                # Find button. input_coords['y'] kann None sein (CUA-only Fallback).
+                input_y = input_coords.get('y')
+                input_x = input_coords.get('x')
                 btn = await self._find_hinzufuegen_button_coords(
-                    client, session_id, input_coords['y']
+                    client, session_id, input_y
                 )
                 if not btn:
-                    # Fallback: click ~95px below input
-                    btn = {"x": input_coords['x'], "y": input_coords['y'] + 95}
-                
+                    if input_x is None or input_y is None:
+                        # Kein DOM-Treffer + keine echten Input-Koords.
+                        # Wir raten NICHT (das war der ursprüngliche 350/340-Bug).
+                        logger.error(
+                            "Hinzufügen-Button nicht auffindbar und keine "
+                            "Input-Referenz für relativen Fallback verfügbar"
+                        )
+                        steps_failed.append("add_button_not_found")
+                        break
+                    # Relativer Fallback NUR mit echten Input-Koords (vorher
+                    # via OOPIF bestätigt). Empirischer Wert: Button ~95px unter Input.
+                    btn = {"x": input_x, "y": input_y + 95}
+                    logger.info(
+                        f"Hinzufügen-Fallback: input_y+95 = ({btn['x']:.0f},{btn['y']:.0f})"
+                    )
+
                 await self._click_button_via_cdp(client, session_id, btn)
                 if attempt == 0:
                     steps_completed.append("add_button_clicked")
-                await asyncio.sleep(5)
-                
-                # Verify via DOM.performSearch (not Runtime.evaluate!)
-                check_search = await client.send_to_session(
-                    session_id, "DOM.performSearch",
-                    {"query": current_alias, "includeUserAgentShadowDOM": True}
-                )
-                if check_search['resultCount'] > 0:
+
+                # Verify: Iframe-Liste enthält jetzt "{alias}@gmx.de"
+                # (Server-State-Check, NICHT self-confirming Input-Such-Trick).
+                if await self._verify_alias_in_iframe(
+                    client, session_id, current_alias_email,
+                    present=True, max_wait_s=8.0,
+                ):
                     created_alias_name = current_alias
                     created_alias = current_alias_email
                     alias_created = True
                     steps_completed.append("alias_created")
                     break
-                
-                logger.warning(f"Alias {current_alias_email} nicht verfügbar, generiere neuen Namen...")
+
+                logger.warning(
+                    f"Alias {current_alias_email} nicht in Iframe-Liste — generiere neuen Namen..."
+                )
                 await asyncio.sleep(1)
             
             if alias_created:
@@ -1987,7 +2427,7 @@ class GmxService:
         `mailbody/tmai{mailId}/{showExternal};jsessionid={...}` enthält.
 
         KRITISCHE URL-PATTERN (durch Debug-Skripte reverse-engineered):
-        ────────────────────────────────────────────────────────────────────────────────
+        ──────────────────────���─────────────────────────────────────────────────────────
         Primary:   https://3c-bap.gmx.net/mail/client/mailbody/tmai{mailId}/true;jsessionid={j}
         Fallback:  https://3c-bap.gmx.net/mail/client/mailbody/tmai{mailId}/false;jsessionid={j}
         Print:     https://3c-bap.gmx.net/mail/client/mail/print;jsessionid={j}?mailId=tmai{mailId}&showExternalContent=true
@@ -2230,7 +2670,7 @@ class GmxService:
                     "error": "Konnte kein JSESSIONID aus iframe src extrahieren",
                 }
 
-            # ════════════════════════════════════════════════════════════════════════
+            # ════��═══════════════════════════════════════════════════════════════════
             # PHASE 3: WEBMAILER LOADING (already navigated above)
             # ──────────────────────────────────────────────────────────────────────
             # The webmailer was already loaded during jsessionid extraction.
