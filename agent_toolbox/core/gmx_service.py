@@ -827,20 +827,27 @@ class GmxService:
         return None
 
     async def _cdp_hover(self, client: CDPClient, session_id: str, x: float, y: float):
-        """Sendet JS mouseover/mouseenter (GMX ignoriert CDP Input.dispatchMouseEvent)."""
-        await client.evaluate(session_id, f"""((function() {{
-            var el = document.elementFromPoint({x}, {y});
-            if (!el) return;
-            ['mouseover', 'mouseenter'].forEach(function(evtType) {{
-                el.dispatchEvent(new MouseEvent(evtType, {{
-                    bubbles: true, cancelable: true, view: window,
-                    clientX: {x}, clientY: {y}
-                }}));
-            }});
-        }})())""", return_by_value=True)
+        """Sendet CDP Input.dispatchMouseEvent mouseMoved (GMX ignoriert JS mouseover für Hover)."""
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": x, "y": y
+        })
 
     async def _cdp_click(self, client: CDPClient, session_id: str, x: float, y: float):
-        """Klickt via JS dispatchEvent (statt CDP Input.dispatchMouseEvent — GMX ignoriert CDP-Events)."""
+        """Klickt via CDP Input.dispatchMouseEvent (notwendig für Delete-Icon — JS Events werden von Wicket ignoriert)."""
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": x, "y": y
+        })
+        await asyncio.sleep(0.2)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1
+        })
+        await asyncio.sleep(0.15)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1
+        })
+
+    async def _js_click(self, client: CDPClient, session_id: str, x: float, y: float):
+        """Klickt via JS dispatchEvent (notwendig für Navigation — GMX ignoriert CDP Events)."""
         await client.evaluate(session_id, f"""((function() {{
             var el = document.elementFromPoint({x}, {y});
             if (!el) return;
@@ -901,25 +908,35 @@ class GmxService:
         state = json.loads(result.stdout)
         lines = state.get('tree_markdown', '').split('\n')
 
+        # Search for OK button — CUA format: "- [element_index] AXButton \"OK\""
         for line in lines:
             s = line.strip()
-            if 'AXButton "OK"' not in s and 'AXButton "Abbrechen"' not in s:
-                continue
-            if 'OK' not in s:
-                continue
-            # Extract element_index from [pid] - [element_index] pattern
-            m = re.search(r'\]\s*-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
+            m = re.search(r'-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
             if m:
                 el = int(m.group(1))
-                logger.info(f"CUA click OK button at element_index {el}")
+                logger.info(f"CUA click OK button [{el}]: {s[:120]}")
                 subprocess.run(
                     ["cua-driver", "call", "click"],
-                    input=json.dumps({
-                        "pid": pid, "window_id": window_id, "element_index": el
-                    }),
+                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
                     capture_output=True, text=True, timeout=10
                 )
                 return True
+        
+        # Fallback: any button with text containing "OK"
+        for line in lines:
+            s = line.strip()
+            if 'AXButton' in s and '"OK"' in s:
+                m = re.search(r'-\s*\[(\d+)\]', s)
+                if m:
+                    el = int(m.group(1))
+                    logger.info(f"CUA click OK (fallback) [{el}]: {s[:120]}")
+                    subprocess.run(
+                        ["cua-driver", "call", "click"],
+                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                        capture_output=True, text=True, timeout=10
+                    )
+                    return True
+
         logger.warning("OK button not found in CUA AX tree")
         return False
 
@@ -991,7 +1008,9 @@ class GmxService:
                 cua_pid = None
                 cua_wid = None
                 for w in windows_data.get('windows', []):
-                    if 'GMX' in w.get('title', '') and w.get('is_on_screen'):
+                    app = w.get('app_name', '')
+                    title = w.get('title', '')
+                    if app == 'Google Chrome' and 'GMX' in title and w.get('is_on_screen'):
                         cua_pid = w['pid']
                         cua_wid = w['window_id']
                         break
@@ -1265,73 +1284,41 @@ class GmxService:
         self, client: CDPClient, session_id: str, input_y: Optional[float]
     ) -> Optional[Dict[str, Any]]:
         """
-        Findet den "Hinzufügen"-Button mittels JS evaluate (statt CDP DOM API,
-        die auf GMX/3c.gmx.net hängt bei getSearchResults/describeNode).
-
-        Args:
-            input_y: Wenn bekannt, wird der Button nächst dem Input bevorzugt.
+        Findet den korrekten "Hinzufügen"-Button — den im GLEICHEN <form>
+        wie das erste localPart-Input (regulärer GMX-Alias), NICHT den
+        aus der Fun- und Alias-Adressen-Sektion.
         """
-        # JS-Suche nach allen sichtbaren Buttons mit Text "Hinzufügen"
         result = await client.evaluate(session_id, """(function() {
-            var buttons = document.querySelectorAll('button');
-            var matches = [];
-            for (var i = 0; i < buttons.length; i++) {
-                var btn = buttons[i];
-                var text = btn.textContent.trim();
-                if (text === 'Hinzufügen' || text === 'Hinzufuegen') {
-                    var rect = btn.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {
-                        matches.push({
-                            x: Math.round(rect.x + rect.width / 2),
-                            y: Math.round(rect.y + rect.height / 2),
-                            w: Math.round(rect.width),
-                            h: Math.round(rect.height),
-                            label: text,
-                            top: Math.round(rect.y)
-                        });
-                    }
-                }
-            }
-            // Auch spans/divs mit "Hinzufügen" Text die klickbar sind
-            var allEls = document.querySelectorAll('span, div, a');
-            for (var i = 0; i < allEls.length; i++) {
-                var el = allEls[i];
-                if (el.children.length === 0 && el.textContent.trim() === 'Hinzufügen') {
-                    var r = el.getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0) {
-                        matches.push({
-                            x: Math.round(r.x + r.width / 2),
-                            y: Math.round(r.y + r.height / 2),
-                            w: Math.round(r.width),
-                            h: Math.round(r.height),
-                            label: 'Hinzufügen',
-                            top: Math.round(r.y)
-                        });
-                    }
-                }
-            }
-            return matches;
+            // Find the FIRST localPart input (regular alias section)
+            var inputs = document.querySelectorAll('input[name*="localPart"]');
+            if (inputs.length === 0) return null;
+            
+            var inp = inputs[0];  // First one = regular GMX alias
+            var form = inp.closest('form');
+            if (!form) return null;
+            
+            // Find Hinzufügen button within THIS form only
+            var btn = form.querySelector('button');
+            if (!btn) return null;
+            
+            var rect = btn.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return null;
+            
+            return {
+                x: Math.round(rect.x + rect.width / 2),
+                y: Math.round(rect.y + rect.height / 2),
+                w: Math.round(rect.width),
+                h: Math.round(rect.height),
+                formId: form.getAttribute('id') || '',
+                top: Math.round(rect.y)
+            };
         })()""", return_by_value=True)
 
-        candidates = result.get("result", {}).get("value", [])
-
-        if not candidates:
-            logger.warning("_find_hinzufuegen_button_coords: Kein Hinzufügen-Element gefunden")
-            return None
-
-        if input_y is None:
-            chosen = candidates[0]
-            logger.info(f"Hinzufügen-Button ohne Proximity: ({chosen['x']},{chosen['y']})")
-            return chosen
-
-        # Mit Input-Y: nächstgelegenen Button bevorzugen, max 150px Distanz
-        candidates.sort(key=lambda b: abs(b['top'] - input_y))
-        for c in candidates:
-            if abs(c['top'] - input_y) < 150:
-                logger.info(f"Hinzufügen-Button: ({c['x']},{c['y']}) (Δy={c['top'] - input_y:+.0f})")
-                return c
-
-        logger.warning(f"Hinzufügen-Button zu weit vom Input (alle >150px entfernt)")
+        btn_info = result.get("result", {}).get("value")
+        if btn_info:
+            logger.info(f"Hinzufügen-Button (form={btn_info.get('formId')}): ({btn_info['x']},{btn_info['y']})")
+            return btn_info
+        logger.warning("_find_hinzufuegen_button_coords: Kein Hinzufügen-Button im ersten localPart-Form")
         return None
 
         node_ids = await client.dom_search(
@@ -1456,20 +1443,21 @@ class GmxService:
         return ok
 
     async def _click_button_via_cdp(self, client: CDPClient, session_id: str, btn_info: Dict[str, Any]) -> None:
-        """Klickt den Hinzufügen-Button via form.submit() (JS dispatchEvent triggert GMX nicht)."""
+        """Klickt den Hinzufügen-Button via CDP Input.dispatchMouseEvent (wie Delete-Icon)."""
         btn_x = btn_info.get("x", 0)
         btn_y = btn_info.get("y", 0)
-        logger.info(f"Hinzufügen-Button via form.submit() bei ({btn_x:.1f}, {btn_y:.1f})")
-        await client.evaluate(session_id, """(function() {
-            var btn = document.elementFromPoint(%f, %f);
-            if (btn) {
-                // Try form.submit() for the parent form
-                var form = btn.closest('form');
-                if (form) { form.submit(); return; }
-                // Fallback: click the button directly
-                btn.click();
-            }
-        })()""" % (btn_x, btn_y), return_by_value=True)
+        logger.info(f"Hinzufügen via CDP click bei ({btn_x:.1f}, {btn_y:.1f})")
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseMoved", "x": btn_x, "y": btn_y
+        })
+        await asyncio.sleep(0.2)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mousePressed", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1
+        })
+        await asyncio.sleep(0.15)
+        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
+            "type": "mouseReleased", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1
+        })
 
     async def create_alias(self, alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
         """Erstellt einen neuen GMX Alias.
@@ -1556,9 +1544,12 @@ class GmxService:
                 if attempt == 0:
                     steps.append("clicked_add")
 
+                # Warten dass Seite nach form.submit() aktualisiert wird
+                await asyncio.sleep(3)
+
                 # Verify: Server-State, nicht Input-State (siehe _verify_alias_in_iframe).
                 ok = await self._verify_alias_in_iframe(
-                    client, session_id, alias_email, present=True, max_wait_s=8.0,
+                    client, session_id, alias_email, present=True, max_wait_s=12.0,
                 )
                 if ok:
                     logger.info(f"Alias erstellt + server-verified: {alias_email}")
@@ -1680,7 +1671,7 @@ class GmxService:
                         wd = json.loads(res.stdout)
                         cua_pid, cua_wid = None, None
                         for w in wd.get('windows', []):
-                            if 'GMX' in w.get('title', '') and w.get('is_on_screen'):
+                            if w.get('app_name') == 'Google Chrome' and 'GMX' in w.get('title', '') and w.get('is_on_screen'):
                                 cua_pid = w['pid']; cua_wid = w['window_id']
                                 break
                         if cua_pid and cua_wid:
