@@ -58,6 +58,17 @@ async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]]
         return r.json()
 
 
+async def _get_current_alias() -> Optional[str]:
+    """Holt den aktuellen GMX Alias via standalone API delete (returns alias name even on no-op)."""
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as http:
+            r = await http.post("http://localhost:8001/alias/delete")
+            data = r.json()
+            return data.get("alias")
+    except Exception:
+        return None
+
+
 async def _rotate_alias_via_api(alias_name: Optional[str] = None) -> Dict[str, Any]:
     """Rotate GMX alias via the external gmx-alias-tool API.
 
@@ -188,19 +199,21 @@ async def full_rotation(request: RotationRequest):
             steps_completed.append("gmx_alias_rotated")
             logger.info(f"✅ GMX Alias: {gmx_alias}")
         else:
-            logger.error(f"gmx_alias_tool.py rotate failed:\n{output}")
-            steps_failed.append("gmx_alias_rotation_failed")
-            return RotationResponse(
-                status="failed",
-                gmx_alias=None,
-                fireworks_account=None,
-                api_key=None,
-                api_key_name=None,
-                steps_completed=steps_completed,
-                steps_failed=steps_failed,
-                execution_time=f"{time.time()-t0:.2f}s",
-                error="GMX Alias Rotation fehlgeschlagen",
-            )
+            logger.warning(f"gmx_alias_tool.py rotate returned no Created:\n{output[:300]}")
+            gmx_alias = await _get_current_alias()
+            if gmx_alias:
+                steps_completed.append("gmx_alias_reused")
+                logger.info(f"⚠️ Using existing alias: {gmx_alias}")
+            else:
+                steps_failed.append("gmx_alias_rotation_failed")
+                return RotationResponse(
+                    status="failed",
+                    gmx_alias=None, fireworks_account=None, api_key=None,
+                    api_key_name=None, steps_completed=steps_completed,
+                    steps_failed=steps_failed,
+                    execution_time=f"{time.time()-t0:.2f}s",
+                    error="GMX Alias Rotation fehlgeschlagen — kein Alias verfügbar",
+                )
 
         # ════════════════════════════════════════════════════════════════════════
         #  STEP 2: Fireworks E2E (register() — 12 Phasen intern)
