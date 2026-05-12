@@ -1,5 +1,65 @@
 # AGENTS.md — SINator Fireworks AI Rotator
 
+## 🛑🛑🛑 RED ZONE — V3 WORKING (2026-05-12) — NIEMALS ÄNDERN 🛑🛑🛑
+
+**Tag:** `v3-working` (commit `aa9b538`)
+**Verification:** `python tools/gmx_alias_tool.py rotate` → ✅ success in ~15s
+
+### ⚡ WAS FUNKTIONIERT (Ground Truth)
+
+```
+=== GMX Alias Rotation ===
+   Target: AUTO-GENERATED
+✅ Rotation
+   Status: success
+   Created: shadow-tiger-983@gmx.de
+   Deleted: echo-tiger-831@gmx.de
+   Steps OK: navigated_to_addresses → alias_deleted → input_found
+              → form_filled → add_button_clicked → alias_created
+   Time: 11.35s
+```
+
+### 🔒 GESCHÜTZTE METHODEN — TOD BEI ÄNDERUNG
+
+| Methode | Datei | Warum geschützt |
+|---------|-------|----------------|
+| `_navigate_to_all_email_addresses` | `gmx_service.py:441` | v3 CDP/JS-Navigation. CUA-Version ist TOT. |
+| `_resolve_gmx_oopif` | `gmx_service.py:619` | Navigiert zu `navigator.gmx.net/navigator/jump/to/mail_settings`. Nicht `bap.navigator.gmx.net`! |
+| `_find_hinzufuegen_button_coords` | `gmx_service.py:1283` | Button aus FORM des ERSTEN `localPart`-Inputs. NICHT Fun-Domain! |
+| `_click_button_via_cdp` | `gmx_service.py:1323` | CDP `Input.dispatchMouseEvent`. `form.submit()` triggert IAC! |
+| `_cdp_click` | `gmx_service.py:835` | CDP `Input.dispatchMouseEvent` (mouseMoved+pressed+released). JS dispatchEvent IGNORED! |
+| `_cua_click_ok_button` | `gmx_service.py:900` | Regex: `-\s*\[(\d+)\]\s*AXButton\s*"OK"`. CUA Markdown-Format! |
+| `_fill_alias_input_via_cdp` | `gmx_service.py:1394` | `nativeInputValueSetter`. `dispatchKeyEvent` IGNORED! |
+| `_verify_alias_in_iframe` | `gmx_service.py:1353` | JS `innerText.indexOf()`. `dom_search` HÄNGT! |
+| `_find_alias_input_via_cdp` | `gmx_service.py:1196` | Selectors: `name*='localPart'`, `placeholder*='ihr-name'`. Nicht `alias`! |
+| `_find_delete_icon_coords` | `gmx_service.py:848` | JS evaluate. `dom_search` HÄNGT! |
+| `_find_alias_coords_in_iframe` | `gmx_service.py:721` | JS evaluate. `dom_search` HÄNGT! |
+
+### ☠️ VERBOTENE ANSÄTZE (ausprobiert, ALLE fehlgeschlagen)
+
+| Ansatz | Warum gescheitert |
+|--------|------------------|
+| CDP `DOM.performSearch` + `getSearchResults` | Hängt auf `3c.gmx.net` (kein Response) |
+| CDP `DOM.getBoxModel` nach `performSearch` | Stale NodeIds, parentId=None |
+| JS `.click()` auf Delete-Icon | Wicket ignoriert `.click()` |
+| JS `dispatchEvent(MouseEvent)` auf Delete-Icon | Wicket prüft `isTrusted` (immer false) |
+| `form.submit()` für Hinzufügen-Button | Triggert `iac/restart` Anti-Automation |
+| CDP `Input.dispatchKeyEvent` für Input-Füllung | GMX React-Inputs ignorieren KeyEvents |
+| CDP `Input.dispatchMouseEvent` für Navigation | GMX ignoriert CDP-Level Maus-Events für Nav |
+| `bap.navigator.gmx.net/mail_settings` Navigation | Zeigt nur Shell, Content in Cross-Origin-Iframes |
+| CUA für Navigation | Produziert URLs ohne `sid=`, Session geht verloren |
+
+### 🧪 VOR JEDER ÄNDERUNG: VERIFICATION
+
+```bash
+# Muss in <30s SUCCESS liefern mit allen 6 Steps:
+python tools/gmx_alias_tool.py rotate
+```
+
+Wenn das fehlschlägt: `git checkout v3-working -- agent_toolbox/core/gmx_service.py`
+
+---
+
 ## ⚠️ GMX ALIAS BUG-FIX (2026-05-11 v2) — DIRECT NAVIGATION STATT OOPIF
 
 **Ursprüngliches Problem (Bug-Report):**
