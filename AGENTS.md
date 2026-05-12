@@ -14,9 +14,8 @@ python tools/preflight.py
 **OHNE BESTANDENEN PREFLIGHT DARF KEIN CODE GEÄNDERT WERDEN.**
 
 Der Preflight prüft:
-1. **Hash Integrity** — 18 kritische Methoden SHA256-verifiziert
-2. **GMX Alias Rotation** — End-to-End-Test muss SUCCESS sein
-3. **Git Clean** — Keine uncommitteten Änderungen an geschützten Dateien
+1. **Hash Integrity** — 20 kritische Methoden SHA256-verifiziert
+2. **Git Clean** — Keine uncommitteten Änderungen an geschützten Dateien
 
 **Bei Preflight-Fehler:**
 ```bash
@@ -71,11 +70,20 @@ python tools/preflight.py  # muss grün sein
 ### 🧪 VOR JEDER ÄNDERUNG: VERIFICATION
 
 ```bash
-# Muss in <30s SUCCESS liefern mit allen 6 Steps:
+# Nur dieser eine Befehl — NIEMALS mit && oder anderen Commands verketten!
 python tools/gmx_alias_tool.py rotate
 ```
 
-Wenn das fehlschlägt: `git checkout v3-working -- agent_toolbox/core/gmx_service.py`
+Bei Fehler: `git checkout v3-working -- agent_toolbox/core/gmx_service.py`
+
+### ⚡ OTP/EMAIL — GMX MAILCHECK EXTENSION (PERMANENT, 2026-05-12)
+
+Extension ID: `camnampocfohlcgbajligmemmabnljcm`
+Methode: `_read_otp_via_extension()` in gmx_service.py
+
+Extension-Popup öffnen → Firefox-Email per sender_filter finden → klicken → GMX Mail öffnet Email → iframe navigieren → OTP-URL extrahieren.
+
+**☠️ BANNED für OTP:** HTTP mailbody API (403), CDP DOM API (hängt), Shadow DOM Traversal
 
 ---
 

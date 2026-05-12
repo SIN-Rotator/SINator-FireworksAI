@@ -26,6 +26,8 @@ Diese Dateien sind **IMMUTABLE**:
 | JS `.click()` auf Delete | Wicket ignoriert |
 | `bap.navigator.gmx.net/mail_settings` | Nur Shell, kein Content |
 | CUA für Navigation | SID geht verloren |
+| HTTP `mailbody/tmai{id}/true` OTP | GMX REST API 403 — NIEMALS! |
+| `read_otp()` ohne Extension | Extension ist EINZIGER OTP-Weg |
 
 ### WAS IMMER VERWENDET WERDEN MUSS
 
@@ -37,6 +39,7 @@ Diese Dateien sind **IMMUTABLE**:
 | `nativeInputValueSetter` | Input-Füllung (React controlled) |
 | `navigator.gmx.net/navigator/jump/to/mail_settings?sid=` | Navigation zu Settings |
 | CUA `click` element | Nur für OK-Button im Delete-Dialog |
+| GMX MailCheck Extension | **EINZIGER OTP/Email-Weg** |
 
 ### BEI FEHLER: SOFORT ROLLBACK
 

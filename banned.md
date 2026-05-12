@@ -4,6 +4,23 @@
 
 ---
 
+## 🛑 BANNED: OTP/Email-Lesung (2026-05-12)
+
+**GMX MailCheck Extension ist DER EINZIG ZULÄSSIGE WEG für OTP.**
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| HTTP `mailbody/tmai{id}/true;jsessionid=...` | GMX REST API gibt 403 |
+| CDP `DOM.performSearch` + `describeNode` auf Webmailer | Hängt auf 3c.gmx.net |
+| Shadow DOM Traversal für Email-Zugriff | Wicket blockiert alle JS-Events |
+| `read_otp()` OHNE Extension-Methode | HTTP-API ist tot |
+
+**✅ Erlaubt:**
+- `_read_otp_via_extension()` — Extension-Popup öffnen, Email per JS klicken, iframe navigieren
+- Fallback: `_read_otp_via_http()` — existiert noch aber gibt 403
+
+---
+
 ## 🛑 BANNED: GMX Anti-Patterns (2026-05-12 v3)
 
 Diese Ansätze wurden ALLE ausprobiert. JEDER einzelne ist gescheitert:
