@@ -3,8 +3,13 @@
   "commit": "aa9b538",
   "file": "agent_toolbox/core/gmx_service.py",
   "generated": "2026-05-12",
-  "protection": "IMMUTABLE. Hash change = code modified. Rollback: git checkout v3-working -- agent_toolbox/core/gmx_service.py",
+  "protection": "IMMUTABLE. All flows protected. Hash change = code modified = ROLLBACK.",
   "methods": {
+    "ensure_gmx_session": {
+      "sha256": "5eeb77f6e86aaeb73d55078aa8e20ffe9c9684fe9808e3308de060a6b8f68538",
+      "lines": "1793-2217",
+      "line_count": 425
+    },
     "_navigate_to_all_email_addresses": {
       "sha256": "908acc26b468c13915cbea123757dda2d3264ceb968cb4557ba211de62cb5d90",
       "lines": "441-547",
@@ -74,6 +79,21 @@
       "sha256": "2afdabf14d92c773a335091e2764d326992de82f83dedc7e9c48d26251e82f3e",
       "lines": "1323-1366",
       "line_count": 44
+    },
+    "rotate_alias": {
+      "sha256": "e4e4c47aaf7efea301b472e9d5d6057d95b60843cd9ac4466ab1f544f774982b",
+      "lines": "1540-1773",
+      "line_count": 234
+    },
+    "create_alias": {
+      "sha256": "5165614ae5e8ce8a9caf7f2329207ac25190c678a20925d93dd84baccfb57f12",
+      "lines": "1405-1539",
+      "line_count": 135
+    },
+    "delete_existing_alias": {
+      "sha256": "a47ad32b3f97c3f89ce05ff8b185203afacd4ad55fd218fa8a681cb8b65313ce",
+      "lines": "943-1059",
+      "line_count": 117
     }
   }
 }
