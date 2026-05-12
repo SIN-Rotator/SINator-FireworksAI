@@ -2194,7 +2194,7 @@ class FireworksService:
                             if (r.width > 0 && r.height > 0) {{
                                 const label = cb.closest('label') || cb.parentElement;
                                 const text = (label?.textContent || '').toLowerCase();
-                                if (text.includes('{label_text.toLowerCase()}')) {{
+                                if (text.includes('{label_text.lower()}')) {{
                                     return {{found: true, x: r.x + r.width / 2, y: r.y + r.height / 2}};
                                 }}
                             }}
