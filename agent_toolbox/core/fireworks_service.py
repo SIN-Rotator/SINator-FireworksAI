@@ -1947,7 +1947,10 @@ class FireworksService:
                     "error": "OTP polling error: " + str(otp_result.get("error", "unknown")),
                 }
             logger.info("[FW Register] Phase 7: Open OTP URL to verify account")
-            await client.navigate(session_id, otp_url)
+            new_confirm = await client.send("Target.createTarget", {"url": otp_url})
+            confirm_sid = await client.attach_to_target(new_confirm["targetId"])
+            await client.send_to_session(confirm_sid, "Page.enable")
+            await client.send_to_session(confirm_sid, "Runtime.enable")
             await asyncio.sleep(5)
 
             confirm_url_result = await client.evaluate(
