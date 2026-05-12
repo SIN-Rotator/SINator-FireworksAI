@@ -1448,7 +1448,16 @@ class FireworksService:
                         "error": "'Next' button not found on /signup page and password not visible",
                     }
             else:
-                await client.click_at(session_id, x=next_btn_val["x"], y=next_btn_val["y"])
+                await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    if (btns[i].textContent.trim() === 'Next') {
+                        var form = btns[i].closest('form');
+                        if (form) { form.requestSubmit(btns[i]); return; }
+                        btns[i].click();
+                    }
+                }
+            })()""", return_by_value=True)
                 steps_completed.append("next_clicked")
                 logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
                 await asyncio.sleep(4)
@@ -1559,11 +1568,16 @@ class FireworksService:
                     "error": "'Create Account' button not found after password entry",
                 }
 
-            await client.click_at(
-                session_id,
-                x=create_btn_val["x"],
-                y=create_btn_val["y"]
-            )
+            await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    if (btns[i].textContent.trim() === 'Create Account') {
+                        var form = btns[i].closest('form');
+                        if (form) { form.requestSubmit(btns[i]); return; }
+                        btns[i].click();
+                    }
+                }
+            })()""", return_by_value=True)
             steps_completed.append("create_account_clicked")
             logger.info(f"[FW Register] Clicked Create Account at ({create_btn_val['x']:.0f}, {create_btn_val['y']:.0f})")
 
