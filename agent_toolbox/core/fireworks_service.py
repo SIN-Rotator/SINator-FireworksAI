@@ -1320,7 +1320,7 @@ class FireworksService:
                 for (var i = 0; i < all.length; i++) {
                     var el = all[i];
                     var style = window.getComputedStyle(el);
-                    if ((style.position === 'fixed' || style.position === 'absolute') && el.offsetWidth > 300 && el.offsetHeight > 300) {
+                    if ((style.position === 'fixed' || style.position === 'absolute') && el.offsetWidth > 200 && el.offsetHeight > 200) {
                         el.remove();
                     }
                 }
