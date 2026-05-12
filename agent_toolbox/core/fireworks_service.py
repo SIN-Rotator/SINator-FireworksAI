@@ -1314,7 +1314,7 @@ class FireworksService:
             #
             logger.info("[FW Register] Phase 3: Dismiss cookie banner")
 
-            # Pre-emptive brute-force overlay cleanup before cookie banner handling
+            # Pre-emptive brute-force overlay cleanup (no reload — just remove overlays)
             await client.evaluate(session_id, """(function() {
                 var all = document.querySelectorAll('*');
                 for (var i = 0; i < all.length; i++) {
@@ -1328,12 +1328,8 @@ class FireworksService:
                 document.documentElement.style.overflow = '';
             })()""", return_by_value=True)
             await asyncio.sleep(1)
-            await client.navigate(session_id, "https://app.fireworks.ai/signup")
-            await asyncio.sleep(4)
-            logger.info("[FW Register] Page reloaded after overlay cleanup")
+            logger.info("[FW Register] Cookie overlays removed")
             steps_completed.append("cookie_banner_dismissed")
-
-            # Old cookie banner code still runs but should be no-op now
 
             dismiss_result = await self._dismiss_cookie_banner(client, session_id)
             if dismiss_result:
