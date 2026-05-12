@@ -1426,33 +1426,40 @@ class FireworksService:
             next_btn_val = next_btn_result.get("result", {}).get("value", {})
 
             if not next_btn_val.get("found"):
-                return {
-                    "status": "failed",
-                    "account_email": email,
-                    "fireworks_password": password,
-                    "api_key": None,
-                    "api_key_name": None,
-                    "steps_completed": steps_completed,
-                    "steps_failed": steps_failed + ["next_button_not_found"],
-                    "execution_time": f"{time.time() - start_time:.2f}s",
-                    "error": "'Next' button not found on /signup page after email entry",
-                }
-
-            await client.evaluate(session_id, f"""(function() {{
-                var btn = document.elementFromPoint({next_btn_val['x']}, {next_btn_val['y']});
-                if (!btn) return;
-                ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
-                    btn.dispatchEvent(new MouseEvent(t, {{
-                        bubbles: true, cancelable: true, view: window,
-                        clientX: {next_btn_val['x']}, clientY: {next_btn_val['y']}
-                    }}));
-                }});
-            }})()""", return_by_value=True)
-            steps_completed.append("next_clicked")
-            logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
-
-            # Warten auf Step 2 (Password-Felder erscheinen)
-            await asyncio.sleep(4)
+                # Single-page form? Check if password field already visible
+                pw_check = await client.evaluate(session_id, """(function() {
+                    const el = document.querySelector('#password');
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                })()""", return_by_value=True)
+                if pw_check.get("result", {}).get("value"):
+                    logger.info("[FW Register] Single-page form detected — skip Next, go to password")
+                else:
+                    return {
+                        "status": "failed",
+                        "account_email": email,
+                        "fireworks_password": password,
+                        "api_key": None, "api_key_name": None,
+                        "steps_completed": steps_completed,
+                        "steps_failed": steps_failed + ["next_button_not_found"],
+                        "execution_time": f"{time.time() - start_time:.2f}s",
+                        "error": "'Next' button not found on /signup page and password field not visible",
+                    }
+            else:
+                await client.evaluate(session_id, f"""(function() {{
+                    var btn = document.elementFromPoint({next_btn_val['x']}, {next_btn_val['y']});
+                    if (!btn) return;
+                    ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                        btn.dispatchEvent(new MouseEvent(t, {{
+                            bubbles: true, cancelable: true, view: window,
+                            clientX: {next_btn_val['x']}, clientY: {next_btn_val['y']}
+                        }}));
+                    }});
+                }})()""", return_by_value=True)
+                steps_completed.append("next_clicked")
+                logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
+                await asyncio.sleep(4)
 
             # ════════════════════════════════════════════════════════════════════════
             # PHASE 5: PASSWÖRTER EINGEBEN (2x) + CREATE ACCOUNT KLICKEN
