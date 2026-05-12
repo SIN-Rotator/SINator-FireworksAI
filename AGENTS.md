@@ -5,6 +5,25 @@
 **Tag:** `v3-working` (commit `aa9b538`)
 **Verification:** `python tools/gmx_alias_tool.py rotate` → ✅ success in ~15s
 
+### ⚡ MANDATORY PREFLIGHT — VOR JEDEM EDIT AUSFÜHREN
+
+```bash
+python tools/preflight.py
+```
+
+**OHNE BESTANDENEN PREFLIGHT DARF KEIN CODE GEÄNDERT WERDEN.**
+
+Der Preflight prüft:
+1. **Hash Integrity** — 18 kritische Methoden SHA256-verifiziert
+2. **GMX Alias Rotation** — End-to-End-Test muss SUCCESS sein
+3. **Git Clean** — Keine uncommitteten Änderungen an geschützten Dateien
+
+**Bei Preflight-Fehler:**
+```bash
+git checkout v3-working -- agent_toolbox/core/gmx_service.py
+python tools/preflight.py  # muss grün sein
+```
+
 ### ⚡ WAS FUNKTIONIERT (Ground Truth)
 
 ```
