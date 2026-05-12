@@ -1285,8 +1285,10 @@ class FireworksService:
             #
             # Cookie-Banner erscheint IMMER nach dem Storage-Clear (Consent resetted).
             #
-            logger.info("[FW Register] Phase 2: Navigate to /signup")
-            await client.navigate(session_id, FIREWORKS_SIGNUP_URL)
+            logger.info("[FW Register] Phase 2: Navigate to /signup (new tab)")
+            new_tab = await client.send("Target.createTarget", {"url": FIREWORKS_SIGNUP_URL})
+            # Detach old session, attach to new tab
+            session_id = await client.attach_to_target(new_tab["targetId"])
             await asyncio.sleep(3)
 
             steps_completed.append("signup_page_loaded")
