@@ -1,6 +1,35 @@
 # 🚫 BANNED — Verbotene Methoden & Patterns
 
-> **NIEMALS** diese Methoden verwenden. Sie führen zu Chrome-Start-Fehlern, CDP-Verbindungsproblemen oder Session-Verlust.
+> **NIEMALS** diese Methoden verwenden. Sie wurden ALLE getestet und sind fehlgeschlagen.
+
+---
+
+## 🛑 BANNED: GMX Anti-Patterns (2026-05-12 v3)
+
+Diese Ansätze wurden ALLE ausprobiert. JEDER einzelne ist gescheitert:
+
+| ❌ Verboten | Symptom |
+|------------|---------|
+| `client.dom_search()` auf 3c.gmx.net | Hängt (kein CDP Response) |
+| `client.node_describe()` auf 3c.gmx.net | `parentId=None` |
+| `client.node_content_box()` auf 3c.gmx.net | Hängt |
+| CDP `Input.dispatchKeyEvent` | GMX React-Inputs ignorieren |
+| JS `.click()` auf Delete-Icon | Wicket ignoriert |
+| JS `dispatchEvent(MouseEvent)` auf Delete-Icon | Wicket prüft `isTrusted` |
+| `form.submit()` für Hinzufügen | Triggert `iac/restart` |
+| CDP `Input.dispatchMouseEvent` für Navigation | GMX ignoriert CDP für Nav |
+| `bap.navigator.gmx.net/mail_settings` | Nur Shell, kein Content |
+| CUA für Navigation | SID geht verloren |
+| JS `nativeSetter` ohne `dispatchEvent('input')` | React-State nicht aktualisiert |
+| `Target.getTargets` für Iframe-Suche | GMX-Iframes nicht als CDP-Targets |
+| Hartcodierte Koordinaten `(350,340)` | Klickt ins Leere |
+
+**Stattdessen IMMER:**
+- DOM-Zugriff: `client.evaluate()` + JavaScript
+- Delete-Icon + Hinzufügen: CDP `Input.dispatchMouseEvent`
+- Navigation: JS `dispatchEvent(MouseEvent)` mit bubbles
+- Input: `nativeInputValueSetter` + Event('input')
+- OK-Button: CUA `click`
 
 ---
 

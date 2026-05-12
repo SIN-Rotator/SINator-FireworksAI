@@ -3,7 +3,7 @@
   "commit": "aa9b538",
   "file": "agent_toolbox/core/gmx_service.py",
   "generated": "2026-05-12",
-  "protection": "IMMUTABLE \u2014 ANY hash change = code was modified = ROLLBACK REQUIRED",
+  "protection": "IMMUTABLE. Hash change = code modified. Rollback: git checkout v3-working -- agent_toolbox/core/gmx_service.py",
   "methods": {
     "_navigate_to_all_email_addresses": {
       "sha256": "908acc26b468c13915cbea123757dda2d3264ceb968cb4557ba211de62cb5d90",
@@ -56,23 +56,23 @@
       "line_count": 92
     },
     "_find_hinzufuegen_button_coords": {
-      "sha256": "5c57b1c4ee8aad7965291f0f3ea5be60f3d38a04539b928db169f298912ed85f",
-      "lines": "1283-1379",
-      "line_count": 97
+      "sha256": "2d429296fa598297a04da7a9e5dbfe4153c3f8422e44de8c5bcd5e68849e7b9e",
+      "lines": "1283-1322",
+      "line_count": 40
     },
     "_click_button_via_cdp": {
       "sha256": "8e2de74be9a672afebdd454be0f3a4fbf5115abbbde98364258476b6770710b4",
-      "lines": "1445-1461",
+      "lines": "1388-1404",
       "line_count": 17
     },
     "_fill_alias_input_via_cdp": {
       "sha256": "6eedf0d44f4aca6901eb85b96a771863dd77f4fbd476d6a3b0e0623095109b67",
-      "lines": "1424-1444",
+      "lines": "1367-1387",
       "line_count": 21
     },
     "_verify_alias_in_iframe": {
       "sha256": "2afdabf14d92c773a335091e2764d326992de82f83dedc7e9c48d26251e82f3e",
-      "lines": "1380-1423",
+      "lines": "1323-1366",
       "line_count": 44
     }
   }

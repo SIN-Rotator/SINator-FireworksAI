@@ -1320,63 +1320,6 @@ class GmxService:
             return btn_info
         logger.warning("_find_hinzufuegen_button_coords: Kein Hinzufügen-Button im ersten localPart-Form")
         return None
-
-        node_ids = await client.dom_search(
-            oopif.child_session_id, "Hinzufügen", include_shadow=True, max_results=40
-        )
-        if not node_ids:
-            return None
-
-        candidates: list[Dict[str, Any]] = []
-        for nid in node_ids:
-            node = await client.node_describe(oopif.child_session_id, nid, depth=1)
-            if not node:
-                continue
-            if node.get('nodeType') != 3:  # nur Text-Nodes
-                continue
-            val = node.get('nodeValue', '') or ''
-            if 'Hinzufügen' not in val:
-                continue
-            parent_id = node.get('parentId')
-            if not parent_id:
-                continue
-            box = await client.node_content_box(oopif.child_session_id, parent_id)
-            if not box:
-                continue
-            lx, ly, w, h = box
-            top_cx, top_cy = oopif.to_top(lx + w / 2, ly + h / 2)
-            if not oopif.contains(top_cx, top_cy):
-                continue
-            candidates.append({"x": top_cx, "y": top_cy, "w": w, "h": h, "label": val.strip()})
-
-        if not candidates:
-            return None
-
-        if input_y is None:
-            # Ohne Input-Y: ersten plausiblen Kandidaten zurückgeben.
-            chosen = candidates[0]
-            logger.info(
-                f"Hinzufügen-Button ohne Proximity-Filter gewählt: "
-                f"top=({chosen['x']:.0f},{chosen['y']:.0f})"
-            )
-            return chosen
-
-        # Mit Input-Y: nächstgelegenen Button bevorzugen, aber harte Schwelle 150px.
-        candidates.sort(key=lambda b: abs(b['y'] - input_y))
-        for c in candidates:
-            if abs(c['y'] - input_y) < 150:
-                logger.info(
-                    f"Hinzufügen-Button: top=({c['x']:.0f},{c['y']:.0f}) "
-                    f"(Δy={c['y'] - input_y:+.0f} vom Input)"
-                )
-                return c
-
-        logger.info(
-            f"Kein Hinzufügen-Button innerhalb 150px vom Input (input_y={input_y:.0f}). "
-            f"Kandidaten: " + ", ".join(f"y={c['y']:.0f}" for c in candidates)
-        )
-        return None
-
     async def _verify_alias_in_iframe(
         self,
         client: CDPClient,
