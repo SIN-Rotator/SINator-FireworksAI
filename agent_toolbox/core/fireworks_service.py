@@ -1402,9 +1402,12 @@ class FireworksService:
                 el.dispatchEvent(new Event('change', {{bubbles: true}}));
                 return true;
             }})()""", return_by_value=True)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
             steps_completed.append("email_entered")
             logger.info(f"[FW Register] Email entered: {email}")
+
+            # Wait for page to react to email input
+            await asyncio.sleep(2)
 
             # Click "Next" Button
             next_btn_result = await client.evaluate(
