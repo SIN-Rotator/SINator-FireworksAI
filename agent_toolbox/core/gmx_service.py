@@ -914,7 +914,15 @@ class GmxService:
             m = re.search(r'-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
             if m:
                 el = int(m.group(1))
-                logger.info(f"CUA click OK button [{el}]: {s[:120]}")
+                logger.info(f"CUA double-click OK button [{el}]: {s[:120]}")
+                # First click
+                subprocess.run(
+                    ["cua-driver", "call", "click"],
+                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                    capture_output=True, text=True, timeout=10
+                )
+                await asyncio.sleep(0.5)
+                # Second click (safety — sometimes GMX needs two clicks)
                 subprocess.run(
                     ["cua-driver", "call", "click"],
                     input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
@@ -929,7 +937,13 @@ class GmxService:
                 m = re.search(r'-\s*\[(\d+)\]', s)
                 if m:
                     el = int(m.group(1))
-                    logger.info(f"CUA click OK (fallback) [{el}]: {s[:120]}")
+                    logger.info(f"CUA double-click OK (fallback) [{el}]: {s[:120]}")
+                    subprocess.run(
+                        ["cua-driver", "call", "click"],
+                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                        capture_output=True, text=True, timeout=10
+                    )
+                    await asyncio.sleep(0.5)
                     subprocess.run(
                         ["cua-driver", "call", "click"],
                         input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
