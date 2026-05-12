@@ -2422,7 +2422,7 @@ class GmxService:
             if client:
                 await client.disconnect()
 
-    async def read_otp(
+    async def _read_otp_via_http(
         self,
         sender_filter: str = "fireworks",
         max_retries: int = 12,
@@ -2894,6 +2894,91 @@ class GmxService:
                 "execution_time": f"{elapsed:.2f}s",
                 "error": str(e),
             }
+
+    async def read_otp(
+        self,
+        sender_filter: str = "fireworks",
+        max_retries: int = 12,
+        retry_delay: int = 5,
+        cdp_port: int = 9222,
+        exclude_mail_ids: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """OTP-Extraktion via GMX MailCheck Extension (PRIMARY). Fallback: HTTP API."""
+        result = await self._read_otp_via_extension(sender_filter, max_retries, retry_delay, cdp_port, exclude_mail_ids)
+        if result.get("status") == "success":
+            return result
+        logger.warning("Extension OTP fehlgeschlagen — Fallback zu HTTP API")
+        return await self._read_otp_via_http(sender_filter, max_retries, retry_delay, cdp_port, exclude_mail_ids)
+
+    async def _read_otp_via_extension(
+        self,
+        sender_filter: str = "fireworks",
+        max_retries: int = 12,
+        retry_delay: int = 5,
+        cdp_port: int = 9222,
+        exclude_mail_ids: Optional[set] = None,
+    ) -> Dict[str, Any]:
+        """OTP via GMX MailCheck Extension. Öffnet Extension, findet Email, klickt sie, extrahiert OTP-URL."""
+        start_time = time.time()
+        client = None
+        ext_url = "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html"
+        try:
+            client, session_id, _ = await self._connect_to_browser(cdp_port)
+            for attempt in range(max_retries):
+                logger.info(f"Extension OTP: Versuch {attempt + 1}/{max_retries}")
+                r = await client.send("Target.createTarget", {"url": ext_url})
+                ext_session = await client.attach_to_target(r["targetId"])
+                await asyncio.sleep(4)
+                data = await client.evaluate(ext_session, f"""(function() {{
+                    var links = document.querySelectorAll('a.email');
+                    for (var i = 0; i < links.length; i++) {{
+                        var t = links[i].textContent.toLowerCase();
+                        if (t.includes('{sender_filter.lower()}')) {{
+                            return {{mailId: links[i].getAttribute('data-email-id') || ''}};
+                        }}
+                    }}
+                    return null;
+                }})()""", return_by_value=True)
+                info = data.get("result", {}).get("value")
+                if info and info.get("mailId"):
+                    mail_id = info["mailId"]
+                    logger.info(f"Extension: Email gefunden id={mail_id}")
+                    await client.evaluate(ext_session, f"""(function() {{
+                        var links = document.querySelectorAll('a.email');
+                        for (var i = 0; i < links.length; i++) {{
+                            if (links[i].getAttribute('data-email-id') === '{mail_id}') {{links[i].click(); return;}}
+                        }}
+                    }})()""", return_by_value=True)
+                    await asyncio.sleep(5)
+                    targets = await client.get_targets()
+                    for t in targets:
+                        url = t.get("url", "")
+                        if "navigator.gmx.net/mail" in url and "sid=" in url:
+                            ms = await client.attach_to_target(t["targetId"])
+                            iframe_r = await client.evaluate(ms, """(function() {
+                                var f = document.querySelector('#thirdPartyFrame_mail');
+                                return f ? f.src : null;
+                            })()""", return_by_value=True)
+                            src = iframe_r.get("result", {}).get("value")
+                            if src and ("3c.gmx.net" in src or "3c-bap.gmx.net" in src):
+                                await client.navigate(ms, src)
+                                await asyncio.sleep(6)
+                                body = await client.evaluate(ms, 'document.body ? document.body.innerText : \"\"', return_by_value=True)
+                                b = body.get("result", {}).get("value", "") or ""
+                                import re
+                                urls = re.findall(r'https?://app\.fireworks\.ai/signup/(?:confirm|verify)[^\s\"\'<>]+', b)
+                                if urls:
+                                    return {"status": "success", "otp_url": html.unescape(urls[0]), "mail_id": mail_id,
+                                            "execution_time": f"{time.time() - start_time:.2f}s"}
+                            await client.send("Target.closeTarget", {"targetId": t["targetId"]})
+                await client.send("Target.closeTarget", {"targetId": r["targetId"]})
+                logger.info(f"Keine OTP-Email, warte {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            return {"status": "not_found", "otp_url": None, "mail_id": None, "execution_time": f"{time.time()-start_time:.2f}s"}
+        except Exception as e:
+            return {"status": "error", "otp_url": None, "mail_id": None, "execution_time": f"{time.time()-start_time:.2f}s", "error": str(e)}
+        finally:
+            if client: await client.disconnect()
 
 
 _gmx_service: Optional[GmxService] = None
