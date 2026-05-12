@@ -1407,7 +1407,7 @@ class FireworksService:
             logger.info(f"[FW Register] Email entered: {email}")
 
             # Wait for page to react to email input
-            await asyncio.sleep(2)
+            await asyncio.sleep(4)
 
             # Click "Next" Button
             next_btn_result = await client.evaluate(
