@@ -1016,71 +1016,56 @@ class GmxService:
             await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
             await asyncio.sleep(3)
 
-            # Step 6: CUA click OK button in dialog
-            # We need the Chrome window pid + window_id
-            # Use a known/fixed pid: 85447, or detect dynamically
-            try:
-                import subprocess as sp
-                res = sp.run(
-                    ["cua-driver", "call", "list_windows"],
-                    input=json.dumps({"query": "Chrome"}),
-                    capture_output=True, text=True, timeout=10
-                )
-                windows_data = json.loads(res.stdout)
-                cua_pid = None
-                cua_wid = None
-                for w in windows_data.get('windows', []):
-                    app = w.get('app_name', '')
-                    title = w.get('title', '')
-                    if app == 'Google Chrome' and 'GMX' in title and w.get('is_on_screen'):
-                        cua_pid = w['pid']
-                        cua_wid = w['window_id']
-                        break
+            # Step 6: Find and click OK button in dialog via CDP (not CUA)
+            for ok_retry in range(3):
+                if ok_retry > 0:
+                    logger.info(f"Dialog OK retry {ok_retry}/3...")
+                    await asyncio.sleep(2)
+                    if ok_retry == 1:
+                        await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
+                        await asyncio.sleep(3)
 
-                if cua_pid and cua_wid:
-                    # Retry OK button up to 3 times (dialog needs time to render)
-                    ok_clicked = False
-                    for ok_retry in range(3):
-                        if ok_retry > 0:
-                            logger.info(f"CUA OK retry {ok_retry}/3...")
-                            await asyncio.sleep(2)
-                        ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
-                        if ok_clicked:
-                            break
-                        # Also retry CDP click if dialog might not have appeared
-                        if ok_retry == 0:
-                            logger.info("OK nicht gefunden — retry delete icon click...")
-                            await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
-                            await asyncio.sleep(2)
-
-                    if ok_clicked:
-                        # Ehrliche Verifikation: ist der Alias TATSÄCHLICH weg?
-                        # alias_text ist hier "name@gmx.de" (mit Domain).
-                        verified = await self._verify_alias_in_iframe(
-                            client, session_id, alias_text,
-                            present=False, max_wait_s=8.0,
-                        )
-                        if verified:
-                            logger.info(f"Alias gelöscht + server-verified: {alias_text}")
-                            return {"status": "success", "deleted": True, "alias": alias_text}
-                        logger.warning(
-                            f"OK-Klick ausgeführt, aber Alias '{alias_text}' "
-                            f"ist immer noch in der Iframe-Liste sichtbar"
-                        )
-                        return {
-                            "status": "error", "deleted": False, "alias": alias_text,
-                            "error": "Löschung nicht in Iframe-Liste reflektiert (Timeout)",
+                # Find OK button in DOM dialog
+                ok_btn = await client.evaluate(session_id, """(function() {
+                    var dialogs = document.querySelectorAll('[class*=\"dialog\"], [class*=\"modal\"], [class*=\"layer\"]');
+                    for (var i = 0; i < dialogs.length; i++) {
+                        var d = dialogs[i];
+                        if (d.offsetWidth > 0) {
+                            var btns = d.querySelectorAll('button');
+                            for (var j = 0; j < btns.length; j++) {
+                                var t = btns[j].textContent.trim();
+                                if (t === 'OK') {
+                                    var r = btns[j].getBoundingClientRect();
+                                    return {x: r.x + r.width/2, y: r.y + r.height/2};
+                                }
+                            }
                         }
-                    else:
-                        return {"status": "error", "deleted": False, "alias": alias_text,
-                                "error": "OK-Button nicht gefunden im Dialog"}
+                    }
+                    return null;
+                })()""", return_by_value=True)
+                ok_coords = ok_btn.get("result", {}).get("value")
+                if ok_coords:
+                    logger.info(f"Clicking dialog OK at ({ok_coords['x']:.0f},{ok_coords['y']:.0f})")
+                    await self._cdp_click(client, session_id, ok_coords['x'], ok_coords['y'])
+                    await asyncio.sleep(2)
+                    break
                 else:
-                    return {"status": "error", "deleted": False, "alias": alias_text,
-                            "error": "GMX Chrome window nicht gefunden via CUA"}
-            except Exception as e:
-                logger.error(f"CUA OK click failed: {e}")
+                    logger.info("Dialog OK button not found in DOM")
+
+            if ok_coords:
+                verified = await self._verify_alias_in_iframe(
+                    client, session_id, alias_text,
+                    present=False, max_wait_s=8.0,
+                )
+                if verified:
+                    logger.info(f"Alias gelöscht + server-verified: {alias_text}")
+                    return {"status": "success", "deleted": True, "alias": alias_text}
+                logger.warning(f"OK geklickt aber Alias '{alias_text}' noch sichtbar")
                 return {"status": "error", "deleted": False, "alias": alias_text,
-                        "error": f"CUA dialog interaction failed: {e}"}
+                        "error": "Löschung nicht in Alias-Liste reflektiert"}
+            else:
+                return {"status": "error", "deleted": False, "alias": alias_text,
+                        "error": "OK-Button nicht im Dialog gefunden"}
 
         except Exception as e:
             logger.error(f"Alias-Löschung fehlgeschlagen: {e}")
