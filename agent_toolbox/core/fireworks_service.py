@@ -1885,12 +1885,15 @@ class FireworksService:
                     return_by_value=True
                 )
 
-                for char in email:
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyDown", "text": char})
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyUp", "text": char})
-                    await asyncio.sleep(0.03)
+                await client.evaluate(session_id, f"""(function() {{
+                    const el = document.querySelector('input[type="email"], input[name*="email"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{email}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return true;
+                }})()""", return_by_value=True)
 
                 await asyncio.sleep(0.5)
                 steps_completed.append("login_email_entered")
@@ -2016,27 +2019,16 @@ class FireworksService:
             fname_val = fname_result.get("result", {}).get("value", {})
 
             if fname_val.get("found"):
-                await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        const el = document.querySelector('[name="firstName"]') ||
-                                   document.querySelector('[placeholder*="first"]');
-                        if (el) {
-                            el.focus();
-                            el.value = '';
-                            el.dispatchEvent(new Event('input', {bubbles: true}));
-                        }
-                    })()
-                    """,
-                    return_by_value=True
-                )
-                for char in firstname_value:
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyDown", "text": char})
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyUp", "text": char})
-                    await asyncio.sleep(0.03)
+                await client.evaluate(session_id, f"""(function() {{
+                    const el = document.querySelector('[name="firstName"]') ||
+                               document.querySelector('[placeholder*="first"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{firstname_value}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return true;
+                }})()""", return_by_value=True)
                 logger.info(f"[FW Register] FirstName entered: {firstname_value}")
                 steps_completed.append("firstname_entered")
                 await asyncio.sleep(0.5)
@@ -2067,27 +2059,16 @@ class FireworksService:
             lname_val = lname_result.get("result", {}).get("value", {})
 
             if lname_val.get("found") and lastname_value:
-                await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        const el = document.querySelector('[name="lastName"]') ||
-                                   document.querySelector('[placeholder*="last"]');
-                        if (el) {
-                            el.focus();
-                            el.value = '';
-                            el.dispatchEvent(new Event('input', {bubbles: true}));
-                        }
-                    })()
-                    """,
-                    return_by_value=True
-                )
-                for char in lastname_value:
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyDown", "text": char})
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyUp", "text": char})
-                    await asyncio.sleep(0.03)
+                await client.evaluate(session_id, f"""(function() {{
+                    const el = document.querySelector('[name="lastName"]') ||
+                               document.querySelector('[placeholder*="last"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{lastname_value}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return true;
+                }})()""", return_by_value=True)
                 logger.info(f"[FW Register] LastName entered: {lastname_value}")
                 steps_completed.append("lastname_entered")
                 await asyncio.sleep(0.5)
@@ -2372,27 +2353,16 @@ class FireworksService:
             name_field_val = name_field_result.get("result", {}).get("value", {})
 
             if name_field_val.get("found"):
-                await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        const el = document.querySelector('[name="name"]') ||
-                                   document.querySelector('input[placeholder*="name"]');
-                        if (el) {
-                            el.focus();
-                            el.value = '';
-                            el.dispatchEvent(new Event('input', {bubbles: true}));
-                        }
-                    })()
-                    """,
-                    return_by_value=True
-                )
-                for char in api_key_name:
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyDown", "text": char})
-                    await client.send_to_session(session_id, "Input.dispatchKeyEvent",
-                        {"type": "keyUp", "text": char})
-                    await asyncio.sleep(0.03)
+                await client.evaluate(session_id, f"""(function() {{
+                    const el = document.querySelector('[name="name"]') ||
+                               document.querySelector('input[placeholder*="name"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{api_key_name}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return true;
+                }})()""", return_by_value=True)
                 logger.info(f"[FW Register] API key name entered: {api_key_name}")
                 await asyncio.sleep(0.5)
 
