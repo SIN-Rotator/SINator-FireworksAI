@@ -966,10 +966,18 @@ class GmxService:
                 return {"status": "not_logged_in", "deleted": False,
                         "error": "Konnte nicht zu allEmailAddresses navigieren"}
 
-            # Step 2: Find alias in iframe via CDP DOM
-            alias_info = await self._find_alias_coords_in_iframe(client, session_id)
+            # Step 2: Find alias via JS evaluate (retry once with re-nav if needed)
+            alias_info = None
+            for alias_attempt in range(2):
+                alias_info = await self._find_alias_coords_in_iframe(client, session_id)
+                if alias_info:
+                    break
+                if alias_attempt == 0:
+                    logger.info("Alias nicht gefunden — re-navigiere zu allEmailAddresses...")
+                    await self._navigate_to_all_email_addresses(client, session_id)
+                    await asyncio.sleep(2)
             if not alias_info:
-                logger.info("Kein Alias gefunden")
+                logger.info("Kein Alias gefunden (nach Retry)")
                 return {"status": "no_alias", "deleted": True, "alias": None}
 
             alias_text = alias_info['text']
@@ -1016,7 +1024,21 @@ class GmxService:
                         break
 
                 if cua_pid and cua_wid:
-                    ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
+                    # Retry OK button up to 3 times (dialog needs time to render)
+                    ok_clicked = False
+                    for ok_retry in range(3):
+                        if ok_retry > 0:
+                            logger.info(f"CUA OK retry {ok_retry}/3...")
+                            await asyncio.sleep(2)
+                        ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
+                        if ok_clicked:
+                            break
+                        # Also retry CDP click if dialog might not have appeared
+                        if ok_retry == 0:
+                            logger.info("OK nicht gefunden — retry delete icon click...")
+                            await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
+                            await asyncio.sleep(2)
+
                     if ok_clicked:
                         # Ehrliche Verifikation: ist der Alias TATSÄCHLICH weg?
                         # alias_text ist hier "name@gmx.de" (mit Domain).

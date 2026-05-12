@@ -1,13 +1,12 @@
 {
   "version": "v3-working",
   "commit": "aa9b538",
-  "file": "agent_toolbox/core/gmx_service.py",
   "generated": "2026-05-12",
-  "protection": "IMMUTABLE. All flows protected. Hash change = code modified = ROLLBACK.",
+  "protection": "IMMUTABLE",
   "methods": {
     "ensure_gmx_session": {
       "sha256": "5eeb77f6e86aaeb73d55078aa8e20ffe9c9684fe9808e3308de060a6b8f68538",
-      "lines": "1793-2217",
+      "lines": "1815-2239",
       "line_count": 425
     },
     "_navigate_to_all_email_addresses": {
@@ -52,48 +51,48 @@
     },
     "_find_alias_input_coords": {
       "sha256": "30f796d806bf8fded576eec71e29c9e5c097e4eb5c8b1cb7173917067a00ecb2",
-      "lines": "1060-1190",
+      "lines": "1082-1212",
       "line_count": 131
     },
     "_find_alias_input_via_cdp": {
       "sha256": "4c56426efae13b6d8d7a00efff8856f70f668e8c7d3e9df74acaac13398ef462",
-      "lines": "1191-1282",
+      "lines": "1213-1304",
       "line_count": 92
     },
     "_find_hinzufuegen_button_coords": {
       "sha256": "2d429296fa598297a04da7a9e5dbfe4153c3f8422e44de8c5bcd5e68849e7b9e",
-      "lines": "1283-1322",
+      "lines": "1305-1344",
       "line_count": 40
     },
     "_click_button_via_cdp": {
       "sha256": "8e2de74be9a672afebdd454be0f3a4fbf5115abbbde98364258476b6770710b4",
-      "lines": "1388-1404",
+      "lines": "1410-1426",
       "line_count": 17
     },
     "_fill_alias_input_via_cdp": {
       "sha256": "6eedf0d44f4aca6901eb85b96a771863dd77f4fbd476d6a3b0e0623095109b67",
-      "lines": "1367-1387",
+      "lines": "1389-1409",
       "line_count": 21
     },
     "_verify_alias_in_iframe": {
       "sha256": "2afdabf14d92c773a335091e2764d326992de82f83dedc7e9c48d26251e82f3e",
-      "lines": "1323-1366",
+      "lines": "1345-1388",
       "line_count": 44
     },
     "rotate_alias": {
       "sha256": "e4e4c47aaf7efea301b472e9d5d6057d95b60843cd9ac4466ab1f544f774982b",
-      "lines": "1540-1773",
+      "lines": "1562-1795",
       "line_count": 234
     },
     "create_alias": {
       "sha256": "5165614ae5e8ce8a9caf7f2329207ac25190c678a20925d93dd84baccfb57f12",
-      "lines": "1405-1539",
+      "lines": "1427-1561",
       "line_count": 135
     },
     "delete_existing_alias": {
-      "sha256": "a47ad32b3f97c3f89ce05ff8b185203afacd4ad55fd218fa8a681cb8b65313ce",
-      "lines": "943-1059",
-      "line_count": 117
+      "sha256": "2a3c3cd2f351bdeca3bfd513d319a06919374ab3f8fc8f42e34de86761a3aed5",
+      "lines": "943-1081",
+      "line_count": 139
     }
   }
 }
