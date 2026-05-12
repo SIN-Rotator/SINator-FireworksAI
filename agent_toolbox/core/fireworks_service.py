@@ -1228,14 +1228,10 @@ class FireworksService:
                 session_id, "Network.getAllCookies", {}
             )
             all_cookies = all_cookies_result.get("cookies", [])
-             fireworks_cookies = [
+            fireworks_cookies = [
                 c for c in all_cookies
-                if (
-                    ("fireworks" in (c.get("domain", "") or "").lower()
-                     or "app." in (c.get("domain", "") or "").lower())
-                    and "cookieyes" not in (c.get("name", "") or "").lower()
-                    and "consent" not in (c.get("name", "") or "").lower()
-                )
+                if "fireworks" in (c.get("domain", "") or "").lower()
+                or "app." in (c.get("domain", "") or "").lower()
             ]
             logger.info(f"[FW Register] Found {len(fireworks_cookies)} Fireworks cookies to delete")
 
@@ -1318,22 +1314,36 @@ class FireworksService:
             #
             logger.info("[FW Register] Phase 3: Dismiss cookie banner")
 
-            logger.info("[FW Register] Phase 3: Dismiss cookie banner")
-
-            # Brute-force: remove cookie overlays before banner handler
-            await client.evaluate(session_id, """(function() {
-                var all = document.querySelectorAll('*');
-                for (var i = 0; i < all.length; i++) {
-                    var el = all[i];
-                    var style = window.getComputedStyle(el);
-                    if ((style.position === 'fixed' || style.position === 'absolute') && el.offsetWidth > 200 && el.offsetHeight > 200) {
-                        el.remove();
+            # Cookie Banner: find and click Accept All button
+            accept_btn = await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    var t = btns[i].textContent.trim().toLowerCase();
+                    if (t.includes('accept') && t.includes('all')) {
+                        var r = btns[i].getBoundingClientRect();
+                        if (r.width > 0 && r.y < 1000) {
+                            return {found: true, x: r.x + r.width/2, y: r.y + r.height/2};
+                        }
                     }
                 }
-                document.body.style.overflow = '';
-                document.documentElement.style.overflow = '';
+                return {found: false};
             })()""", return_by_value=True)
-            await asyncio.sleep(1)
+            accept_val = accept_btn.get("result", {}).get("value", {})
+            if accept_val.get("found"):
+                await client.evaluate(session_id, f"""(function() {{
+                    var el = document.elementFromPoint({accept_val['x']}, {accept_val['y']});
+                    if (el) {{
+                        ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                            el.dispatchEvent(new MouseEvent(t, {{
+                                bubbles: true, cancelable: true, view: window,
+                                clientX: {accept_val['x']}, clientY: {accept_val['y']}
+                            }}));
+                        }});
+                    }}
+                }})()""", return_by_value=True)
+                await asyncio.sleep(3)
+            steps_completed.append("cookie_banner_dismissed")
+            logger.info("[FW Register] Cookie banner dismissed")
 
             dismiss_result = await self._dismiss_cookie_banner(client, session_id)
             if dismiss_result:
@@ -1447,21 +1457,31 @@ class FireworksService:
             next_btn_val = next_btn_result.get("result", {}).get("value", {})
 
             if not next_btn_val.get("found"):
-                return {
-                    "status": "failed",
-                    "account_email": email,
-                    "fireworks_password": password,
-                    "api_key": None, "api_key_name": None,
-                    "steps_completed": steps_completed,
-                    "steps_failed": steps_failed + ["next_button_not_found"],
-                    "execution_time": f"{time.time() - start_time:.2f}s",
-                    "error": "'Next' button not found on /signup page after email entry",
-                }
-
-            await client.click_at(session_id, x=next_btn_val["x"], y=next_btn_val["y"])
-            steps_completed.append("next_clicked")
-            logger.info(f"[FW Register] Clicked Next")
-            await asyncio.sleep(4)
+                # Single-page form? Check if password already visible
+                pw_check = await client.evaluate(session_id, """(function() {
+                    const el = document.querySelector('#password');
+                    if (!el) return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                })()""", return_by_value=True)
+                if pw_check.get("result", {}).get("value"):
+                    logger.info("[FW Register] Single-page form — skip Next, go to password")
+                else:
+                    return {
+                        "status": "failed",
+                        "account_email": email,
+                        "fireworks_password": password,
+                        "api_key": None, "api_key_name": None,
+                        "steps_completed": steps_completed,
+                        "steps_failed": steps_failed + ["next_button_not_found"],
+                        "execution_time": f"{time.time() - start_time:.2f}s",
+                        "error": "'Next' button not found on /signup page and password not visible",
+                    }
+            else:
+                await client.click_at(session_id, x=next_btn_val["x"], y=next_btn_val["y"])
+                steps_completed.append("next_clicked")
+                logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
+                await asyncio.sleep(4)
 
             # ════════════════════════════════════════════════════════════════════════
             # PHASE 5: PASSWÖRTER EINGEBEN (2x) + CREATE ACCOUNT KLICKEN
