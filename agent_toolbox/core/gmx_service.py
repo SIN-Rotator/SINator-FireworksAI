@@ -1676,10 +1676,43 @@ class GmxService:
                                     steps_failed.append("alias_delete_verify")
                             else:
                                 steps_failed.append("confirm_button_not_found")
+                                logger.warning("Delete confirm button not found — skip create")
+                                return {
+                                    "status": "partial",
+                                    "deleted_alias": None,
+                                    "created_alias": None,
+                                    "created_alias_name": new_alias_name,
+                                    "steps_completed": steps_completed,
+                                    "steps_failed": steps_failed,
+                                    "execution_time": f"{time.time() - start_time:.2f}s",
+                                    "error": "Delete dialog OK button not found",
+                                }
                         else:
                             steps_failed.append("cua_window_not_found")
+                            logger.warning("CUA window not found — skip create")
+                            return {
+                                "status": "partial",
+                                "deleted_alias": None,
+                                "created_alias": None,
+                                "created_alias_name": new_alias_name,
+                                "steps_completed": steps_completed,
+                                "steps_failed": steps_failed,
+                                "execution_time": f"{time.time() - start_time:.2f}s",
+                                "error": "GMX Chrome window not found",
+                            }
                     except Exception:
                         steps_failed.append("cua_confirm_error")
+                        logger.warning("CUA confirm error — skip create")
+                        return {
+                            "status": "partial",
+                            "deleted_alias": None,
+                            "created_alias": None,
+                            "created_alias_name": new_alias_name,
+                            "steps_completed": steps_completed,
+                            "steps_failed": steps_failed,
+                            "execution_time": f"{time.time() - start_time:.2f}s",
+                            "error": "CUA confirm error",
+                        }
                 else:
                     steps_failed.append("trash_icon_not_found")
             else:
