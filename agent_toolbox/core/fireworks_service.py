@@ -1438,11 +1438,16 @@ class FireworksService:
                     "error": "'Next' button not found on /signup page after email entry",
                 }
 
-            await client.click_at(
-                session_id,
-                x=next_btn_val["x"],
-                y=next_btn_val["y"]
-            )
+            await client.evaluate(session_id, f"""(function() {{
+                var btn = document.elementFromPoint({next_btn_val['x']}, {next_btn_val['y']});
+                if (!btn) return;
+                ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                    btn.dispatchEvent(new MouseEvent(t, {{
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: {next_btn_val['x']}, clientY: {next_btn_val['y']}
+                    }}));
+                }});
+            }})()""", return_by_value=True)
             steps_completed.append("next_clicked")
             logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
 
@@ -1555,11 +1560,16 @@ class FireworksService:
                     "error": "'Create Account' button not found after password entry",
                 }
 
-            await client.click_at(
-                session_id,
-                x=create_btn_val["x"],
-                y=create_btn_val["y"]
-            )
+            await client.evaluate(session_id, f"""(function() {{
+                var btn = document.elementFromPoint({create_btn_val['x']}, {create_btn_val['y']});
+                if (!btn) return;
+                ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                    btn.dispatchEvent(new MouseEvent(t, {{
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: {create_btn_val['x']}, clientY: {create_btn_val['y']}
+                    }}));
+                }});
+            }})()""", return_by_value=True)
             steps_completed.append("create_account_clicked")
             logger.info(f"[FW Register] Clicked Create Account at ({create_btn_val['x']:.0f}, {create_btn_val['y']:.0f})")
 
