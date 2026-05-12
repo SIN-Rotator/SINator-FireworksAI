@@ -1346,7 +1346,7 @@ class GmxService:
         session_id: str,
         alias_email: str,
         present: bool = True,
-        max_wait_s: float = 8.0,
+        max_wait_s: float = 15.0,
         poll_interval_s: float = 1.0,
     ) -> bool:
         """
