@@ -1526,9 +1526,11 @@ class GmxService:
                     }
 
                 if current_url:
-                    logger.info(f"Verify miss — force-reload page: {current_url[:80]}")
-                    await client.navigate(session_id, current_url)
-                    await asyncio.sleep(5)
+                    logger.info(f"Verify miss — full refresh cycle")
+                    await client.navigate(session_id, "https://www.gmx.net/")
+                    await asyncio.sleep(3)
+                    await client.navigate(session_id, "https://bap.navigator.gmx.net/mail_settings")
+                    await asyncio.sleep(6)
                     ok = await self._verify_alias_in_iframe(
                         client, session_id, alias_email, present=True, max_wait_s=8.0,
                     )
@@ -1764,9 +1766,11 @@ class GmxService:
                     break
 
                 if current_url:
-                    logger.info(f"Verify miss — force-reload: {current_url[:80]}")
-                    await client.navigate(session_id, current_url)
-                    await asyncio.sleep(5)
+                    logger.info(f"Verify miss — full refresh cycle")
+                    await client.navigate(session_id, "https://www.gmx.net/")
+                    await asyncio.sleep(3)
+                    await client.navigate(session_id, "https://bap.navigator.gmx.net/mail_settings")
+                    await asyncio.sleep(6)
                     ok = await self._verify_alias_in_iframe(
                         client, session_id, current_alias_email,
                         present=True, max_wait_s=8.0,
