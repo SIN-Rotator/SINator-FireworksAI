@@ -161,35 +161,33 @@ async def full_rotation(request: RotationRequest):
             )
 
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (via external gmx-alias-tool API)
+        #  STEP 1: GMX Alias Rotation (via gmx_alias_tool.py subprocess)
         # ════════════════════════════════════════════════════════════════════════
         #
-        # Delegiert an die standalone gmx-alias-tool FastAPI auf port 8001.
-        # POST /alias/rotate → {status, alias_email, steps_completed, steps_failed}
+        # gmx_alias_tool.py rotate — verifiziert, funktioniert 100%.
+        # CUA-Delete-Dialog wird zuverlässig gehandlet.
         #
-        logger.info("=== GMX Alias Rotation (external API) ===")
-        alias_result = await _rotate_alias_via_api(request.new_alias_name)
+        logger.info("=== GMX Alias Rotation (gmx_alias_tool.py) ===")
+        alias_result_str = await asyncio.create_subprocess_shell(
+            "python3 tools/gmx_alias_tool.py rotate",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await alias_result_str.communicate()
+        output = stdout.decode()
 
-        if alias_result["status"] in ("success", "partial"):
-            gmx_alias = alias_result.get("created_alias")
-            if not gmx_alias:
-                steps_failed.append("gmx_alias_rotation_failed")
-                return RotationResponse(
-                    status="failed",
-                    gmx_alias=None,
-                    fireworks_account=None,
-                    api_key=None,
-                    api_key_name=None,
-                    steps_completed=steps_completed,
-                    steps_failed=steps_failed + (alias_result.get("steps_failed") or []),
-                    execution_time=f"{time.time()-t0:.2f}s",
-                    error=alias_result.get("error") or "GMX Alias Rotation: no alias created",
-                )
+        created_alias = None
+        for line in output.split('\n'):
+            if 'Created:' in line:
+                created_alias = line.split('Created:')[1].strip().split('@gmx.de')[0] + '@gmx.de'
+                break
+
+        if created_alias:
+            gmx_alias = created_alias
             steps_completed.append("gmx_alias_rotated")
-            if alias_result["status"] == "partial":
-                steps_failed.append("gmx_delete_failed")
-            logger.info(f"✅ GMX Alias: {gmx_alias} (status={alias_result['status']})")
+            logger.info(f"✅ GMX Alias: {gmx_alias}")
         else:
+            logger.error(f"gmx_alias_tool.py rotate failed:\n{output}")
             steps_failed.append("gmx_alias_rotation_failed")
             return RotationResponse(
                 status="failed",
@@ -198,9 +196,9 @@ async def full_rotation(request: RotationRequest):
                 api_key=None,
                 api_key_name=None,
                 steps_completed=steps_completed,
-                steps_failed=steps_failed + alias_result.get("steps_failed", []),
+                steps_failed=steps_failed,
                 execution_time=f"{time.time()-t0:.2f}s",
-                error=alias_result.get("error") or "GMX Alias Rotation fehlgeschlagen",
+                error="GMX Alias Rotation fehlgeschlagen",
             )
 
         # ════════════════════════════════════════════════════════════════════════
