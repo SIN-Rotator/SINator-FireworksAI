@@ -1507,12 +1507,13 @@ class GmxService:
                 if attempt == 0:
                     steps.append("clicked_add")
 
-                # Warten dass Seite nach form.submit() aktualisiert wird
-                await asyncio.sleep(3)
+                await asyncio.sleep(4)
 
-                # Verify: Server-State, nicht Input-State (siehe _verify_alias_in_iframe).
+                current_url_r = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                current_url = current_url_r.get("result", {}).get("value", "")
+
                 ok = await self._verify_alias_in_iframe(
-                    client, session_id, alias_email, present=True, max_wait_s=12.0,
+                    client, session_id, alias_email, present=True, max_wait_s=8.0,
                 )
                 if ok:
                     logger.info(f"Alias erstellt + server-verified: {alias_email}")
@@ -1523,6 +1524,23 @@ class GmxService:
                         "steps_completed": steps,
                         "execution_time": f"{time.time() - start_time:.2f}s",
                     }
+
+                if current_url:
+                    logger.info(f"Verify miss — force-reload page: {current_url[:80]}")
+                    await client.navigate(session_id, current_url)
+                    await asyncio.sleep(5)
+                    ok = await self._verify_alias_in_iframe(
+                        client, session_id, alias_email, present=True, max_wait_s=8.0,
+                    )
+                    if ok:
+                        logger.info(f"Alias server-verified after reload: {alias_email}")
+                        return {
+                            "status": "success",
+                            "alias_email": alias_email,
+                            "alias_name": current_alias,
+                            "steps_completed": steps,
+                            "execution_time": f"{time.time() - start_time:.2f}s",
+                        }
 
                 logger.warning(f"Alias nicht in Iframe-Liste sichtbar: {alias_email} — neuer Versuch")
                 await asyncio.sleep(1)

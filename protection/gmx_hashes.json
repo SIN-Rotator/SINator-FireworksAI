@@ -99,9 +99,9 @@
       "line_count": 15
     },
     "_read_otp_via_extension": {
-      "sha256": "c0a8a8211ac3e1a6944d5373eed36af2160250ce30073ed178e7f59db318f7ca",
-      "lines": "2913-2991",
-      "line_count": 79
+      "sha256": "5346be469c0923c996d9f538552f45249110366c7de4110d2bb6fa4d8432359d",
+      "lines": "2913-3022",
+      "line_count": 110
     }
   }
 }
