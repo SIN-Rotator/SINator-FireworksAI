@@ -1228,10 +1228,14 @@ class FireworksService:
                 session_id, "Network.getAllCookies", {}
             )
             all_cookies = all_cookies_result.get("cookies", [])
-            fireworks_cookies = [
+             fireworks_cookies = [
                 c for c in all_cookies
-                if "fireworks" in (c.get("domain", "") or "").lower()
-                or "app." in (c.get("domain", "") or "").lower()
+                if (
+                    ("fireworks" in (c.get("domain", "") or "").lower()
+                     or "app." in (c.get("domain", "") or "").lower())
+                    and "cookieyes" not in (c.get("name", "") or "").lower()
+                    and "consent" not in (c.get("name", "") or "").lower()
+                )
             ]
             logger.info(f"[FW Register] Found {len(fireworks_cookies)} Fireworks cookies to delete")
 
