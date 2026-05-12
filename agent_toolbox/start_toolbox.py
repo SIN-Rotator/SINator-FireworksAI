@@ -56,6 +56,18 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 SINator Agent Toolbox startet...")
     logger.info(f"📂 Projekt-Root: {project_root}")
     logger.info("📖 Swagger UI: http://localhost:8000/docs")
+
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as http:
+            r = await http.get("http://localhost:8001/health")
+            if r.status_code == 200:
+                logger.info("✅ GMX Alias API erreichbar auf Port 8001")
+            else:
+                logger.warning(f"⚠️ GMX Alias API auf Port 8001: status={r.status_code}")
+    except Exception:
+        logger.warning("⚠️ GMX Alias API NICHT erreichbar auf Port 8001 — ./start.sh in gmx-alias-tool/ starten!")
+
     yield
     logger.info("🛑 SINator Agent Toolbox fährt herunter...")
     try:
@@ -113,11 +125,20 @@ async def health():
     from agent_toolbox.core.browser_manager import get_browser_manager
 
     browser_mgr = get_browser_manager()
-    return {
+    result = {
         "status": "healthy",
         "browser_running": browser_mgr.is_running,
         "cdp_port": browser_mgr.cdp_port if browser_mgr.is_running else None,
+        "gmx_alias_api": "unknown",
     }
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=3.0) as http:
+            r = await http.get("http://localhost:8001/health")
+            result["gmx_alias_api"] = "healthy" if r.status_code == 200 else f"status_{r.status_code}"
+    except Exception:
+        result["gmx_alias_api"] = "unreachable"
+    return result
 
 
 if __name__ == "__main__":
