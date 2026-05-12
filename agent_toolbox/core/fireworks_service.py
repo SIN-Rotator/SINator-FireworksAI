@@ -1314,22 +1314,36 @@ class FireworksService:
             #
             logger.info("[FW Register] Phase 3: Dismiss cookie banner")
 
-            # Pre-emptive brute-force overlay cleanup (no reload — just remove overlays)
-            await client.evaluate(session_id, """(function() {
-                var all = document.querySelectorAll('*');
-                for (var i = 0; i < all.length; i++) {
-                    var el = all[i];
-                    var style = window.getComputedStyle(el);
-                    if ((style.position === 'fixed' || style.position === 'absolute') && el.offsetWidth > 200 && el.offsetHeight > 200) {
-                        el.remove();
+            # Cookie Banner: find and click Accept All button
+            accept_btn = await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    var t = btns[i].textContent.trim().toLowerCase();
+                    if (t.includes('accept') && t.includes('all')) {
+                        var r = btns[i].getBoundingClientRect();
+                        if (r.width > 0 && r.y < 1000) {
+                            return {found: true, x: r.x + r.width/2, y: r.y + r.height/2};
+                        }
                     }
                 }
-                document.body.style.overflow = '';
-                document.documentElement.style.overflow = '';
+                return {found: false};
             })()""", return_by_value=True)
-            await asyncio.sleep(1)
-            logger.info("[FW Register] Cookie overlays removed")
+            accept_val = accept_btn.get("result", {}).get("value", {})
+            if accept_val.get("found"):
+                await client.evaluate(session_id, f"""(function() {{
+                    var el = document.elementFromPoint({accept_val['x']}, {accept_val['y']});
+                    if (el) {{
+                        ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                            el.dispatchEvent(new MouseEvent(t, {{
+                                bubbles: true, cancelable: true, view: window,
+                                clientX: {accept_val['x']}, clientY: {accept_val['y']}
+                            }}));
+                        }});
+                    }}
+                }})()""", return_by_value=True)
+                await asyncio.sleep(3)
             steps_completed.append("cookie_banner_dismissed")
+            logger.info("[FW Register] Cookie banner dismissed")
 
             dismiss_result = await self._dismiss_cookie_banner(client, session_id)
             if dismiss_result:
