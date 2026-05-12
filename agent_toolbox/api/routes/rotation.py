@@ -172,6 +172,19 @@ async def full_rotation(request: RotationRequest):
 
         if alias_result["status"] in ("success", "partial"):
             gmx_alias = alias_result.get("created_alias")
+            if not gmx_alias:
+                steps_failed.append("gmx_alias_rotation_failed")
+                return RotationResponse(
+                    status="failed",
+                    gmx_alias=None,
+                    fireworks_account=None,
+                    api_key=None,
+                    api_key_name=None,
+                    steps_completed=steps_completed,
+                    steps_failed=steps_failed + (alias_result.get("steps_failed") or []),
+                    execution_time=f"{time.time()-t0:.2f}s",
+                    error=alias_result.get("error") or "GMX Alias Rotation: no alias created",
+                )
             steps_completed.append("gmx_alias_rotated")
             if alias_result["status"] == "partial":
                 steps_failed.append("gmx_delete_failed")
