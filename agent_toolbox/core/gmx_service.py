@@ -1358,8 +1358,8 @@ class GmxService:
         deadline = time.time() + max_wait_s
         while time.time() < deadline:
             result = await client.evaluate(session_id, f"""(function() {{
-                var bodyText = document.body.innerText;
-                return bodyText.indexOf({json.dumps(alias_email)}) >= 0;
+                var bodyHTML = document.body.innerHTML;
+                return bodyHTML.indexOf({json.dumps(alias_email)}) >= 0;
             }})()""", return_by_value=True)
             found = result.get("result", {}).get("value", False)
 
@@ -1748,17 +1748,35 @@ class GmxService:
                 if attempt == 0:
                     steps_completed.append("add_button_clicked")
 
-                # Verify: Iframe-Liste enthält jetzt "{alias}@gmx.de"
-                # (Server-State-Check, NICHT self-confirming Input-Such-Trick).
-                if await self._verify_alias_in_iframe(
+                await asyncio.sleep(4)
+
+                current_url_r = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                current_url = current_url_r.get("result", {}).get("value", "")
+                ok = await self._verify_alias_in_iframe(
                     client, session_id, current_alias_email,
                     present=True, max_wait_s=8.0,
-                ):
+                )
+                if ok:
                     created_alias_name = current_alias
                     created_alias = current_alias_email
                     alias_created = True
                     steps_completed.append("alias_created")
                     break
+
+                if current_url:
+                    logger.info(f"Verify miss — force-reload: {current_url[:80]}")
+                    await client.navigate(session_id, current_url)
+                    await asyncio.sleep(5)
+                    ok = await self._verify_alias_in_iframe(
+                        client, session_id, current_alias_email,
+                        present=True, max_wait_s=8.0,
+                    )
+                    if ok:
+                        created_alias_name = current_alias
+                        created_alias = current_alias_email
+                        alias_created = True
+                        steps_completed.append("alias_created")
+                        break
 
                 logger.warning(
                     f"Alias {current_alias_email} nicht in Iframe-Liste — generiere neuen Namen..."
