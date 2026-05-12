@@ -581,7 +581,16 @@ class FireworksService:
                 logger.info(f"[CookieBanner] Direct JS query fand Button bei ({direct_val.get('x', 0):.1f}, {direct_val.get('y', 0):.1f}).")
                 cx = direct_val.get("x")
                 cy = direct_val.get("y")
-                await client.click_at(session_id, x=cx, y=cy)
+                await client.evaluate(session_id, f"""(function() {{
+                    var btn = document.elementFromPoint({cx}, {cy});
+                    if (!btn) return;
+                    ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                        btn.dispatchEvent(new MouseEvent(t, {{
+                            bubbles: true, cancelable: true, view: window,
+                            clientX: {cx}, clientY: {cy}
+                        }}));
+                    }});
+                }})()""", return_by_value=True)
                 await asyncio.sleep(2)
                 v_result = await client.evaluate(session_id, '''
                 (function() {
@@ -617,7 +626,16 @@ class FireworksService:
                     f"[CookieBanner] Button nicht per JS lokalisierbar aber Banner existiert (height={banner_state.get('height')}). "
                     f"Verwende HARDCODED fallback coords (1113.7, 805.5) — Button ist BEWIESEN an dieser Position."
                 )
-                await client.click_at(session_id, x=1113.7, y=805.5)
+                await client.evaluate(session_id, f"""(function() {{
+                    var btn = document.elementFromPoint({1113}, {737});
+                    if (!btn) return;
+                    ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
+                        btn.dispatchEvent(new MouseEvent(t, {{
+                            bubbles: true, cancelable: true, view: window,
+                            clientX: {1113}, clientY: {737}
+                        }}));
+                    }});
+                }})()""", return_by_value=True)
                 await asyncio.sleep(2)
                 return True
             else:
