@@ -1,7 +1,7 @@
 {
   "version": "v3-working",
   "generated": "2026-05-12",
-  "protection": "IMMUTABLE",
+  "protection": "IMMUTABLE - EXTENSION IS THE ONLY OTP METHOD",
   "methods": {
     "_cua_click_ok_button": {
       "sha256": "25901d536d4c64f690d21aa74f6a5f0b735dd79e414e68e9573992b4e0666e28",
@@ -92,6 +92,16 @@
       "sha256": "5165614ae5e8ce8a9caf7f2329207ac25190c678a20925d93dd84baccfb57f12",
       "lines": "1425-1559",
       "line_count": 135
+    },
+    "read_otp": {
+      "sha256": "f3df0ac5169f19d56609635af12538827054e5a2daa0a1461250375262ae2e73",
+      "lines": "2898-2912",
+      "line_count": 15
+    },
+    "_read_otp_via_extension": {
+      "sha256": "c0a8a8211ac3e1a6944d5373eed36af2160250ce30073ed178e7f59db318f7ca",
+      "lines": "2913-2991",
+      "line_count": 79
     }
   }
 }
