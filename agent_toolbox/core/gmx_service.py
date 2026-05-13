@@ -280,7 +280,7 @@ class GmxService:
                 # Navigate to mail_settings with SID
                 settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
                 await client.navigate(session_id, settings_url)
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
                 return {"success": True, "current_url": settings_url, "sid": sid}
 
         # Navigate to GMX homepage first (unless already there)
@@ -324,7 +324,7 @@ class GmxService:
                 """,
                 return_by_value=True,
             )
-        await asyncio.sleep(5)
+        await asyncio.sleep(10)
 
         # Extract SID from mail page URL
         url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
@@ -338,7 +338,7 @@ class GmxService:
             # Navigate to mail_settings with SID
             settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
             await client.navigate(session_id, settings_url)
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             return {"success": True, "current_url": settings_url, "sid": sid}
 
         return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren"}
@@ -475,7 +475,7 @@ class GmxService:
             }
             return false;
         })()""", return_by_value=True)
-        await asyncio.sleep(5)
+        await asyncio.sleep(10)
 
         ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
         url = ur.get("result", {}).get("value", "") or ""
@@ -532,7 +532,7 @@ class GmxService:
                 }
                 return {clicked: false};
             })()""", return_by_value=True)
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
 
             ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             url = ur.get("result", {}).get("value", "") or ""
@@ -1629,7 +1629,7 @@ class GmxService:
                 delete_info = await self._find_delete_icon_coords(client, session_id)
                 if delete_info:
                     await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)
 
                     # CUA click OK button
                     import subprocess as sp
@@ -2093,7 +2093,7 @@ class GmxService:
                 """,
                 return_by_value=True,
             )
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             current_url = url_result.get("result", {}).get("value", "") or ""
@@ -2234,7 +2234,7 @@ class GmxService:
             r2 = await client.evaluate(session_id, pw_js, return_by_value=True)
             val2 = r2.get("result", {}).get("value", {})
             logger.info(f"[Flow 0] Password step: {val2}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             
             # Verify login success - click E-Mail via CDP click_at (find coordinates first)
             email_verify_js = """
@@ -2266,7 +2266,7 @@ class GmxService:
             if verify_val.get("found"):
                 logger.info(f"[Flow 0] Clicking E-Mail at ({verify_val['x']}, {verify_val['y']})...")
                 await client.click_at(session_id, verify_val["x"], verify_val["y"])
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             
             final_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             final_url = final_url_result.get("result", {}).get("value", "") or ""
@@ -2336,7 +2336,7 @@ class GmxService:
                 if((e.textContent||'').trim()===t){e.click();return true;}
                 if(e.shadowRoot&&c(e.shadowRoot,t,d+1))return true;}
                 return false;}return c(document.body,'E-Mail',0);})()''')
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             return {"status": "success", "current_url": url_result.get("result", {}).get("value", "")}
@@ -2689,7 +2689,7 @@ class GmxService:
                     # Fallback: CDP click auf bekannte Koordinaten der E-Mail
                     # Navigation im Header (x=302, y=44).
                     await client.click_at(session_id, x=302, y=44)
-                await asyncio.sleep(5)
+                await asyncio.sleep(10)
 
                 url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
                 current_url = url_result.get("result", {}).get("value", "")
@@ -2744,7 +2744,7 @@ class GmxService:
             # Navigate to iframe to establish fresh webmailer session
             logger.info(f"Navigiere zu webmailer: {iframe_src[:80]}...")
             await client.navigate(session_id, iframe_src)
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
             
             # Get jsessionid from BROWSER COOKIES (set by webmailer, not from stale iframe_src)
             # The webmailer sets a JSESSIONID cookie. We extract it from the browser's
@@ -2780,7 +2780,7 @@ class GmxService:
             # The webmailer was already loaded during jsessionid extraction.
             # Wait additional time for list-mail-item elements to render.
             # ════════════════════════════════════════════════════════════════════════
-            await asyncio.sleep(5)
+            await asyncio.sleep(10)
 
             # ════════════════════════════════════════════════════════════════════════
             # NOTE: Baseline scan removed. We fetch ALL found items to maximize
@@ -2844,7 +2844,7 @@ class GmxService:
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
                                 await asyncio.sleep(0.15)
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                await asyncio.sleep(5)
+await asyncio.sleep(10)
 
                                 all_targets = await client.get_targets()
                                 for t in all_targets:
@@ -2941,7 +2941,7 @@ class GmxService:
                             if (links[i].getAttribute('data-email-id') === '{mail_id}') {{links[i].click(); return;}}
                         }}
                     }})()""", return_by_value=True)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(10)
                     after_targets = await client.get_targets()
                     gmx_target = None
                     for t in after_targets:
