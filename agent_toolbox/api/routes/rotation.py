@@ -32,93 +32,17 @@
 """
 import time
 import logging
-import asyncio
-from typing import Optional, Dict, Any
 
-import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
-from agent_toolbox.core.gmx_service import get_gmx_service, GmxService
+from agent_toolbox.core.gmx_service import get_gmx_service
 from agent_toolbox.core.fireworks_service import get_fireworks_service
 from agent_toolbox.core.pool_manager import get_pool_manager
 from agent_toolbox.api.schemas import RotationRequest, RotationResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rotation", tags=["Account Rotation"])
-
-GMX_ALIAS_API_URL = "http://localhost:8001"
-
-
-async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Helper: Call the standalone gmx-alias-tool API on port 8001."""
-    async with httpx.AsyncClient(timeout=120.0) as http:
-        r = await http.request(method, f"{GMX_ALIAS_API_URL}{path}", json=data)
-        r.raise_for_status()
-        return r.json()
-
-
-async def _get_current_alias() -> Optional[str]:
-    """Holt den aktuellen GMX Alias via standalone API delete (returns alias name even on no-op)."""
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as http:
-            r = await http.post("http://localhost:8001/alias/delete")
-            data = r.json()
-            return data.get("alias")
-    except Exception:
-        return None
-
-
-async def _fresh_rotate_alias(alias_name: Optional[str] = None) -> Dict[str, Any]:
-    """Rotate GMX alias: öffnet frischen Tab, delegetiert an GmxService.rotate_alias."""
-    from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint
-
-    ws = await get_browser_ws_endpoint(9222)
-    client = CDPClient(ws)
-    await client.connect()
-    r = await client.send("Target.createTarget", {"url": "https://www.gmx.net/"})
-    sid = await client.attach_to_target(r["targetId"])
-    await client.send_to_session(sid, "Page.enable")
-    await client.send_to_session(sid, "Runtime.enable")
-    await asyncio.sleep(5)
-    await client.disconnect()
-
-    svc = GmxService()
-    svc.email = "opensin@gmx.de"
-    svc.password = "ZOE.jerry2024"
-
-    original = svc._connect_to_browser
-    async def _conn(cdp_port):
-        client2 = CDPClient(ws)
-        await client2.connect()
-        targets = await client2.get_targets()
-        for t in reversed(targets):
-            url = t.get("url","")
-            if t.get("type") == "page" and "sid=" in url and "gmx.net" in url:
-                tid = t["targetId"]
-                s = await client2.attach_to_target(tid)
-                await client2.send_to_session(s, "Page.enable")
-                await client2.send_to_session(s, "Runtime.enable")
-                return client2, s, tid
-        raise RuntimeError("Kein GMX Tab")
-
-    svc._connect_to_browser = _conn
-    result = await svc.rotate_alias(new_alias_name=alias_name, cdp_port=9222)
-    svc._connect_to_browser = original
-    return result
-
-
-async def _rotate_alias_via_api(alias_name: Optional[str] = None) -> Dict[str, Any]:
-    """Rotate GMX alias via the external gmx-alias-tool API.
-
-    Maps the external API response to the format expected by the rotation flow.
-    External API returns 'alias_email' for the created alias.
-    """
-    result = await _call_alias_api("POST", "/alias/rotate", {"alias_name": alias_name})
-    # Normalize response: external API uses 'alias_email', flow expects 'created_alias'
-    if result.get("status") in ("success", "partial"):
-        result["created_alias"] = result.get("alias_email")
-    return result
 
 
 def _require_browser():
@@ -212,29 +136,50 @@ async def full_rotation(request: RotationRequest):
             )
 
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (fresh tab, delete + create via CUA)
+        #  STEP 1: GMX Alias Rotation
         # ════════════════════════════════════════════════════════════════════════
+        #
+        # Lösche alten Alias (falls vorhanden) und erstelle einen neuen.
+        # rotate_alias() liefert den neuen Alias-Namen zurück.
+        #
+        # GMX FreeMail beschränkt: NUR EIN Alias gleichzeitig.
+        # → Alten Alias löschen bevor neuen erstellen.
+        #
+        # rotate_alias() intern:
+        # 1. Navigiere zu navigator.gmx.net/mail_settings/email_addresses
+        # 2. Lösche existierenden Alias (falls vorhanden, mit Bestätigungs-Dialog)
+        # 3. Generiere neuen Namen: {adjektiv}-{substantiv}-{3stellig}@gmx.de
+        # 4. Erstelle neuen Alias im Formular
+        # 5. Erfolg bestätigen
+        #
+        # Ergebnis: alias_result = {status, created_alias, ...}
+        #
         logger.info("=== GMX Alias Rotation ===")
-        try:
-            alias_result = await _fresh_rotate_alias(alias_name=request.new_alias_name)
-            if alias_result.get("created_alias"):
-                gmx_alias = alias_result["created_alias"]
-                steps_completed.append("gmx_alias_rotated")
-                logger.info(f"✅ GMX Alias: {gmx_alias}")
-            else:
-                steps_failed.append("gmx_alias_rotation_failed")
-                return RotationResponse(status="failed", gmx_alias=None, fireworks_account=None,
-                    api_key=None, api_key_name=None, steps_completed=steps_completed,
-                    steps_failed=steps_failed,
-                    execution_time=f"{time.time()-t0:.2f}s",
-                    error=alias_result.get("error", "Alias rotation failed"))
-        except Exception as e:
+        gmx_svc = get_gmx_service()
+        alias_result = await gmx_svc.rotate_alias(
+            new_alias_name=request.new_alias_name,
+            cdp_port=cdp_port,
+        )
+
+        if alias_result["status"] in ("success", "partial"):
+            gmx_alias = alias_result.get("created_alias")
+            steps_completed.append("gmx_alias_rotated")
+            if alias_result["status"] == "partial":
+                steps_failed.append("gmx_delete_failed")
+            logger.info(f"✅ GMX Alias: {gmx_alias} (status={alias_result['status']})")
+        else:
             steps_failed.append("gmx_alias_rotation_failed")
-            return RotationResponse(status="failed", gmx_alias=None, fireworks_account=None,
-                api_key=None, api_key_name=None, steps_completed=steps_completed,
-                steps_failed=steps_failed,
+            return RotationResponse(
+                status="failed",
+                gmx_alias=None,
+                fireworks_account=None,
+                api_key=None,
+                api_key_name=None,
+                steps_completed=steps_completed,
+                steps_failed=steps_failed + alias_result.get("steps_failed", []),
                 execution_time=f"{time.time()-t0:.2f}s",
-                error=f"Rotation exception: {e}")
+                error=alias_result.get("error") or "GMX Alias Rotation fehlgeschlagen",
+            )
 
         # ════════════════════════════════════════════════════════════════════════
         #  STEP 2: Fireworks E2E (register() — 12 Phasen intern)
