@@ -1629,7 +1629,7 @@ class GmxService:
                 delete_info = await self._find_delete_icon_coords(client, session_id)
                 if delete_info:
                     await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(5)
 
                     # CUA click OK button
                     import subprocess as sp
@@ -1647,6 +1647,13 @@ class GmxService:
                                 break
                         if cua_pid and cua_wid:
                             ok = await self._cua_click_ok_button(cua_pid, cua_wid)
+                            if not ok:
+                                for _ in range(3):
+                                    await asyncio.sleep(2)
+                                    logger.info(f"CUA OK retry...")
+                                    ok = await self._cua_click_ok_button(cua_pid, cua_wid)
+                                    if ok:
+                                        break
                             if ok:
                                 # Ehrliche Verifikation: alias_text ist die volle
                                 # "name@gmx.de" Adresse. Wir warten bis sie WEG ist.
