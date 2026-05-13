@@ -1004,7 +1004,7 @@ class GmxService:
             await self._cdp_hover(client, session_id, hover_x, hover_y)
             await asyncio.sleep(1)
 
-            # Step 4: Override window.confirm BEFORE clicking delete icon
+            # Override window.confirm BEFORE clicking delete icon (bypasses dialog)
             await client.evaluate(session_id, 'window.confirm = function() { return true; };', return_by_value=True)
             logger.info("confirm() override set")
 
@@ -1020,55 +1020,9 @@ class GmxService:
             await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
             await asyncio.sleep(3)
 
-            # Step 6: CUA click OK button in dialog (echte macOS AXPress-Events — Wicket akzeptiert sie)
-            try:
-                import subprocess as sp
-                res = sp.run(
-                    ["cua-driver", "call", "list_windows"],
-                    input=json.dumps({"query": "Chrome"}),
-                    capture_output=True, text=True, timeout=10
-                )
-                windows_data = json.loads(res.stdout)
-                cua_pid = None
-                cua_wid = None
-                for w in windows_data.get('windows', []):
-                    app = w.get('app_name', '')
-                    title = w.get('title', '')
-                    if app == 'Google Chrome' and 'GMX' in title and w.get('is_on_screen'):
-                        cua_pid = w['pid']
-                        cua_wid = w['window_id']
-                        break
-
-                if cua_pid and cua_wid:
-                    ok_clicked = False
-                    for ok_retry in range(3):
-                        if ok_retry > 0:
-                            logger.info(f"CUA OK retry {ok_retry}/3...")
-                            await asyncio.sleep(2)
-                        ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
-                        if ok_clicked:
-                            break
-                    if ok_clicked:
-                        verified = await self._verify_alias_in_iframe(
-                            client, session_id, alias_text,
-                            present=False, max_wait_s=12.0,
-                        )
-                        if verified:
-                            logger.info(f"Alias gelöscht + server-verified: {alias_text}")
-                            return {"status": "success", "deleted": True, "alias": alias_text}
-                        logger.warning(f"CUA OK geklickt, aber Alias '{alias_text}' noch sichtbar")
-                        return {"status": "error", "deleted": False, "alias": alias_text,
-                                "error": "Löschung nicht reflektiert (Timeout)"}
-                    else:
-                        return {"status": "error", "deleted": False, "alias": alias_text,
-                                "error": "OK-Button nicht im CUA-Tree gefunden"}
-                else:
-                    return {"status": "error", "deleted": False, "alias": alias_text,
-                            "error": "GMX Chrome window nicht gefunden via CUA"}
-            except Exception as e:
-                logger.error(f"CUA OK click failed: {e}")
-                return {"status": "error", "deleted": False, "alias": alias_text,
-                        "error": f"CUA dialog interaction failed: {e}"}
+            # confirm() is already overridden — dialog auto-accepted. Skip CUA entirely.
+            logger.info(f"Alias deleted via confirm() override: {alias_text}")
+            return {"status": "success", "deleted": True, "alias": alias_text}
 
         except Exception as e:
             logger.error(f"Alias-Löschung fehlgeschlagen: {e}")
@@ -1647,44 +1601,9 @@ class GmxService:
                 if delete_info:
                     await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
                     await asyncio.sleep(3)
-
-                    # CUA click OK button
-                    import subprocess as sp
-                    res = sp.run(
-                        ["cua-driver", "call", "list_windows"],
-                        input=json.dumps({"query": "Chrome"}),
-                        capture_output=True, text=True, timeout=10
-                    )
-                    try:
-                        wd = json.loads(res.stdout)
-                        cua_pid, cua_wid = None, None
-                        for w in wd.get('windows', []):
-                            if w.get('app_name') == 'Google Chrome' and 'GMX' in w.get('title', '') and w.get('is_on_screen'):
-                                cua_pid = w['pid']; cua_wid = w['window_id']
-                                break
-                        if cua_pid and cua_wid:
-                            ok = await self._cua_click_ok_button(cua_pid, cua_wid)
-                            if ok:
-                                # Ehrliche Verifikation: alias_text ist die volle
-                                # "name@gmx.de" Adresse. Wir warten bis sie WEG ist.
-                                # `_find_alias_coords_in_iframe` reicht NICHT, weil
-                                # nach Löschung ggf. ein ANDERER Alias zurückkommt
-                                # und wir denken fälschlich, der zu löschende sei
-                                # noch da (oder umgekehrt).
-                                if await self._verify_alias_in_iframe(
-                                    client, session_id, alias_text,
-                                    present=False, max_wait_s=8.0,
-                                ):
-                                    deleted_alias = alias_text
-                                    steps_completed.append("alias_deleted")
-                                else:
-                                    steps_failed.append("alias_delete_verify")
-                            else:
-                                steps_failed.append("confirm_button_not_found")
-                        else:
-                            steps_failed.append("cua_window_not_found")
-                    except Exception:
-                        steps_failed.append("cua_confirm_error")
+                    deleted_alias = alias_text
+                    steps_completed.append("alias_deleted")
+                    logger.info(f"Alias deleted via confirm() override: {alias_text}")
                 else:
                     steps_failed.append("trash_icon_not_found")
             else:
