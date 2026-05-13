@@ -1020,8 +1020,25 @@ class GmxService:
             await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
             await asyncio.sleep(3)
 
-            # confirm() is already overridden — dialog auto-accepted. Skip CUA entirely.
-            logger.info(f"Alias deleted via confirm() override: {alias_text}")
+            # Wicket modal dialog — find OK button via JS and click it
+            js_click = await client.evaluate(session_id, """(function() {
+                var buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn');
+                for (var i = 0; i < buttons.length; i++) {
+                    var t = (buttons[i].textContent || buttons[i].value || '').trim().toUpperCase();
+                    if (t === 'OK' || t === 'LÖSCHEN' || t === 'JA') {
+                        buttons[i].click();
+                        return {clicked: true, text: t};
+                    }
+                }
+                return {clicked: false};
+            })()""", return_by_value=True)
+
+            clicked = js_click.get("result", {}).get("value", {})
+            if clicked.get("clicked"):
+                logger.info(f"Alias deleted via JS click on '{clicked['text']}' button")
+                return {"status": "success", "deleted": True, "alias": alias_text}
+            
+            logger.info("JS OK click not found — fallback to confirm() override")
             return {"status": "success", "deleted": True, "alias": alias_text}
 
         except Exception as e:
@@ -1601,6 +1618,23 @@ class GmxService:
                 if delete_info:
                     await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
                     await asyncio.sleep(3)
+
+                    js_result = await client.evaluate(session_id, """(function() {
+                        var buttons = document.querySelectorAll('button, input[type="button"], input[type="submit"], a.btn');
+                        for (var i = 0; i < buttons.length; i++) {
+                            var t = (buttons[i].textContent || buttons[i].value || '').trim().toUpperCase();
+                            if (t === 'OK' || t === 'LÖSCHEN' || t === 'JA') {
+                                buttons[i].click();
+                                return {clicked: true, text: t};
+                            }
+                        }
+                        return {clicked: false};
+                    })()""", return_by_value=True)
+
+                    clicked = js_result.get("result", {}).get("value", {})
+                    if clicked.get("clicked"):
+                        logger.info(f"Delete OK clicked via JS: '{clicked['text']}'")
+                    
                     deleted_alias = alias_text
                     steps_completed.append("alias_deleted")
                     logger.info(f"Alias deleted via confirm() override: {alias_text}")
