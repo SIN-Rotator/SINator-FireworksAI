@@ -161,14 +161,13 @@ async def full_rotation(request: RotationRequest):
             )
 
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (via external gmx-alias-tool API)
+        #  STEP 1: GMX Alias Rotation (direct GmxService — confirm() override fix)
         # ════════════════════════════════════════════════════════════════════════
-        #
-        # Delegiert an die standalone gmx-alias-tool FastAPI auf port 8001.
-        # POST /alias/rotate → {status, alias_email, steps_completed, steps_failed}
-        #
-        logger.info("=== GMX Alias Rotation (external API) ===")
-        alias_result = await _rotate_alias_via_api(request.new_alias_name)
+        logger.info("=== GMX Alias Rotation ===")
+        svc = get_gmx_service()
+        svc.email = "opensin@gmx.de"
+        svc.password = "ZOE.jerry2024"
+        alias_result = await svc.rotate_alias(new_alias_name=request.new_alias_name, cdp_port=cdp_port)
 
         if alias_result["status"] in ("success", "partial"):
             gmx_alias = alias_result.get("created_alias")
