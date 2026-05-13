@@ -39,7 +39,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
-from agent_toolbox.core.gmx_service import get_gmx_service
+from agent_toolbox.core.gmx_service import get_gmx_service, GmxService
 from agent_toolbox.core.fireworks_service import get_fireworks_service
 from agent_toolbox.core.pool_manager import get_pool_manager
 from agent_toolbox.api.schemas import RotationRequest, RotationResponse
