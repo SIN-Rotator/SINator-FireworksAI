@@ -898,7 +898,8 @@ class GmxService:
         return None
 
     async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
-        """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken."""
+        """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken.
+        Klickt ALLE OK-Buttons (nicht nur ersten) da mehrere auf der Page sein können."""
         import subprocess, re
         result = subprocess.run(
             ["cua-driver", "call", "get_window_state"],
@@ -908,51 +909,34 @@ class GmxService:
         state = json.loads(result.stdout)
         lines = state.get('tree_markdown', '').split('\n')
 
-        # Search for OK button — CUA format: "- [element_index] AXButton \"OK\""
+        all_ok_buttons = []
         for line in lines:
             s = line.strip()
             m = re.search(r'-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
             if m:
-                el = int(m.group(1))
-                logger.info(f"CUA double-click OK button [{el}]: {s[:120]}")
-                # First click
-                subprocess.run(
-                    ["cua-driver", "call", "click"],
-                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                    capture_output=True, text=True, timeout=10
-                )
-                await asyncio.sleep(0.5)
-                # Second click (safety — sometimes GMX needs two clicks)
-                subprocess.run(
-                    ["cua-driver", "call", "click"],
-                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                    capture_output=True, text=True, timeout=10
-                )
-                return True
-        
-        # Fallback: any button with text containing "OK"
-        for line in lines:
-            s = line.strip()
-            if 'AXButton' in s and '"OK"' in s:
-                m = re.search(r'-\s*\[(\d+)\]', s)
-                if m:
-                    el = int(m.group(1))
-                    logger.info(f"CUA double-click OK (fallback) [{el}]: {s[:120]}")
-                    subprocess.run(
-                        ["cua-driver", "call", "click"],
-                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                        capture_output=True, text=True, timeout=10
-                    )
-                    await asyncio.sleep(0.5)
-                    subprocess.run(
-                        ["cua-driver", "call", "click"],
-                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                        capture_output=True, text=True, timeout=10
-                    )
-                    return True
+                all_ok_buttons.append((int(m.group(1)), s[:120]))
 
-        logger.warning("OK button not found in CUA AX tree")
-        return False
+        if not all_ok_buttons:
+            logger.warning("OK button not found in CUA AX tree")
+            return False
+
+        logger.info(f"Found {len(all_ok_buttons)} OK buttons — clicking ALL")
+        for el, desc in all_ok_buttons:
+            logger.info(f"CUA double-click OK button [{el}]: {desc}")
+            subprocess.run(
+                ["cua-driver", "call", "click"],
+                input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                capture_output=True, text=True, timeout=10
+            )
+            await asyncio.sleep(0.5)
+            subprocess.run(
+                ["cua-driver", "call", "click"],
+                input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                capture_output=True, text=True, timeout=10
+            )
+            await asyncio.sleep(0.3)
+
+        return True
 
     async def delete_existing_alias(self, cdp_port: int = 9222) -> Dict[str, Any]:
         """Löscht einen existierenden GMX Alias.
