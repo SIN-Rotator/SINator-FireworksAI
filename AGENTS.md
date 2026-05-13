@@ -515,23 +515,57 @@ AXApplication "Chrome"
 3. Direkt zu Fireworks verification URL navigieren
 4. GMX API für email access verwenden
 
-### GMX MAILCHECK CHROME EXTENSION (2026-05-10) — NEUE LÖSUNG!
+### GMX MAILCHECK CHROME EXTENSION (2026-05-10, VERIFIED 2026-05-13) — EINZIGER ERLAUBTER WEG
 
-**ENTDECKUNG:** GMX MailCheck Extension in Chrome-Toolbar kann für Email-Zugriff genutzt werden!
+**STATUS: ✅ VERIFIED WORKING — 2026-05-13**
+**ENTDECKUNG:** GMX MailCheck Extension in Chrome-Toolbar ist der EINZIG zuverlässige Weg für Email-Zugriff!
+
+**Warum NUR die Extension:**
+- `lightmailer-bs.gmx.net` URLs → HTTP 500
+- CDP `evaluate` im GMX Page-Kontext → wird als Bot erkannt (413/302/403)
+- Webmailer-DOM (`<webmailer-mail-list>` Shadow DOM) → `document.querySelector` findet NICHTS
+- CDP `DOM.performSearch` auf GMX DOM → hängt ewig (kein Response von 3c.gmx.net)
 
 **Extension ID:** `camnampocfohlcgbajligmemmabnljcm`
-
 **Popup URL:** `chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html`
 
-**Zugriff via CDP:**
+**Kompletter E-Mail-Lese-Workflow (VERIFIED 2026-05-13):**
+
 ```python
-# Extension-Popup in neuem Tab öffnen
-new_target = await client.send("Target.createTarget", {
+# 1. Extension-Popup als neuen Tab öffnen
+ext_target = await client.send("Target.createTarget", {
     "url": "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html"
 })
+ext_sid = await client.attach_to_target(ext_target)
+await asyncio.sleep(4)  # Extension laden lassen
+
+# 2. Email-Liste scannen (body.innerText enthält alle sichtbaren Emails)
+body = await client.evaluate(ext_sid, "document.body.innerText")
+# → "no-reply@fireworks.ai\nVerify your Fireworks account\n13:05"
+
+# 3. Email-Klick: Snapshot aller Target-IDs VOR dem Klick
+existing_ids = {t['targetId'] for t in await client.get_targets()}
+
+# 4. Email via JS klicken
+await client.evaluate(ext_sid, """
+    [...document.querySelectorAll('[data-email-id]')]
+        .find(el => el.innerText.includes('fireworks'))
+        .click()
+""")
+await asyncio.sleep(5)
+
+# 5. Neues mailbody-ui.de OOPIF-Target finden
+targets = await client.get_targets()
+mailbody = next(t for t in targets
+    if t['targetId'] not in existing_ids
+    and 'mailbody-ui.de' in t.get('url', ''))
+
+# 6. OOPIF attachen + Email-Body lesen
+mailbody_sid = await client.attach_to_target(mailbody['targetId'])
+body = await client.evaluate(mailbody_sid, "document.body.innerText")
 ```
 
-**Email-Liste Struktur:**
+**Email-Liste Struktur (Extension-DOM):**
 ```html
 <a class="email" data-account="opensin@gmx.de" data-email-id="1778401259732654954">
   <span class="email-sender">no-reply@fireworks.ai</span>
@@ -546,21 +580,25 @@ new_target = await client.send("Target.createTarget", {
 ```
 MailCheck
 Aktualisieren    Logout
-56
+124                             ← Anzahl Emails
 opensin@gmx.de
  Neue E-Mail schreiben    Öffnen / Schliessen
 no-reply@fireworks.ai
-Verify your Fireworks account    10:20
+Verify your Fireworks account    13:05
 no-reply@fireworks.ai
-Verify your Fireworks account    10:09
+Verify your Fireworks account    12:51
+Vercel
+557828 is your Vercel sign up code    10:37
 ...
 ```
 
 **WICHTIG:**
 - Extension zeigt Emails von `opensin@gmx.de` (Haupt-Account)
 - Alias-Emails (`phantom-beetle-xxx@gmx.de`) kommen auch hier an
-- Email-Detail öffnet sich als `popup/popup.html` (noch nicht funktional via CDP)
-- Click auf Email setzt `href="undefined"` → JavaScript-basierte Navigation
+- Klick auf Email im Extension-Panel → öffnet GMX Webmail-Tab → `mailbody-ui.de` OOPIF erscheint
+- Email-Body ist NUR im `mailbody-ui.de` OOPIF lesbar (nicht im GMX-Tab selbst!)
+- Verify-URL Format: `https://app.fireworks.ai/signup/confirm?client_id=...&user_name=...&confirmation_code=...`
+- OOPIF-URL Format: `https://gmxnet.mailbody-ui.de/Mailbox/Mail/{email_id}/Body/html?target_origin=...`
 
 **Nächste Schritte:**
 1. Email-Detail-Inhalt extrahieren (Popup oder Alternative)
@@ -1783,6 +1821,26 @@ Danach Phase 8: Login mit Email/Passwort.
 
 ---
 
-**Letzte Aktualisierung: 2026-05-12 (OTP Fix + Standalone API + Alias Rotation fixes)**
+### 🔬 MAIL-PANEL VERIFICATION (2026-05-13) — BESTÄTIGT
+
+**Test-Durchlauf:**
+1. Chrome CDP Port 9222 ✅
+2. `Target.createTarget` → Extension-Popup (`mail-panel.html`) geöffnet ✅
+3. `document.body.innerText` → 124 Emails sichtbar (opensin@gmx.de) ✅
+4. `[data-email-id]` selector + `.innerText.includes('fireworks')` → Email gefunden ✅
+5. JS `.click()` auf Email → GMX Webmail Tab öffnet sich ✅
+6. `Target.getTargets` → `gmxnet.mailbody-ui.de/Mailbox/Mail/{id}/Body/html` OOPIF gefunden ✅
+7. OOPIF `document.body.innerText` → Verify-URL extrahiert ✅
+8. `Target.createTarget(verify_url)` → Fireworks Account bestätigt ✅
+
+**Gefundene Verify-URL (13:05 Email):**
+```
+https://app.fireworks.ai/signup/confirm?client_id=sueas7prsfrdp16nantbeqcjv&user_name=fed77983-87d1-460a-a372-f3e9ecd4fece&confirmation_code=178814
+```
+
+**Key Takeaway:** Mail-Panel Extension → `mailbody-ui.de` OOPIF ist der EINZIGE Weg.
+NIEMALS `3c.gmx.net` direkt, NIEMALS `lightmailer-bs.gmx.net`, NIEMALS CDP DOM API.
+
+**Letzte Aktualisierung: 2026-05-13 (Mail-Panel Verified + Documentation Sync)**
 
 *Alle Learnings in command_registry.json und Code-Dokumentation.*
