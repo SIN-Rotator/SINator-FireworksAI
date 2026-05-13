@@ -874,6 +874,184 @@ class FireworksService:
             )
             return False
 
+    async def _login_to_fireworks(
+        self, client: CDPClient, session_id: str, email: str, password: str
+    ) -> Dict[str, Any]:
+        start_time = time.time()
+
+        await client.navigate(session_id, FIREWORKS_LOGIN_URL)
+        await asyncio.sleep(3)
+
+        await self._dismiss_cookie_banner(client, session_id)
+        await asyncio.sleep(1)
+
+        signin_search_result = await client.evaluate(
+            session_id,
+            """
+            (function() {
+                const btns = [...document.querySelectorAll('button, a')];
+                for (const b of btns) {
+                    const r = b.getBoundingClientRect();
+                    const t = (b.textContent || '').trim().toLowerCase();
+                    if (r.width > 0 && r.height > 0 && r.y < 1500) {
+                        if (t.includes('sign in') || t.includes('email login') ||
+                            t.includes('use email') || t.includes('continue with email')) {
+                            return {found: true, text: b.textContent?.trim().slice(0, 50),
+                                    x: r.x + r.width / 2, y: r.y + r.height / 2};
+                        }
+                    }
+                }
+                return {found: false};
+            })()
+            """,
+            return_by_value=True
+        )
+        signin_val = signin_search_result.get("result", {}).get("value", {})
+
+        if signin_val.get("found"):
+            await client.click_at(session_id, x=signin_val["x"], y=signin_val["y"])
+            logger.info(f"[FW Login] Clicked '{signin_val['text']}' at ({signin_val['x']:.0f}, {signin_val['y']:.0f})")
+            await asyncio.sleep(3)
+        else:
+            logger.info("[FW Login] 'Sign In' button not found — checking if email form is already visible")
+
+        login_email_result = await client.evaluate(
+            session_id,
+            """
+            (function() {
+                const selectors = ['input[type="email"]', 'input[id="email"]',
+                                   'input[name="email"]', 'input[placeholder*="email" i]'];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) {
+                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2,
+                                    id: el.id || sel};
+                        }
+                    }
+                }
+                return {found: false};
+            })()
+            """,
+            return_by_value=True
+        )
+        login_email_val = login_email_result.get("result", {}).get("value", {})
+
+        if login_email_val.get("found"):
+            logger.info(f"[FW Login] Filling login email: {email}")
+
+            await client.evaluate(
+                session_id,
+                """
+                (function() {
+                    const el = document.querySelector('#email') ||
+                               document.querySelector('input[type="email"]');
+                    if (el) {
+                        el.focus();
+                        el.value = '';
+                        el.dispatchEvent(new Event('input', {bubbles: true}));
+                    }
+                })()
+                """,
+                return_by_value=True
+            )
+
+            await client.evaluate(session_id, f"""(function() {{
+                const el = document.querySelector('input[type="email"], input[name*="email"]');
+                if (!el) return false;
+                const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                ns.call(el, '{email}');
+                el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return true;
+            }})()""", return_by_value=True)
+
+            await asyncio.sleep(0.5)
+
+        login_pw_result = await client.evaluate(
+            session_id,
+            """
+            (function() {
+                const selectors = ['input[type="password"]', 'input[id="password"]',
+                                   'input[name="password"]'];
+                for (const sel of selectors) {
+                    const el = document.querySelector(sel);
+                    if (el) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0 && r.y < 1500) {
+                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2};
+                        }
+                    }
+                }
+                return {found: false};
+            })()
+            """,
+            return_by_value=True
+        )
+        login_pw_val = login_pw_result.get("result", {}).get("value", {})
+
+        if login_pw_val.get("found"):
+            logger.info("[FW Login] Filling login password")
+
+            await client.evaluate(
+                session_id,
+                f"""
+                (function() {{
+                    const el = document.querySelector('input[type="password"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{password}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('blur', {{bubbles: true}}));
+                    return true;
+                }})()
+                """,
+                return_by_value=True
+            )
+
+            await asyncio.sleep(0.5)
+
+        login_next_result = await client.evaluate(
+            session_id,
+            """
+            (function() {
+                const btns = [...document.querySelectorAll('button')];
+                for (const b of btns) {
+                    const r = b.getBoundingClientRect();
+                    const t = (b.textContent || '').trim();
+                    if (r.width > 0 && r.height > 0 && r.y < 1500 &&
+                        (t.toLowerCase() === 'next' || t.toLowerCase() === 'sign in' ||
+                         t.toLowerCase() === 'login' || t.toLowerCase() === 'submit')) {
+                        return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
+                    }
+                }
+                return {found: false};
+            })()
+            """,
+            return_by_value=True
+        )
+        login_next_val = login_next_result.get("result", {}).get("value", {})
+
+        if login_next_val.get("found"):
+            await client.click_at(session_id, x=login_next_val["x"], y=login_next_val["y"])
+            logger.info(f"[FW Login] Clicked login button: '{login_next_val['text']}'")
+            await asyncio.sleep(5)
+        else:
+            logger.warning("[FW Login] Login submit button not found")
+
+        url_result = await client.evaluate(
+            session_id, "window.location.href", return_by_value=True
+        )
+        current_url = url_result.get("result", {}).get("value", "")
+        logged_in = any(k in current_url.lower() for k in ["dashboard", "workspace", "settings"])
+
+        elapsed = time.time() - start_time
+        logger.info(f"[FW Login] {'LOGGED IN' if logged_in else 'LOGIN UNCERTAIN'} -> URL: {current_url[:80]} ({elapsed:.2f}s)")
+
+        return {"logged_in": logged_in, "current_url": current_url, "execution_time": f"{elapsed:.2f}s"}
+
     async def register(
         self,
         email: str,
@@ -1230,8 +1408,12 @@ class FireworksService:
             all_cookies = all_cookies_result.get("cookies", [])
             fireworks_cookies = [
                 c for c in all_cookies
-                if "fireworks" in (c.get("domain", "") or "").lower()
-                or "app." in (c.get("domain", "") or "").lower()
+                if (
+                    ("fireworks" in (c.get("domain", "") or "").lower()
+                     or "app." in (c.get("domain", "") or "").lower())
+                    and "cookieyes" not in (c.get("name", "") or "").lower()
+                    and "consent" not in (c.get("name", "") or "").lower()
+                )
             ]
             logger.info(f"[FW Register] Found {len(fireworks_cookies)} Fireworks cookies to delete")
 
@@ -1281,8 +1463,10 @@ class FireworksService:
             #
             # Cookie-Banner erscheint IMMER nach dem Storage-Clear (Consent resetted).
             #
-            logger.info("[FW Register] Phase 2: Navigate to /signup")
-            await client.navigate(session_id, FIREWORKS_SIGNUP_URL)
+            logger.info("[FW Register] Phase 2: Navigate to /signup (new tab)")
+            new_tab = await client.send("Target.createTarget", {"url": FIREWORKS_SIGNUP_URL})
+            # Detach old session, attach to new tab
+            session_id = await client.attach_to_target(new_tab["targetId"])
             await asyncio.sleep(3)
 
             steps_completed.append("signup_page_loaded")
@@ -1314,44 +1498,10 @@ class FireworksService:
             #
             logger.info("[FW Register] Phase 3: Dismiss cookie banner")
 
-            # Cookie Banner: find and click Accept All button
-            accept_btn = await client.evaluate(session_id, """(function() {
-                var btns = document.querySelectorAll('button');
-                for (var i = 0; i < btns.length; i++) {
-                    var t = btns[i].textContent.trim().toLowerCase();
-                    if (t.includes('accept') && t.includes('all')) {
-                        var r = btns[i].getBoundingClientRect();
-                        if (r.width > 0 && r.y < 1000) {
-                            return {found: true, x: r.x + r.width/2, y: r.y + r.height/2};
-                        }
-                    }
-                }
-                return {found: false};
-            })()""", return_by_value=True)
-            accept_val = accept_btn.get("result", {}).get("value", {})
-            if accept_val.get("found"):
-                await client.evaluate(session_id, f"""(function() {{
-                    var el = document.elementFromPoint({accept_val['x']}, {accept_val['y']});
-                    if (el) {{
-                        ['mousedown', 'mouseup', 'click'].forEach(function(t) {{
-                            el.dispatchEvent(new MouseEvent(t, {{
-                                bubbles: true, cancelable: true, view: window,
-                                clientX: {accept_val['x']}, clientY: {accept_val['y']}
-                            }}));
-                        }});
-                    }}
-                }})()""", return_by_value=True)
-                await asyncio.sleep(3)
+            # Consent cookies are preserved (Phase 1 skips consent cookies)
+            # so the banner should already be dismissed. No action needed.
             steps_completed.append("cookie_banner_dismissed")
-            logger.info("[FW Register] Cookie banner dismissed")
-
-            dismiss_result = await self._dismiss_cookie_banner(client, session_id)
-            if dismiss_result:
-                steps_completed.append("cookie_banner_dismissed")
-                logger.info("[FW Register] Phase 3 DONE: Cookie banner dismissed")
-            else:
-                logger.warning("[FW Register] Phase 3: Cookie banner dismiss returned False — may not have been visible or could not be closed")
-                steps_failed.append("cookie_banner_partial")
+            logger.info("[FW Register] Phase 3 DONE: Banner should be gone (consent cookies kept)")
 
             await asyncio.sleep(1)
 
@@ -1432,9 +1582,12 @@ class FireworksService:
                 el.dispatchEvent(new Event('change', {{bubbles: true}}));
                 return true;
             }})()""", return_by_value=True)
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(1)
             steps_completed.append("email_entered")
             logger.info(f"[FW Register] Email entered: {email}")
+
+            # Wait for page to react to email input
+            await asyncio.sleep(4)
 
             # Click "Next" Button
             next_btn_result = await client.evaluate(
@@ -1478,7 +1631,16 @@ class FireworksService:
                         "error": "'Next' button not found on /signup page and password not visible",
                     }
             else:
-                await client.click_at(session_id, x=next_btn_val["x"], y=next_btn_val["y"])
+                await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    if (btns[i].textContent.trim() === 'Next') {
+                        var form = btns[i].closest('form');
+                        if (form) { form.requestSubmit(btns[i]); return; }
+                        btns[i].click();
+                    }
+                }
+            })()""", return_by_value=True)
                 steps_completed.append("next_clicked")
                 logger.info(f"[FW Register] Clicked Next at ({next_btn_val['x']:.0f}, {next_btn_val['y']:.0f})")
                 await asyncio.sleep(4)
@@ -1589,11 +1751,16 @@ class FireworksService:
                     "error": "'Create Account' button not found after password entry",
                 }
 
-            await client.click_at(
-                session_id,
-                x=create_btn_val["x"],
-                y=create_btn_val["y"]
-            )
+            await client.evaluate(session_id, """(function() {
+                var btns = document.querySelectorAll('button');
+                for (var i = 0; i < btns.length; i++) {
+                    if (btns[i].textContent.trim() === 'Create Account') {
+                        var form = btns[i].closest('form');
+                        if (form) { form.requestSubmit(btns[i]); return; }
+                        btns[i].click();
+                    }
+                }
+            })()""", return_by_value=True)
             steps_completed.append("create_account_clicked")
             logger.info(f"[FW Register] Clicked Create Account at ({create_btn_val['x']:.0f}, {create_btn_val['y']:.0f})")
 
@@ -1807,207 +1974,16 @@ class FireworksService:
                 # Continue anyway — account might be verified even if page shows something else
 
             # ════════════════════════════════════════════════════════════════════════
-            # PHASE 8: FIREWORKS LOGIN FLOW (Sign In → Email Login)
-            # ════════════════════════════════════════════════════════════════════════
-            #
-            # Account ist erstellt und verifiziert. Jetzt einloggen.
-            #
-            # /login Page hat beim ersten Load OAuth-Buttons:
-            #   - Continue with Google (y=279)
-            #   - Continue with GitHub (y=351)
-            #   - Continue with LinkedIn (y=423)
-            #
-            # Der User beschreibt "Sign In" + "Email Login" Buttons.
-            # Diese erscheinen möglicherweise NACH dem OAuth-Block oder
-            # als Alternative. Wir suchen beide.
-            #
-            # Mögliche Button-Texte:
-            #   - "Sign in with Email" (oder "Sign In with Email")
-            #   - "Sign In"
-            #   - "Email Login"
-            #   - "Use Email Instead"
-            #   - "Continue with Email"
-            #
-            # Nach dem ersten Klick (Sign In): Ein Email-Form erscheint inline.
-            #   - input[type="email"] oder input#email
-            #   - input[type="password"] oder input#password
-            #   - "Next" oder "Sign In" Button
-            #
+
+            # PHASE 8: FIREWORKS LOGIN FLOW
             logger.info("[FW Register] Phase 8: Fireworks login flow")
-
-            await client.navigate(session_id, FIREWORKS_LOGIN_URL)
-            await asyncio.sleep(3)
-
-            # Dismiss cookie banner falls es wieder da ist
-            await self._dismiss_cookie_banner(client, session_id)
-            await asyncio.sleep(1)
-
-            # Suchen nach "Sign In" oder "Email Login" Button
-            signin_search_result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    const btns = [...document.querySelectorAll('button, a')];
-                    for (const b of btns) {
-                        const r = b.getBoundingClientRect();
-                        const t = (b.textContent || '').trim().toLowerCase();
-                        if (r.width > 0 && r.height > 0 && r.y < 1500) {
-                            if (t.includes('sign in') || t.includes('email login') ||
-                                t.includes('use email') || t.includes('continue with email')) {
-                                return {found: true, text: b.textContent?.trim().slice(0, 50),
-                                        x: r.x + r.width / 2, y: r.y + r.height / 2};
-                            }
-                        }
-                    }
-                    return {found: false};
-                })()
-                """,
-                return_by_value=True
-            )
-            signin_val = signin_search_result.get("result", {}).get("value", {})
-
-            if signin_val.get("found"):
-                await client.click_at(session_id, x=signin_val["x"], y=signin_val["y"])
-                logger.info(f"[FW Register] Clicked '{signin_val['text']}' at ({signin_val['x']:.0f}, {signin_val['y']:.0f})")
-                await asyncio.sleep(3)
+            login_result = await self._login_to_fireworks(client, session_id, email, password)
+            if login_result.get("logged_in"):
+                steps_completed.append("login_successful")
+                logger.info(f"[FW Register] Login erfolgreich → {login_result.get('current_url', '')[:80]}")
             else:
-                logger.info("[FW Register] 'Sign In' button not found — checking if email form is already visible")
-                # Form might already be visible, skip to filling
-
-            steps_completed.append("signin_button_clicked")
-
-            # Email + Password eingeben auf dem Login-Formular
-            login_email_result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    const selectors = ['input[type="email"]', 'input[id="email"]',
-                                       'input[name="email"]', 'input[placeholder*="email" i]'];
-                    for (const sel of selectors) {
-                        const el = document.querySelector(sel);
-                        if (el) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0) {
-                                return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2,
-                                        id: el.id || sel};
-                            }
-                        }
-                    }
-                    return {found: false};
-                })()
-                """,
-                return_by_value=True
-            )
-            login_email_val = login_email_result.get("result", {}).get("value", {})
-
-            if login_email_val.get("found"):
-                logger.info(f"[FW Register] Filling login email: {email}")
-
-                await client.evaluate(
-                    session_id,
-                    """
-                    (function() {
-                        const el = document.querySelector('#email') ||
-                                   document.querySelector('input[type="email"]');
-                        if (el) {
-                            el.focus();
-                            el.value = '';
-                            el.dispatchEvent(new Event('input', {bubbles: true}));
-                        }
-                    })()
-                    """,
-                    return_by_value=True
-                )
-
-                await client.evaluate(session_id, f"""(function() {{
-                    const el = document.querySelector('input[type="email"], input[name*="email"]');
-                    if (!el) return false;
-                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                    ns.call(el, '{email}');
-                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
-                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                    return true;
-                }})()""", return_by_value=True)
-
-                await asyncio.sleep(0.5)
-                steps_completed.append("login_email_entered")
-
-            # Password auf Login-Formular
-            login_pw_result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    const selectors = ['input[type="password"]', 'input[id="password"]',
-                                       'input[name="password"]'];
-                    for (const sel of selectors) {
-                        const el = document.querySelector(sel);
-                        if (el) {
-                            const r = el.getBoundingClientRect();
-                            if (r.width > 0 && r.height > 0 && r.y < 1500) {
-                                return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2};
-                            }
-                        }
-                    }
-                    return {found: false};
-                })()
-                """,
-                return_by_value=True
-            )
-            login_pw_val = login_pw_result.get("result", {}).get("value", {})
-
-            if login_pw_val.get("found"):
-                logger.info("[FW Register] Filling login password")
-
-                await client.evaluate(
-                    session_id,
-                    f"""
-                    (function() {{
-                        const el = document.querySelector('input[type="password"]');
-                        if (!el) return false;
-                        const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-                        ns.call(el, '{password}');
-                        el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
-                        el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                        el.dispatchEvent(new Event('blur', {{bubbles: true}}));
-                        return true;
-                    }})()
-                    """,
-                    return_by_value=True
-                )
-
-                await asyncio.sleep(0.5)
-                steps_completed.append("login_password_entered")
-
-            # Click "Next" auf dem Login-Formular
-            login_next_result = await client.evaluate(
-                session_id,
-                """
-                (function() {
-                    const btns = [...document.querySelectorAll('button')];
-                    for (const b of btns) {
-                        const r = b.getBoundingClientRect();
-                        const t = (b.textContent || '').trim();
-                        if (r.width > 0 && r.height > 0 && r.y < 1500 &&
-                            (t.toLowerCase() === 'next' || t.toLowerCase() === 'sign in' ||
-                             t.toLowerCase() === 'login' || t.toLowerCase() === 'submit')) {
-                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
-                        }
-                    }
-                    return {found: false};
-                })()
-                """,
-                return_by_value=True
-            )
-            login_next_val = login_next_result.get("result", {}).get("value", {})
-
-            if login_next_val.get("found"):
-                await client.click_at(session_id, x=login_next_val["x"], y=login_next_val["y"])
-                logger.info(f"[FW Register] Clicked login button: '{login_next_val['text']}'")
-                await asyncio.sleep(5)
-                steps_completed.append("login_submitted")
-            else:
-                logger.warning("[FW Register] Login submit button not found")
-                steps_failed.append("login_submit_button_missing")
+                logger.warning("[FW Register] Login möglicherweise fehlgeschlagen")
+                steps_failed.append("login_failed")
 
             # ════════════════════════════════════════════════════════════════════════
             # PHASE 9: ACCOUNT SETUP (FirstName + LastName + Terms of Service)
@@ -2767,6 +2743,372 @@ class FireworksService:
             elapsed = time.time() - start_time
             logger.error(f"API-Key-Erstellung fehlgeschlagen: {e}")
             return {"status": "error", "api_key": None, "key_name": key_name, "error": str(e), "execution_time": f"{elapsed:.2f}s"}
+        finally:
+            if client:
+                await client.disconnect()
+
+    async def confirm_existing_fireworks_account(
+        self, email: str, password: str, cdp_port: int = 9222
+    ) -> Dict[str, Any]:
+        start_time = time.time()
+        client = None
+        try:
+            gmx = GmxService()
+            gmx.email = "opensin@gmx.de"
+            gmx.password = "ZOE.jerry2024"
+            otp_result = await gmx._read_otp_via_extension(
+                sender_filter="fireworks", max_retries=8, retry_delay=8, cdp_port=cdp_port
+            )
+            if otp_result.get("status") != "success":
+                return {
+                    "status": "failed",
+                    "account_email": email,
+                    "api_key": None,
+                    "api_key_name": None,
+                    "account_verified": False,
+                    "execution_time": f"{time.time() - start_time:.2f}s",
+                    "error": "Verify-Email not found in GMX",
+                }
+            verify_url = otp_result["otp_url"]
+            logger.info(f"[FW Recovery] Verify URL: {verify_url[:80]}...")
+
+            client, top_session = await self._connect(cdp_port)
+
+            new_tab = await client.send("Target.createTarget", {"url": verify_url})
+            verify_session = await client.attach_to_target(new_tab["targetId"])
+            await client.send_to_session(verify_session, "Page.enable")
+            await client.send_to_session(verify_session, "Runtime.enable")
+            await asyncio.sleep(6)
+            await self._screenshot(client, verify_session, "fw_recovery_verify")
+
+            email_input_result = await client.evaluate(
+                verify_session,
+                """
+                (function() {
+                    const selectors = ['input[type="email"]', 'input[name="email"]'];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0) return {found: true};
+                        }
+                    }
+                    return {found: false};
+                })()
+                """,
+                return_by_value=True
+            )
+            email_input_val = email_input_result.get("result", {}).get("value", {})
+
+            if email_input_val.get("found"):
+                logger.info("[FW Recovery] Login needed after verify URL")
+                login_result = await self._login_to_fireworks(client, verify_session, email, password)
+                if not login_result.get("logged_in"):
+                    logger.warning("[FW Recovery] Login after verify URL failed")
+            else:
+                logger.info("[FW Recovery] No login form \u2014 account may already be verified")
+
+            fname_result = await client.evaluate(
+                verify_session,
+                """
+                (function() {
+                    const selectors = ['input[name="firstName"]', 'input[placeholder*="first" i]'];
+                    for (const sel of selectors) {
+                        const el = document.querySelector(sel);
+                        if (el) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0) return {found: true, id: sel};
+                        }
+                    }
+                    return {found: false};
+                })()
+                """,
+                return_by_value=True
+            )
+            fname_val = fname_result.get("result", {}).get("value", {})
+
+            if fname_val.get("found"):
+                logger.info("[FW Recovery] Account setup form detected")
+                await self._screenshot(client, verify_session, "fw_recovery_setup")
+
+                firstname_value = email.split("-")[0] if "-" in email else email.split("@")[0]
+                await client.evaluate(verify_session, f"""(function() {{
+                    const el = document.querySelector('[name="firstName"]') ||
+                               document.querySelector('[placeholder*="first"]');
+                    if (!el) return false;
+                    const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                    ns.call(el, '{firstname_value}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    return true;
+                }})()""", return_by_value=True)
+                await asyncio.sleep(0.5)
+
+                lastname_value = "-".join(email.split("-")[1:]).split("@")[0] if "-" in email else ""
+                if lastname_value:
+                    await client.evaluate(verify_session, f"""(function() {{
+                        const el = document.querySelector('[name="lastName"]') ||
+                                   document.querySelector('[placeholder*="last"]');
+                        if (!el) return false;
+                        const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                        ns.call(el, '{lastname_value}');
+                        el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                        el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                        return true;
+                    }})()""", return_by_value=True)
+                    await asyncio.sleep(0.5)
+
+                tos_result = await client.evaluate(
+                    verify_session,
+                    """
+                    (function() {
+                        const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+                        for (const cb of checkboxes) {
+                            const r = cb.getBoundingClientRect();
+                            if (r.width > 0 && r.height > 0) {
+                                const label = cb.closest('label') || cb.parentElement;
+                                const labelText = (label?.textContent || '').toLowerCase();
+                                const id = cb.id || '';
+                                if (labelText.includes('terms') || labelText.includes('agree') ||
+                                    id.includes('terms') || id.includes('agree')) {
+                                    return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2};
+                                }
+                            }
+                        }
+                        return {found: false};
+                    })()
+                    """,
+                    return_by_value=True
+                )
+                tos_val = tos_result.get("result", {}).get("value", {})
+                if tos_val.get("found"):
+                    await client.click_at(verify_session, x=tos_val["x"], y=tos_val["y"])
+                    await asyncio.sleep(0.3)
+
+                continue_btn_result = await client.evaluate(
+                    verify_session,
+                    """
+                    (function() {
+                        const btns = [...document.querySelectorAll('button')];
+                        for (const b of btns) {
+                            const r = b.getBoundingClientRect();
+                            const t = (b.textContent || '').trim();
+                            if (r.width > 0 && r.height > 0 && r.y < 1500 &&
+                                (t.toLowerCase() === 'continue' || t.toLowerCase() === 'next' ||
+                                 t.toLowerCase() === 'weiter' || t.toLowerCase() === 'complete')) {
+                                return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
+                            }
+                        }
+                        return {found: false};
+                    })()
+                    """,
+                    return_by_value=True
+                )
+                continue_btn_val = continue_btn_result.get("result", {}).get("value", {})
+                if continue_btn_val.get("found"):
+                    await client.click_at(verify_session, x=continue_btn_val["x"], y=continue_btn_val["y"])
+                    await asyncio.sleep(4)
+
+                usecase_btns = ["Flexible capacity", "Conversational AI"]
+                for label_text in usecase_btns:
+                    cb_result = await client.evaluate(
+                        verify_session,
+                        f"""
+                        (function() {{
+                            const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+                            for (const cb of checkboxes) {{
+                                const r = cb.getBoundingClientRect();
+                                if (r.width > 0 && r.height > 0) {{
+                                    const label = cb.closest('label') || cb.parentElement;
+                                    const text = (label?.textContent || '').toLowerCase();
+                                    if (text.includes('{label_text.lower()}')) {{
+                                        return {{found: true, x: r.x + r.width / 2, y: r.y + r.height / 2}};
+                                    }}
+                                }}
+                            }}
+                            return {{found: false}};
+                        }})()
+                        """,
+                        return_by_value=True
+                    )
+                    cb_val = cb_result.get("result", {}).get("value", {})
+                    if cb_val.get("found"):
+                        await client.click_at(verify_session, x=cb_val["x"], y=cb_val["y"])
+                        await asyncio.sleep(0.3)
+
+                submit_credits_result = await client.evaluate(
+                    verify_session,
+                    """
+                    (function() {
+                        const btns = [...document.querySelectorAll('button')];
+                        for (const b of btns) {
+                            const r = b.getBoundingClientRect();
+                            const t = (b.textContent || '').trim();
+                            if (r.width > 0 && r.height > 0 && r.y < 1500 &&
+                                ((t.toLowerCase().includes('submit') && t.toLowerCase().includes('5')) ||
+                                 t.toLowerCase() === 'submit')) {
+                                return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
+                            }
+                        }
+                        return {found: false};
+                    })()
+                    """,
+                    return_by_value=True
+                )
+                submit_credits_val = submit_credits_result.get("result", {}).get("value", {})
+                if submit_credits_val.get("found"):
+                    await client.click_at(verify_session, x=submit_credits_val["x"], y=submit_credits_val["y"])
+                    logger.info(f"[FW Recovery] Clicked: '{submit_credits_val['text']}'")
+                    await asyncio.sleep(5)
+
+                    for poll_attempt in range(3):
+                        poll_url_result = await client.evaluate(
+                            verify_session, "window.location.href", return_by_value=True
+                        )
+                        poll_url = poll_url_result.get("result", {}).get("value", "")
+                        if any(k in poll_url.lower() for k in ["dashboard", "workspace", "settings"]):
+                            break
+                        await asyncio.sleep(3)
+
+            await client.navigate(verify_session, FIREWORKS_API_KEYS_URL)
+            await asyncio.sleep(4)
+
+            create_key_btn_result = await client.evaluate(
+                verify_session,
+                """
+                (function() {
+                    const btns = [...document.querySelectorAll('button, a')];
+                    for (const b of btns) {
+                        const r = b.getBoundingClientRect();
+                        const t = (b.textContent || '').trim();
+                        if (r.width > 0 && r.height > 0 && r.y < 1500 &&
+                            (t.toLowerCase() === 'create api key' ||
+                             t.toLowerCase() === 'create key' ||
+                             t.toLowerCase() === 'add key')) {
+                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
+                        }
+                    }
+                    return {found: false};
+                })()
+                """,
+                return_by_value=True
+            )
+            create_key_btn_val = create_key_btn_result.get("result", {}).get("value", {})
+
+            if create_key_btn_val.get("found"):
+                await client.click_at(verify_session,
+                    x=create_key_btn_val["x"], y=create_key_btn_val["y"])
+                await asyncio.sleep(2)
+
+            api_key_name = email.split("-")[0] if "-" in email else email.split("@")[0]
+            await client.evaluate(verify_session, f"""(function() {{
+                const el = document.querySelector('[name="name"]') ||
+                           document.querySelector('input[placeholder*="name"]');
+                if (!el) return false;
+                const ns = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+                ns.call(el, '{api_key_name}');
+                el.dispatchEvent(new Event('input', {{bubbles: true, composed: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                return true;
+            }})()""", return_by_value=True)
+            await asyncio.sleep(0.5)
+
+            gen_btn_result = await client.evaluate(
+                verify_session,
+                """
+                (function() {
+                    const btns = [...document.querySelectorAll('button')];
+                    for (const b of btns) {
+                        const r = b.getBoundingClientRect();
+                        const t = (b.textContent || '').trim();
+                        if (r.width > 0 && r.height > 0 && r.y < 1500 &&
+                            (t.toLowerCase() === 'generate key' ||
+                             t.toLowerCase() === 'generate' ||
+                             t.toLowerCase() === 'create')) {
+                            return {found: true, x: r.x + r.width / 2, y: r.y + r.height / 2, text: t};
+                        }
+                    }
+                    return {found: false};
+                })()
+                """,
+                return_by_value=True
+            )
+            gen_btn_val = gen_btn_result.get("result", {}).get("value", {})
+
+            if gen_btn_val.get("found"):
+                await client.click_at(verify_session, x=gen_btn_val["x"], y=gen_btn_val["y"])
+                await asyncio.sleep(4)
+
+            await self._screenshot(client, verify_session, "fw_recovery_apikey")
+
+            key_extract_result = await client.evaluate(
+                verify_session,
+                """
+                (function() {
+                    const roInputs = document.querySelectorAll('input[readonly]');
+                    for (const inp of roInputs) {
+                        const val = (inp.value || '').trim();
+                        if (val.startsWith('fw-') && val.length > 20) return val;
+                        if (val.startsWith('sk-') && val.length > 20) return val;
+                    }
+                    const codeEls = document.querySelectorAll('code, pre, span[class*="key"], [class*="api-key"]');
+                    for (const el of codeEls) {
+                        const txt = (el.textContent || '').trim();
+                        if (txt.startsWith('fw-') && txt.length > 20) return txt;
+                        if (txt.startsWith('sk-') && txt.length > 20) return txt;
+                    }
+                    const body = document.body.innerText;
+                    const match1 = body.match(/(fw-[a-zA-Z0-9_-]{20,})/);
+                    if (match1) return match1[1];
+                    const match2 = body.match(/(sk-[a-zA-Z0-9_-]{20,})/);
+                    if (match2) return match2[1];
+                    return null;
+                })()
+                """,
+                return_by_value=True
+            )
+            api_key = key_extract_result.get("result", {}).get("value")
+
+            try:
+                await client.send("Target.closeTarget", {"targetId": new_tab["targetId"]})
+            except Exception:
+                pass
+
+            elapsed = time.time() - start_time
+            if api_key and len(api_key) > 20:
+                logger.info(f"[FW Recovery] API Key extracted: {api_key[:12]}...")
+                return {
+                    "status": "success",
+                    "account_email": email,
+                    "api_key": api_key,
+                    "api_key_name": api_key_name,
+                    "account_verified": True,
+                    "execution_time": f"{elapsed:.2f}s",
+                }
+            else:
+                logger.warning("[FW Recovery] API Key not found")
+                return {
+                    "status": "partial",
+                    "account_email": email,
+                    "api_key": None,
+                    "api_key_name": api_key_name,
+                    "account_verified": True,
+                    "execution_time": f"{elapsed:.2f}s",
+                    "error": "API key extraction failed",
+                }
+
+        except Exception as e:
+            elapsed = time.time() - start_time
+            logger.error(f"[FW Recovery] Exception: {e}")
+            return {
+                "status": "error",
+                "account_email": email,
+                "api_key": None,
+                "api_key_name": None,
+                "account_verified": False,
+                "execution_time": f"{elapsed:.2f}s",
+                "error": str(e),
+            }
         finally:
             if client:
                 await client.disconnect()

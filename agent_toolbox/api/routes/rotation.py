@@ -32,7 +32,9 @@
 """
 import time
 import logging
+from typing import Optional, Dict, Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
@@ -43,6 +45,29 @@ from agent_toolbox.api.schemas import RotationRequest, RotationResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/rotation", tags=["Account Rotation"])
+
+GMX_ALIAS_API_URL = "http://localhost:8001"
+
+
+async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Helper: Call the standalone gmx-alias-tool API on port 8001."""
+    async with httpx.AsyncClient(timeout=120.0) as http:
+        r = await http.request(method, f"{GMX_ALIAS_API_URL}{path}", json=data)
+        r.raise_for_status()
+        return r.json()
+
+
+async def _rotate_alias_via_api(alias_name: Optional[str] = None) -> Dict[str, Any]:
+    """Rotate GMX alias via the external gmx-alias-tool API.
+
+    Maps the external API response to the format expected by the rotation flow.
+    External API returns 'alias_email' for the created alias.
+    """
+    result = await _call_alias_api("POST", "/alias/rotate", {"alias_name": alias_name})
+    # Normalize response: external API uses 'alias_email', flow expects 'created_alias'
+    if result.get("status") in ("success", "partial"):
+        result["created_alias"] = result.get("alias_email")
+    return result
 
 
 def _require_browser():
@@ -136,30 +161,14 @@ async def full_rotation(request: RotationRequest):
             )
 
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation
+        #  STEP 1: GMX Alias Rotation (via external gmx-alias-tool API)
         # ════════════════════════════════════════════════════════════════════════
         #
-        # Lösche alten Alias (falls vorhanden) und erstelle einen neuen.
-        # rotate_alias() liefert den neuen Alias-Namen zurück.
+        # Delegiert an die standalone gmx-alias-tool FastAPI auf port 8001.
+        # POST /alias/rotate → {status, alias_email, steps_completed, steps_failed}
         #
-        # GMX FreeMail beschränkt: NUR EIN Alias gleichzeitig.
-        # → Alten Alias löschen bevor neuen erstellen.
-        #
-        # rotate_alias() intern:
-        # 1. Navigiere zu navigator.gmx.net/mail_settings/email_addresses
-        # 2. Lösche existierenden Alias (falls vorhanden, mit Bestätigungs-Dialog)
-        # 3. Generiere neuen Namen: {adjektiv}-{substantiv}-{3stellig}@gmx.de
-        # 4. Erstelle neuen Alias im Formular
-        # 5. Erfolg bestätigen
-        #
-        # Ergebnis: alias_result = {status, created_alias, ...}
-        #
-        logger.info("=== GMX Alias Rotation ===")
-        gmx_svc = get_gmx_service()
-        alias_result = await gmx_svc.rotate_alias(
-            new_alias_name=request.new_alias_name,
-            cdp_port=cdp_port,
-        )
+        logger.info("=== GMX Alias Rotation (external API) ===")
+        alias_result = await _rotate_alias_via_api(request.new_alias_name)
 
         if alias_result["status"] in ("success", "partial"):
             gmx_alias = alias_result.get("created_alias")

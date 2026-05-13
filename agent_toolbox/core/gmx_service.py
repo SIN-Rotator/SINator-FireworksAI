@@ -135,23 +135,19 @@ class GmxService:
         ws_url = await get_browser_ws_endpoint(cdp_port)
         client = CDPClient(ws_url)
         await client.connect()
-
+        
+        # Finde das GMX Tab spezifisch — nicht einfach das erste Page-Target
         targets = await client.get_targets()
         target = None
-
-        for t in reversed(targets):
+        
+        # Priorität 1: GMX Tab mit SID (eingeloggt)
+        for t in targets:
             url = t.get("url", "")
             if t.get("type") == "page" and "sid=" in url and "gmx.net" in url:
                 target = t
                 break
-
-        if not target:
-            for t in reversed(targets):
-                url = t.get("url", "")
-                if t.get("type") == "page" and "gmx.net" in url:
-                    target = t
-                    break
-
+        
+        # Priorität 2: GMX Tab ohne SID
         if not target:
             target = await get_page_target(client, url_filter="gmx.net")
         
@@ -280,7 +276,7 @@ class GmxService:
                 # Navigate to mail_settings with SID
                 settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
                 await client.navigate(session_id, settings_url)
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
                 return {"success": True, "current_url": settings_url, "sid": sid}
 
         # Navigate to GMX homepage first (unless already there)
@@ -324,7 +320,7 @@ class GmxService:
                 """,
                 return_by_value=True,
             )
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
         # Extract SID from mail page URL
         url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
@@ -338,7 +334,7 @@ class GmxService:
             # Navigate to mail_settings with SID
             settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
             await client.navigate(session_id, settings_url)
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             return {"success": True, "current_url": settings_url, "sid": sid}
 
         return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren"}
@@ -475,7 +471,7 @@ class GmxService:
             }
             return false;
         })()""", return_by_value=True)
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
         ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
         url = ur.get("result", {}).get("value", "") or ""
@@ -532,7 +528,7 @@ class GmxService:
                 }
                 return {clicked: false};
             })()""", return_by_value=True)
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
             ur = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             url = ur.get("result", {}).get("value", "") or ""
@@ -902,8 +898,7 @@ class GmxService:
         return None
 
     async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
-        """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken.
-        Klickt ALLE OK-Buttons (nicht nur ersten) da mehrere auf der Page sein können."""
+        """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken."""
         import subprocess, re
         result = subprocess.run(
             ["cua-driver", "call", "get_window_state"],
@@ -913,34 +908,51 @@ class GmxService:
         state = json.loads(result.stdout)
         lines = state.get('tree_markdown', '').split('\n')
 
-        all_ok_buttons = []
+        # Search for OK button — CUA format: "- [element_index] AXButton \"OK\""
         for line in lines:
             s = line.strip()
             m = re.search(r'-\s*\[(\d+)\]\s*AXButton\s*"OK"', s)
             if m:
-                all_ok_buttons.append((int(m.group(1)), s[:120]))
+                el = int(m.group(1))
+                logger.info(f"CUA double-click OK button [{el}]: {s[:120]}")
+                # First click
+                subprocess.run(
+                    ["cua-driver", "call", "click"],
+                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                    capture_output=True, text=True, timeout=10
+                )
+                await asyncio.sleep(0.5)
+                # Second click (safety — sometimes GMX needs two clicks)
+                subprocess.run(
+                    ["cua-driver", "call", "click"],
+                    input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                    capture_output=True, text=True, timeout=10
+                )
+                return True
+        
+        # Fallback: any button with text containing "OK"
+        for line in lines:
+            s = line.strip()
+            if 'AXButton' in s and '"OK"' in s:
+                m = re.search(r'-\s*\[(\d+)\]', s)
+                if m:
+                    el = int(m.group(1))
+                    logger.info(f"CUA double-click OK (fallback) [{el}]: {s[:120]}")
+                    subprocess.run(
+                        ["cua-driver", "call", "click"],
+                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                        capture_output=True, text=True, timeout=10
+                    )
+                    await asyncio.sleep(0.5)
+                    subprocess.run(
+                        ["cua-driver", "call", "click"],
+                        input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
+                        capture_output=True, text=True, timeout=10
+                    )
+                    return True
 
-        if not all_ok_buttons:
-            logger.warning("OK button not found in CUA AX tree")
-            return False
-
-        logger.info(f"Found {len(all_ok_buttons)} OK buttons — clicking ALL")
-        for el, desc in all_ok_buttons:
-            logger.info(f"CUA double-click OK button [{el}]: {desc}")
-            subprocess.run(
-                ["cua-driver", "call", "click"],
-                input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                capture_output=True, text=True, timeout=10
-            )
-            await asyncio.sleep(0.5)
-            subprocess.run(
-                ["cua-driver", "call", "click"],
-                input=json.dumps({"pid": pid, "window_id": window_id, "element_index": el}),
-                capture_output=True, text=True, timeout=10
-            )
-            await asyncio.sleep(0.3)
-
-        return True
+        logger.warning("OK button not found in CUA AX tree")
+        return False
 
     async def delete_existing_alias(self, cdp_port: int = 9222) -> Dict[str, Any]:
         """Löscht einen existierenden GMX Alias.
@@ -1514,11 +1526,9 @@ class GmxService:
                     }
 
                 if current_url:
-                    logger.info(f"Verify miss — full refresh cycle")
-                    await client.navigate(session_id, "https://www.gmx.net/")
-                    await asyncio.sleep(3)
-                    await client.navigate(session_id, "https://bap.navigator.gmx.net/mail_settings")
-                    await asyncio.sleep(6)
+                    logger.info(f"Verify miss — force-reload page: {current_url[:80]}")
+                    await client.navigate(session_id, current_url)
+                    await asyncio.sleep(5)
                     ok = await self._verify_alias_in_iframe(
                         client, session_id, alias_email, present=True, max_wait_s=8.0,
                     )
@@ -1629,7 +1639,7 @@ class GmxService:
                 delete_info = await self._find_delete_icon_coords(client, session_id)
                 if delete_info:
                     await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(3)
 
                     # CUA click OK button
                     import subprocess as sp
@@ -1647,13 +1657,6 @@ class GmxService:
                                 break
                         if cua_pid and cua_wid:
                             ok = await self._cua_click_ok_button(cua_pid, cua_wid)
-                            if not ok:
-                                for retry in range(6):
-                                    await asyncio.sleep(3)
-                                    logger.info(f"CUA OK retry {retry+1}/6...")
-                                    ok = await self._cua_click_ok_button(cua_pid, cua_wid)
-                                    if ok:
-                                        break
                             if ok:
                                 # Ehrliche Verifikation: alias_text ist die volle
                                 # "name@gmx.de" Adresse. Wir warten bis sie WEG ist.
@@ -1671,43 +1674,10 @@ class GmxService:
                                     steps_failed.append("alias_delete_verify")
                             else:
                                 steps_failed.append("confirm_button_not_found")
-                                logger.warning("Delete confirm button not found — skip create")
-                                return {
-                                    "status": "partial",
-                                    "deleted_alias": None,
-                                    "created_alias": None,
-                                    "created_alias_name": new_alias_name,
-                                    "steps_completed": steps_completed,
-                                    "steps_failed": steps_failed,
-                                    "execution_time": f"{time.time() - start_time:.2f}s",
-                                    "error": "Delete dialog OK button not found",
-                                }
                         else:
                             steps_failed.append("cua_window_not_found")
-                            logger.warning("CUA window not found — skip create")
-                            return {
-                                "status": "partial",
-                                "deleted_alias": None,
-                                "created_alias": None,
-                                "created_alias_name": new_alias_name,
-                                "steps_completed": steps_completed,
-                                "steps_failed": steps_failed,
-                                "execution_time": f"{time.time() - start_time:.2f}s",
-                                "error": "GMX Chrome window not found",
-                            }
                     except Exception:
                         steps_failed.append("cua_confirm_error")
-                        logger.warning("CUA confirm error — skip create")
-                        return {
-                            "status": "partial",
-                            "deleted_alias": None,
-                            "created_alias": None,
-                            "created_alias_name": new_alias_name,
-                            "steps_completed": steps_completed,
-                            "steps_failed": steps_failed,
-                            "execution_time": f"{time.time() - start_time:.2f}s",
-                            "error": "CUA confirm error",
-                        }
                 else:
                     steps_failed.append("trash_icon_not_found")
             else:
@@ -1794,11 +1764,9 @@ class GmxService:
                     break
 
                 if current_url:
-                    logger.info(f"Verify miss — full refresh cycle")
-                    await client.navigate(session_id, "https://www.gmx.net/")
-                    await asyncio.sleep(3)
-                    await client.navigate(session_id, "https://bap.navigator.gmx.net/mail_settings")
-                    await asyncio.sleep(6)
+                    logger.info(f"Verify miss — force-reload: {current_url[:80]}")
+                    await client.navigate(session_id, current_url)
+                    await asyncio.sleep(5)
                     ok = await self._verify_alias_in_iframe(
                         client, session_id, current_alias_email,
                         present=True, max_wait_s=8.0,
@@ -2093,7 +2061,7 @@ class GmxService:
                 """,
                 return_by_value=True,
             )
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             current_url = url_result.get("result", {}).get("value", "") or ""
@@ -2234,7 +2202,7 @@ class GmxService:
             r2 = await client.evaluate(session_id, pw_js, return_by_value=True)
             val2 = r2.get("result", {}).get("value", {})
             logger.info(f"[Flow 0] Password step: {val2}")
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             # Verify login success - click E-Mail via CDP click_at (find coordinates first)
             email_verify_js = """
@@ -2266,7 +2234,7 @@ class GmxService:
             if verify_val.get("found"):
                 logger.info(f"[Flow 0] Clicking E-Mail at ({verify_val['x']}, {verify_val['y']})...")
                 await client.click_at(session_id, verify_val["x"], verify_val["y"])
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             final_url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             final_url = final_url_result.get("result", {}).get("value", "") or ""
@@ -2336,7 +2304,7 @@ class GmxService:
                 if((e.textContent||'').trim()===t){e.click();return true;}
                 if(e.shadowRoot&&c(e.shadowRoot,t,d+1))return true;}
                 return false;}return c(document.body,'E-Mail',0);})()''')
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             return {"status": "success", "current_url": url_result.get("result", {}).get("value", "")}
@@ -2689,7 +2657,7 @@ class GmxService:
                     # Fallback: CDP click auf bekannte Koordinaten der E-Mail
                     # Navigation im Header (x=302, y=44).
                     await client.click_at(session_id, x=302, y=44)
-                await asyncio.sleep(10)
+                await asyncio.sleep(5)
 
                 url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
                 current_url = url_result.get("result", {}).get("value", "")
@@ -2744,7 +2712,7 @@ class GmxService:
             # Navigate to iframe to establish fresh webmailer session
             logger.info(f"Navigiere zu webmailer: {iframe_src[:80]}...")
             await client.navigate(session_id, iframe_src)
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
             # Get jsessionid from BROWSER COOKIES (set by webmailer, not from stale iframe_src)
             # The webmailer sets a JSESSIONID cookie. We extract it from the browser's
@@ -2780,7 +2748,7 @@ class GmxService:
             # The webmailer was already loaded during jsessionid extraction.
             # Wait additional time for list-mail-item elements to render.
             # ════════════════════════════════════════════════════════════════════════
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
 
             # ════════════════════════════════════════════════════════════════════════
             # NOTE: Baseline scan removed. We fetch ALL found items to maximize
@@ -2806,75 +2774,152 @@ class GmxService:
             for i in range(max_retries):
                 logger.info(f"OTP-Suche: Versuch {i + 1}/{max_retries} (bekannte IDs: {len(known_mail_ids)})")
 
-                safe_filter = sender_filter.lower()
+                safe_filter = sender_filter.lower().replace("'", "\\'")
+                # JS Funktion die rekursiv durch Shadow DOMs traversiert.
+                # WICHTIG: `el.shadowRoot` ist nur verfügbar für OPEN shadow roots.
+                # GMX's Webmailer nutzt für <webmailer-mail-list> und
+                # <smartsearch-root> OPEN shadow roots, weshalb unser
+                # rekursiver Walk funktioniert.
+                items_js = f'''(function() {{
+                    function findItems(root) {{
+                        let items = [];
+                        const all = root.querySelectorAll("*");
+                        for (const el of all) {{
+                            if (el.tagName.toLowerCase() === "list-mail-item") {{
+                                const text = (el.textContent || "").toLowerCase();
+                                if (text.includes("{safe_filter}")) {{
+                                    const idAttr = el.getAttribute("id");
+                                    const mailId = idAttr ? idAttr.replace(/^id/, "") : null;
+                                    if (mailId) {{
+                                        items.push({{
+                                            mailId: mailId,
+                                            text: el.textContent.trim().slice(0, 120).replace(/\\s+/g, " "),
+                                        }});
+                                    }}
+                                }}
+                            }}
+                            if (el.shadowRoot) {{
+                                items = items.concat(findItems(el.shadowRoot));
+                            }}
+                        }}
+                        return items;
+                    }}
+                    return findItems(document.body);
+                }})()'''
+                items_result = await client.evaluate(session_id, items_js, return_by_value=True)
+                items = items_result.get('result', {}).get('value', [])
+                logger.info(f"Gefunden: {len(items)} list-mail-item mit '{sender_filter}'")
 
-                try:
-                    await client.send_to_session(session_id, "Accessibility.enable")
-                    await asyncio.sleep(1)
-                except Exception:
-                    pass
+                if items:
+                    # Filtere bekannte mailIds heraus
+                    new_items = [it for it in items if it.get("mailId") not in known_mail_ids]
+                    if len(new_items) < len(items):
+                        logger.info(f"{len(items) - len(new_items)} bekannte/stale Emails übersprungen")
 
-                ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
-                ax_nodes = ax_result.get("nodes", [])
+                    if new_items:
+                        # ───────────────────────────────────────────────────────────
+                        # COOKIE EXTRACTION (CDP Network.getAllCookies)
+                        # ───────────────────────────────────────────────────────────
+                        # Wir brauchen ALLE GMX Cookies für die HTTP-Anfrage.
+                        # CRITICAL FIX (2026-05-10): Using ALL GMX cookies (79+) causes
+                        # GMX mailbody API to return "413 Request Entity Too Large"
+                        # with "Bitte loeschen Sie Ihre Browser Cookies" error.
+                        # ONLY use essential GMX session cookies — this makes the
+                        # mailbody API return 200 instead of 413!
+                        # ───────────────────────────────────────────────────────────
+                        cookies_res = await client.send_to_session(session_id, "Network.getAllCookies")
+                        cookies = cookies_res.get("cookies", [])
+                        essential_cookies = {"JSESSIONID", "SESSION", "lps", "navigator", "iac_token"}
+                        cookie_dict = {}
+                        for c in cookies:
+                            if c.get("name") in essential_cookies:
+                                cookie_dict[c.get("name")] = c.get("value", "")
 
-                verify_nodes = []
-                for n in ax_nodes:
-                    name = (n.get("name", {}) or {}).get("value", "")
-                    if isinstance(name, str) and "verify" in name.lower() and "fireworks" in name.lower():
-                        verify_nodes.append(n)
+                        headers = {
+                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+                            "Referer": "https://3c-bap.gmx.net/mail/client/start",
+                        }
 
-                logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} verify-fireworks hits")
+                        # ═════════════���══════════════════════════════════════════════════
+                        # PHASE 5: EMAIL BODY FETCHING VIA GMX INTERNAL API
+                        # ──────────────────────────────────────────────────────────────
+                        # Wir iterieren über die ersten 5 matching Emails.
+                        # Die Emails sind nach Eingangszeit sortiert (neueste zuerst).
+                        # Wir priorisieren Verify-Emails ("verify" / "confirm" im Text)
+                        # gegenüber Welcome-Emails, indem wir ALLE Emails durchgehen
+                        # und die erste mit einer Confirm-URL zurückgeben.
+                        # ════════════════════════════════════════════════════════════════
+                        async with httpx.AsyncClient(cookies=cookie_dict, follow_redirects=True, timeout=20) as http:
+                            for item in new_items[:5]:  # Max 5 Emails pro Iteration
+                                mail_id = item.get("mailId")
+                                if not mail_id:
+                                    continue
+                                logger.info(f"Versuche mailId={mail_id} (NEU) | {item.get('text', '')[:60]}")
 
-                if verify_nodes:
-                    target_node = verify_nodes[0]
-                    backend_id = target_node.get("backendDOMNodeId")
+                                # Zwei Varianten probieren:
+                                #   /true  → mit externen Bildern/Content
+                                #   /false → ohne externen Content
+                                # Die Confirm-URL ist im Plain-Text/HTML der Email.
+                                urls_to_try = [
+                                    f"https://3c-bap.gmx.net/mail/client/mailbody/tmai{mail_id}/true;jsessionid={jsessionid}",
+                                    f"https://3c-bap.gmx.net/mail/client/mailbody/tmai{mail_id}/false;jsessionid={jsessionid}",
+                                ]
 
-                    if backend_id:
-                        try:
-                            quad = await client.send_to_session(session_id, "DOM.getContentQuads", {"backendNodeId": backend_id})
-                            quads = quad.get("quads", [])
-                            if quads and quads[0]:
-                                q = quads[0]
-                                cx = (q[0] + q[4]) / 2
-                                cy = (q[1] + q[5]) / 2
-                                logger.info(f"Click verify email at ({cx:.0f},{cy:.0f})")
+                                for email_url in urls_to_try:
+                                    try:
+                                        resp = await http.get(email_url, headers=headers)
+                                        # Validierung: HTTP 200 und Content > 1000 Bytes
+                                        # (technische Fehlerseiten sind typischerweise < 200 Bytes)
+                                        if resp.status_code == 200 and len(resp.text) > 1000:
+                                            # ───────────────────────────────────────
+                                            # CONFIRM URL EXTRACTION
+                                            # ───────────────────────────────────────
+                                            # Regex findet ALLE app.fireworks.ai URLs.
+                                            # Dann filtern wir auf URLs die Bestätigungs-
+                                            # relevante Keywords enthalten.
+                                            # Achtung: HTML-escaping in URLs!
+                                            #   &amp;  → muss zu & dekodiert werden.
+                                            # ───────────────────────────────────────
+                                            urls = re.findall(r'https://app\.fireworks\.ai/[^\s"\'<>]+', resp.text)
+                                            confirm_candidates = [
+                                                u for u in urls
+                                                if any(k in u.lower() for k in ["confirm", "verify", "token", "auth", "activate", "signup"])
+                                            ]
+                                            if confirm_candidates:
+                                                confirm_url = html_module.unescape(confirm_candidates[0])
+                                                found_mail_id = mail_id
+                                                logger.info(f"OTP-URL gefunden: {confirm_url[:80]}...")
+                                                break
+                                    except Exception as e:
+                                        logger.warning(f"HTTP fetch fehlgeschlagen für {email_url[:80]}: {e}")
 
-                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
-                                await asyncio.sleep(0.2)
-                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                await asyncio.sleep(0.15)
-                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                await asyncio.sleep(5)
+                                if confirm_url:
+                                    break
 
-                                all_targets = await client.get_targets()
-                                for t in all_targets:
-                                    tu = t.get("url", "")
-                                    if "mailbody" in tu:
-                                        logger.info(f"Mailbody OOPIF: {tu[:120]}")
-                                        try:
-                                            ifs = await client.attach_to_target(t["targetId"])
-                                            await client.send_to_session(ifs, "Runtime.enable")
-                                            body_r = await client.evaluate(ifs, 'document.body ? document.body.innerText : ""', return_by_value=True)
-                                            b = body_r.get("result", {}).get("value", "") or ""
-                                            if not b.strip():
-                                                html_r = await client.evaluate(ifs, 'document.body ? document.body.innerHTML : ""', return_by_value=True)
-                                                b = html_r.get("result", {}).get("value", "") or ""
-                                            urls = re.findall(r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+', b)
-                                            if urls:
-                                                elapsed = time.time() - start_time
-                                                return {"status": "success", "otp_url": html_module.unescape(urls[0]), "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
-                                        except Exception:
-                                            pass
-                                        await asyncio.sleep(0.1)
-                        except Exception as e:
-                            logger.warning(f"AXTree click error: {e}")
+                if confirm_url:
+                    break
 
-                logger.info(f"Kein neues OTP gefunden, warte {retry_delay}ms...")
-                await asyncio.sleep(retry_delay / 1000.0 if retry_delay > 1000 else retry_delay)
+                # Alle gesehenen mailIds als "bekannt" markieren (auch alte)
+                # damit sie in zukünftigen Iterationen übersprungen werden.
+                for it in items:
+                    mid = it.get("mailId")
+                    if mid:
+                        known_mail_ids.add(mid)
 
-            # No confirm URL found — return not_found
+                if i < max_retries - 1:
+                    logger.info(f"Kein neues OTP gefunden, warte {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+
             elapsed = time.time() - start_time
-            return {"status": "not_found", "otp_url": None, "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
+            return {
+                "status": "success" if confirm_url else "not_found",
+                "otp_url": confirm_url,
+                "mail_id": found_mail_id,
+                "execution_time": f"{elapsed:.2f}s",
+                "error": None if confirm_url else f"Nicht gefunden nach {max_retries} Versuchen",
+            }
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(f"OTP-Suche fehlgeschlagen: {e}")
@@ -2941,7 +2986,7 @@ class GmxService:
                             if (links[i].getAttribute('data-email-id') === '{mail_id}') {{links[i].click(); return;}}
                         }}
                     }})()""", return_by_value=True)
-                    await asyncio.sleep(10)
+                    await asyncio.sleep(5)
                     after_targets = await client.get_targets()
                     gmx_target = None
                     for t in after_targets:

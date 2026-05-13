@@ -11,6 +11,11 @@
 ║  POST /gmx/inbox/open          → GMX Inbox öffnen                           ║
 ║  POST /gmx/otp/read            → OTP aus GMX Inbox lesen                    ║
 ║                                                                              ║
+║  ⚡ ALIAS-VORGÄNGE DELEGIERT (2026-05-12):                                    ║
+║  /alias/delete, /alias/create, /alias/rotate sind jetzt an die               ║
+║  standalone gmx-alias-tool FastAPI auf port 8001 delegiert.                   ║
+║  Session-Check, Inbox und OTP bleiben lokal.                                  ║
+║                                                                              ║
 ║  WARUM KEIN PLAYWRIGHT PAGE?                                                 ║
 ║  Playwright's page interface crashed bei GMX Navigator SPA mit:              ║
 ║    ValueError: list.remove(x): x not in list                                 ║
@@ -22,7 +27,9 @@
 """
 import time
 import logging
+from typing import Optional, Dict, Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
@@ -40,6 +47,16 @@ from agent_toolbox.api.schemas import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/gmx", tags=["GMX Services"])
+
+GMX_ALIAS_API_URL = "http://localhost:8001"
+
+
+async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Helper: Call the standalone gmx-alias-tool API on port 8001."""
+    async with httpx.AsyncClient(timeout=120.0) as http:
+        r = await http.request(method, f"{GMX_ALIAS_API_URL}{path}", json=data)
+        r.raise_for_status()
+        return r.json()
 
 
 def _require_browser():
@@ -170,26 +187,18 @@ async def open_email_addresses():
 async def delete_alias():
     """
     Löscht einen existierenden GMX Alias.
-    
-    WICHTIG: GMX FreeMail erlaubt nur EINEN Alias gleichzeitig.
-    Vor dem Erstellen eines neuen Aliases MUSS der existierende gelöscht werden.
-    
-    FLOW:
-    1. Öffne E-Mail-Adressen Seite
-    2. Finde existierenden Alias (via Text-Scan im Shadow DOM)
-    3. Klicke Lösch-Button (via JS Shadow-DOM traversal)
-    4. Bestätige Lösch-Dialog
-    
+
+    Delegiert an die standalone gmx-alias-tool API auf port 8001.
+
     Returns:
         status: "success" | "no_alias" | "not_logged_in" | "error"
         deleted: True wenn gelöscht oder keiner vorhanden
         alias: Der gelöschte Alias (wenn gefunden)
     """
     t0 = time.time()
-    cdp_port = _require_browser()
-    
+
     try:
-        result = await get_gmx_service().delete_existing_alias(cdp_port=cdp_port)
+        result = await _call_alias_api("POST", "/alias/delete")
         return GmxAliasDeleteResponse(
             status=result["status"],
             deleted=result.get("deleted", False),
@@ -206,14 +215,12 @@ async def delete_alias():
 async def rotate_alias(request: GmxAliasRotateRequest = None):
     """
     ATOMISCHE Alias-Rotation: Löscht existierenden Alias und erstellt einen neuen.
-    
-    Dies ist der KERN-Endpunkt für kontinuierliche Account-Rotation. Beide
-    Operationen (delete + create) teilen sich eine CDP-Verbindung für maximale
-    Geschwindigkeit und Session-Stabilität.
-    
+
+    Delegiert an die standalone gmx-alias-tool API auf port 8001.
+
     Args:
         request.new_alias_name: Optionaler Alias-Name. Wenn None, wird generiert.
-        
+
     Returns:
         status: "success" | "partial" | "failed" | "error"
         deleted_alias: Die gelöschte Alias-Email (oder None)
@@ -223,19 +230,15 @@ async def rotate_alias(request: GmxAliasRotateRequest = None):
         steps_failed: Liste der fehlgeschlagenen Schritte
     """
     t0 = time.time()
-    cdp_port = _require_browser()
-    
+
     new_alias_name = request.new_alias_name if request else None
-    
+
     try:
-        result = await get_gmx_service().rotate_alias(
-            new_alias_name=new_alias_name,
-            cdp_port=cdp_port,
-        )
+        result = await _call_alias_api("POST", "/alias/rotate", {"alias_name": new_alias_name})
         return GmxAliasRotateResponse(
             status=result["status"],
             deleted_alias=result.get("deleted_alias"),
-            created_alias=result.get("created_alias"),
+            created_alias=result.get("alias_email"),
             created_alias_name=result.get("created_alias_name"),
             steps_completed=result.get("steps_completed", []),
             steps_failed=result.get("steps_failed", []),
@@ -251,21 +254,12 @@ async def rotate_alias(request: GmxAliasRotateRequest = None):
 async def create_alias(alias_name: str = None):
     """
     Erstellt einen neuen GMX Alias.
-    
-    Generiert automatisch einen Namen im Format {adj}-{noun}@gmx.de
-    wenn keiner angegeben wird.
-    
-    FLOW:
-    1. Session check
-    2. Alias-Seite öffnen
-    3. Existierenden Alias löschen (wenn vorhanden)
-    4. Formular füllen (Alias-Name + Domain @gmx.de)
-    5. "Hinzufügen" klicken
-    6. Erfolg prüfen (Text-Scan)
-    
+
+    Delegiert an die standalone gmx-alias-tool API auf port 8001.
+
     Args:
         alias_name: Optionaler Alias-Name (ohne @gmx.de). Wenn None, wird generiert.
-        
+
     Returns:
         status: "success" | "failed" | "not_logged_in" | "error"
         alias_email: Die vollständige Alias-Email
@@ -273,10 +267,9 @@ async def create_alias(alias_name: str = None):
         steps_completed: Liste der abgeschlossenen Schritte
     """
     t0 = time.time()
-    cdp_port = _require_browser()
-    
+
     try:
-        result = await get_gmx_service().create_alias(alias_name=alias_name, cdp_port=cdp_port)
+        result = await _call_alias_api("POST", "/alias/create", {"alias_name": alias_name})
         return GmxAliasResponse(
             status=result["status"],
             alias_email=result.get("alias_email"),
