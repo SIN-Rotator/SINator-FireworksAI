@@ -1708,17 +1708,42 @@ Extension fand Email und öffnete sie, aber die Verify-URL wurde nicht extrahier
 Grund: GMX öffnet Email-Inhalt in einem **mailbody-ui.de OOPIF** (separater CDP-Target).
 Der alte Code suchte nach `#thirdPartyFrame_mail` Iframe und navigierte falsch.
 
-### Fix in `_read_otp_via_extension()` (gmx_service.py)
+### Fix PRIMARY: `_read_otp_via_extension()` — Extension mailbody-ui.de OOPIF
 
-```
 1. Extension findet Email (data-email-id)
-2. Snapshot: existing target IDs VOR dem Klick
+2. Snapshot existing target IDs VOR dem Klick
 3. Klick auf Email → neuer GMX Tab öffnet sich
 4. Target.getTargets → mailbody-ui.de OOPIF finden
 5. OOPIF attachen → document.body.innerText lesen
-6. Regex: https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+
-7. Verify-URL extrahiert!
+6. Regex → Verify-URL extrahiert
+
+### Fix FALLBACK: `_read_otp_via_http()` — AXTree (findet AUCH gelesene Emails!)
+
+Neue GMX Webmail verwendet Shadow-DOM Web Components (`<webmailer-mail-list>`).
+`document.querySelector` findet keine Email-Rows. Lösung: CDP Accessibility API.
+
+```python
+# Accessibility.getFullAXTree durchbricht Shadow-DOM
+await client.send_to_session(sid, "Accessibility.enable")
+ax = await client.send_to_session(sid, "Accessibility.getFullAXTree", {
+    "depth": -1, "pierce": True
+})
+# → 1583 nodes inkl. "no-reply@fireworks.ai" "Verify your Fireworks account"
+
+# DOM.getContentQuads für exakte Klick-Koordinaten
+quad = await client.send_to_session(sid, "DOM.getContentQuads", {
+    "backendNodeId": backend_node_id
+})
+# → [x1,y1, x2,y2, x3,y3, x4,y4] für präzisen Klick
 ```
+
+**Flow:**
+1. Navigiere zu `3c.gmx.net/mail/client/start;jsessionid=...` (webmail iframe)
+2. `Accessibility.getFullAXTree` → finde Email-Row mit "fireworks" + "verify"
+3. `DOM.getContentQuads(backendNodeId)` → Klick-Koordinaten
+4. `Input.dispatchMouseEvent` → Klick auf Email-Row
+5. `Target.getTargets` → mailbody-ui.de OOPIF
+6. OOPIF attachen → innerText/innerHTML → Verify-URL
 
 ### Verify-URL Format
 ```
