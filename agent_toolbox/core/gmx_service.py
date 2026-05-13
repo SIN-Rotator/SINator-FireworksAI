@@ -2672,10 +2672,17 @@ class GmxService:
                     "error": f"Mail iframe nicht gefunden. URL: {current_url[:80]}...",
                 }
 
-            # Navigate to iframe to establish fresh webmailer session
-            logger.info(f"Navigiere zu webmailer: {iframe_src[:80]}...")
-            await client.navigate(session_id, iframe_src)
-            await asyncio.sleep(5)
+            # Navigate to webmailer SPA (AXTree works here unlike classic 3c.gmx.net)
+            import urllib.parse
+            parsed = urllib.parse.urlparse(iframe_src)
+            qs = urllib.parse.parse_qs(parsed.query)
+            navsid = qs.get("navsid", [None])[0]
+            if not navsid:
+                navsid = sid
+            webmail_url = f"https://webmailer.gmx.net/index.html?theme=intenseblue&navsid={navsid}"
+            logger.info(f"Navigiere zu webmailer SPA: {webmail_url[:80]}...")
+            await client.navigate(session_id, webmail_url)
+            await asyncio.sleep(6)
             
             # Get jsessionid from BROWSER COOKIES (set by webmailer, not from stale iframe_src)
             # The webmailer sets a JSESSIONID cookie. We extract it from the browser's
