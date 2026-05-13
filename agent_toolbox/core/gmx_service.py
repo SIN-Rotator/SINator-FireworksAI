@@ -2771,106 +2771,71 @@ class GmxService:
                 logger.info(f"Gefunden: {len(items)} list-mail-item mit '{sender_filter}'")
 
                 if items:
-                    # Filtere bekannte mailIds heraus
                     new_items = [it for it in items if it.get("mailId") not in known_mail_ids]
                     if len(new_items) < len(items):
                         logger.info(f"{len(items) - len(new_items)} bekannte/stale Emails übersprungen")
 
                     if new_items:
-                        # ───────────────────────────────────────────────────────────
-                        # COOKIE EXTRACTION (CDP Network.getAllCookies)
-                        # ───────────────────────────────────────────────────────────
-                        # Wir brauchen ALLE GMX Cookies für die HTTP-Anfrage.
-                        # CRITICAL FIX (2026-05-10): Using ALL GMX cookies (79+) causes
-                        # GMX mailbody API to return "413 Request Entity Too Large"
-                        # with "Bitte loeschen Sie Ihre Browser Cookies" error.
-                        # ONLY use essential GMX session cookies — this makes the
-                        # mailbody API return 200 instead of 413!
-                        # ───────────────────────────────────────────────────────────
-                        cookies_res = await client.send_to_session(session_id, "Network.getAllCookies")
-                        cookies = cookies_res.get("cookies", [])
-                        essential_cookies = {"JSESSIONID", "SESSION", "lps", "navigator", "iac_token"}
-                        cookie_dict = {}
-                        for c in cookies:
-                            if c.get("name") in essential_cookies:
-                                cookie_dict[c.get("name")] = c.get("value", "")
+                        # AXTree-basierter Email-Click statt HTTP mailbody (vermeidet 403)
+                        await client.send_to_session(session_id, "Accessibility.enable")
+                        await asyncio.sleep(1)
+                        ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
+                        ax_nodes = ax_result.get("nodes", [])
 
-                        headers = {
-                            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                            "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-                            "Referer": "https://3c-bap.gmx.net/mail/client/start",
-                        }
+                        verify_nodes = []
+                        for n in ax_nodes:
+                            name = (n.get("name", {}) or {}).get("value", "")
+                            if isinstance(name, str) and "verify" in name.lower() and "fireworks" in name.lower():
+                                verify_nodes.append(n)
 
-                        # ═════════════���══════════════════════════════════════════════════
-                        # PHASE 5: EMAIL BODY FETCHING VIA GMX INTERNAL API
-                        # ──────────────────────────────────────────────────────────────
-                        # Wir iterieren über die ersten 5 matching Emails.
-                        # Die Emails sind nach Eingangszeit sortiert (neueste zuerst).
-                        # Wir priorisieren Verify-Emails ("verify" / "confirm" im Text)
-                        # gegenüber Welcome-Emails, indem wir ALLE Emails durchgehen
-                        # und die erste mit einer Confirm-URL zurückgeben.
-                        # ════════════════════════════════════════════════════════════════
-                        async with httpx.AsyncClient(cookies=cookie_dict, follow_redirects=True, timeout=20) as http:
-                            for item in new_items[:5]:  # Max 5 Emails pro Iteration
-                                mail_id = item.get("mailId")
-                                if not mail_id:
-                                    continue
-                                logger.info(f"Versuche mailId={mail_id} (NEU) | {item.get('text', '')[:60]}")
+                        logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} verify-fireworks hits")
 
-                                # Zwei Varianten probieren:
-                                #   /true  → mit externen Bildern/Content
-                                #   /false → ohne externen Content
-                                # Die Confirm-URL ist im Plain-Text/HTML der Email.
-                                urls_to_try = [
-                                    f"https://3c-bap.gmx.net/mail/client/mailbody/tmai{mail_id}/true;jsessionid={jsessionid}",
-                                    f"https://3c-bap.gmx.net/mail/client/mailbody/tmai{mail_id}/false;jsessionid={jsessionid}",
-                                ]
+                        if verify_nodes:
+                            target = verify_nodes[0]
+                            bid = target.get("backendDOMNodeId")
+                            if bid:
+                                try:
+                                    quad = await client.send_to_session(session_id, "DOM.getContentQuads", {"backendNodeId": bid})
+                                    quads = quad.get("quads", [])
+                                    if quads and quads[0]:
+                                        q = quads[0]
+                                        cx = (q[0] + q[4]) / 2
+                                        cy = (q[1] + q[5]) / 2
+                                        logger.info(f"Click verify email at ({cx:.0f},{cy:.0f})")
 
-                                for email_url in urls_to_try:
-                                    try:
-                                        resp = await http.get(email_url, headers=headers)
-                                        # Validierung: HTTP 200 und Content > 1000 Bytes
-                                        # (technische Fehlerseiten sind typischerweise < 200 Bytes)
-                                        if resp.status_code == 200 and len(resp.text) > 1000:
-                                            # ───────────────────────────────────────
-                                            # CONFIRM URL EXTRACTION
-                                            # ───────────────────────────────────────
-                                            # Regex findet ALLE app.fireworks.ai URLs.
-                                            # Dann filtern wir auf URLs die Bestätigungs-
-                                            # relevante Keywords enthalten.
-                                            # Achtung: HTML-escaping in URLs!
-                                            #   &amp;  → muss zu & dekodiert werden.
-                                            # ───────────────────────────────────────
-                                            urls = re.findall(r'https://app\.fireworks\.ai/[^\s"\'<>]+', resp.text)
-                                            confirm_candidates = [
-                                                u for u in urls
-                                                if any(k in u.lower() for k in ["confirm", "verify", "token", "auth", "activate", "signup"])
-                                            ]
-                                            if confirm_candidates:
-                                                confirm_url = html_module.unescape(confirm_candidates[0])
-                                                found_mail_id = mail_id
-                                                logger.info(f"OTP-URL gefunden: {confirm_url[:80]}...")
-                                                break
-                                    except Exception as e:
-                                        logger.warning(f"HTTP fetch fehlgeschlagen für {email_url[:80]}: {e}")
+                                        before_ids = {t["targetId"] for t in await client.get_targets()}
+                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
+                                        await asyncio.sleep(0.2)
+                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                        await asyncio.sleep(0.15)
+                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                        await asyncio.sleep(5)
 
-                                if confirm_url:
-                                    break
+                                        after = await client.get_targets()
+                                        for t in after:
+                                            tu = t.get("url", "")
+                                            if "mailbody" in tu:
+                                                logger.info(f"Mailbody OOPIF: {tu[:120]}")
+                                                try:
+                                                    ifs = await client.attach_to_target(t["targetId"])
+                                                    await client.send_to_session(ifs, "Runtime.enable")
+                                                    body_r = await client.evaluate(ifs, 'document.body ? document.body.innerText : ""', return_by_value=True)
+                                                    b = body_r.get("result", {}).get("value", "") or ""
+                                                    if not b.strip():
+                                                        html_r = await client.evaluate(ifs, 'document.body ? document.body.innerHTML : ""', return_by_value=True)
+                                                        b = html_r.get("result", {}).get("value", "") or ""
+                                                    urls = re.findall(r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+', b)
+                                                    if urls:
+                                                        elapsed = time.time() - start_time
+                                                        return {"status": "success", "otp_url": html_module.unescape(urls[0]), "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
+                                                except Exception:
+                                                    pass
+                                                await asyncio.sleep(0.1)
+                                except Exception as e:
+                                    logger.warning(f"AXTree click failed: {e}")
 
-                if confirm_url:
-                    break
-
-                # Alle gesehenen mailIds als "bekannt" markieren (auch alte)
-                # damit sie in zukünftigen Iterationen übersprungen werden.
-                for it in items:
-                    mid = it.get("mailId")
-                    if mid:
-                        known_mail_ids.add(mid)
-
-                if i < max_retries - 1:
-                    logger.info(f"Kein neues OTP gefunden, warte {retry_delay}s...")
-                    await asyncio.sleep(retry_delay)
+                logger.info(f"Kein neues OTP gefunden, warte {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
 
             elapsed = time.time() - start_time
             return {
