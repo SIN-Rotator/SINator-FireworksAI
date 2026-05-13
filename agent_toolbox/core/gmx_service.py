@@ -1648,9 +1648,9 @@ class GmxService:
                         if cua_pid and cua_wid:
                             ok = await self._cua_click_ok_button(cua_pid, cua_wid)
                             if not ok:
-                                for _ in range(3):
-                                    await asyncio.sleep(2)
-                                    logger.info(f"CUA OK retry...")
+                                for retry in range(6):
+                                    await asyncio.sleep(3)
+                                    logger.info(f"CUA OK retry {retry+1}/6...")
                                     ok = await self._cua_click_ok_button(cua_pid, cua_wid)
                                     if ok:
                                         break
@@ -2844,7 +2844,7 @@ class GmxService:
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
                                 await asyncio.sleep(0.15)
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                await asyncio.sleep(5)
+await asyncio.sleep(8)
 
                                 all_targets = await client.get_targets()
                                 for t in all_targets:
