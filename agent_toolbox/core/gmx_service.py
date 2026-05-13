@@ -137,7 +137,7 @@ class GmxService:
         await client.connect()
         
         # Finde das GMX Tab spezifisch — nicht einfach das erste Page-Target
-targets = await client.get_targets()
+        targets = await client.get_targets()
         target = None
 
         for t in reversed(targets):
