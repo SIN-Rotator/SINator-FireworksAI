@@ -1004,7 +1004,11 @@ class GmxService:
             await self._cdp_hover(client, session_id, hover_x, hover_y)
             await asyncio.sleep(1)
 
-            # Step 4: Find delete icon (now visible after hover)
+            # Step 4: Override window.confirm BEFORE clicking delete icon
+            await client.evaluate(session_id, 'window.confirm = function() { return true; };', return_by_value=True)
+            logger.info("confirm() override set")
+
+            # Step 5: Find delete icon (now visible after hover)
             delete_info = await self._find_delete_icon_coords(client, session_id)
             if not delete_info:
                 return {"status": "error", "deleted": False, "alias": alias_text,
@@ -1634,6 +1638,9 @@ class GmxService:
                 hover_y = alias_info['y'] + alias_info['h'] / 2
                 await self._cdp_hover(client, session_id, hover_x, hover_y)
                 await asyncio.sleep(1)
+
+                await client.evaluate(session_id, 'window.confirm = function() { return true; };', return_by_value=True)
+                logger.info("confirm() override set")
 
                 # Find delete icon (now visible after hover)
                 delete_info = await self._find_delete_icon_coords(client, session_id)
