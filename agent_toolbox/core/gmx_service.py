@@ -2787,13 +2787,17 @@ class GmxService:
                 ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
                 ax_nodes = ax_result.get("nodes", [])
 
-                verify_nodes = []
+                fireworks_nodes = []
                 for n in ax_nodes:
                     name = (n.get("name", {}) or {}).get("value", "")
-                    if isinstance(name, str) and "verify" in name.lower() and "fireworks" in name.lower():
-                        verify_nodes.append(n)
+                    desc = (n.get("description", {}) or {}).get("value", "")
+                    combined = f"{name} {desc}".lower()
+                    if isinstance(name, str) and ("fireworks" in combined or "no-reply@fireworks" in combined):
+                        fireworks_nodes.append(n)
 
-                logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} verify-fireworks hits")
+                verify_nodes = [n for n in fireworks_nodes if "verify" in (n.get("name",{}) or {}).get("value","").lower()]
+
+                logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(fireworks_nodes)} fireworks, {len(verify_nodes)} verify-fireworks hits")
 
                 if verify_nodes:
                     target = verify_nodes[0]
