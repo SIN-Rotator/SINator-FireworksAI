@@ -2773,69 +2773,71 @@ class GmxService:
                 items = items_result.get('result', {}).get('value', [])
                 logger.info(f"Gefunden: {len(items)} list-mail-item mit '{sender_filter}'")
 
+                for it in items:
+                    known_mail_ids.add(it.get("mailId"))
+
                 if items:
                     new_items = [it for it in items if it.get("mailId") not in known_mail_ids]
                     if len(new_items) < len(items):
-                        logger.info(f"{len(items) - len(new_items)} bekannte/stale Emails übersprungen")
+                        logger.info(f"{len(items) - len(new_items)} neue Emails gefunden")
 
-                    if new_items:
-                        # AXTree-basierter Email-Click statt HTTP mailbody (vermeidet 403)
-                        await client.send_to_session(session_id, "Accessibility.enable")
-                        await asyncio.sleep(1)
-                        ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
-                        ax_nodes = ax_result.get("nodes", [])
+                # AXTree-basierter Email-Click (primär — findet alle Emails, auch gelesene)
+                await client.send_to_session(session_id, "Accessibility.enable")
+                await asyncio.sleep(1)
+                ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
+                ax_nodes = ax_result.get("nodes", [])
 
-                        verify_nodes = []
-                        for n in ax_nodes:
-                            name = (n.get("name", {}) or {}).get("value", "")
-                            if isinstance(name, str) and "verify" in name.lower() and "fireworks" in name.lower():
-                                verify_nodes.append(n)
+                verify_nodes = []
+                for n in ax_nodes:
+                    name = (n.get("name", {}) or {}).get("value", "")
+                    if isinstance(name, str) and "verify" in name.lower() and "fireworks" in name.lower():
+                        verify_nodes.append(n)
 
-                        logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} verify-fireworks hits")
+                logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} verify-fireworks hits")
 
-                        if verify_nodes:
-                            target = verify_nodes[0]
-                            bid = target.get("backendDOMNodeId")
-                            if bid:
-                                try:
-                                    quad = await client.send_to_session(session_id, "DOM.getContentQuads", {"backendNodeId": bid})
-                                    quads = quad.get("quads", [])
-                                    if quads and quads[0]:
-                                        q = quads[0]
-                                        cx = (q[0] + q[4]) / 2
-                                        cy = (q[1] + q[5]) / 2
-                                        logger.info(f"Click verify email at ({cx:.0f},{cy:.0f})")
+                if verify_nodes:
+                    target = verify_nodes[0]
+                    bid = target.get("backendDOMNodeId")
+                    if bid:
+                        try:
+                            quad = await client.send_to_session(session_id, "DOM.getContentQuads", {"backendNodeId": bid})
+                            quads = quad.get("quads", [])
+                            if quads and quads[0]:
+                                q = quads[0]
+                                cx = (q[0] + q[4]) / 2
+                                cy = (q[1] + q[5]) / 2
+                                logger.info(f"Click verify email at ({cx:.0f},{cy:.0f})")
 
-                                        before_ids = {t["targetId"] for t in await client.get_targets()}
-                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
-                                        await asyncio.sleep(0.2)
-                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                        await asyncio.sleep(0.15)
-                                        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-                                        await asyncio.sleep(5)
+                                before_ids = {t["targetId"] for t in await client.get_targets()}
+                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
+                                await asyncio.sleep(0.2)
+                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                await asyncio.sleep(0.15)
+                                await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                await asyncio.sleep(5)
 
-                                        after = await client.get_targets()
-                                        for t in after:
-                                            tu = t.get("url", "")
-                                            if "mailbody" in tu:
-                                                logger.info(f"Mailbody OOPIF: {tu[:120]}")
-                                                try:
-                                                    ifs = await client.attach_to_target(t["targetId"])
-                                                    await client.send_to_session(ifs, "Runtime.enable")
-                                                    body_r = await client.evaluate(ifs, 'document.body ? document.body.innerText : ""', return_by_value=True)
-                                                    b = body_r.get("result", {}).get("value", "") or ""
-                                                    if not b.strip():
-                                                        html_r = await client.evaluate(ifs, 'document.body ? document.body.innerHTML : ""', return_by_value=True)
-                                                        b = html_r.get("result", {}).get("value", "") or ""
-                                                    urls = re.findall(r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+', b)
-                                                    if urls:
-                                                        elapsed = time.time() - start_time
-                                                        return {"status": "success", "otp_url": html_module.unescape(urls[0]), "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
-                                                except Exception:
-                                                    pass
-                                                await asyncio.sleep(0.1)
-                                except Exception as e:
-                                    logger.warning(f"AXTree click failed: {e}")
+                                after = await client.get_targets()
+                                for t in after:
+                                    tu = t.get("url", "")
+                                    if "mailbody" in tu:
+                                        logger.info(f"Mailbody OOPIF: {tu[:120]}")
+                                        try:
+                                            ifs = await client.attach_to_target(t["targetId"])
+                                            await client.send_to_session(ifs, "Runtime.enable")
+                                            body_r = await client.evaluate(ifs, 'document.body ? document.body.innerText : ""', return_by_value=True)
+                                            b = body_r.get("result", {}).get("value", "") or ""
+                                            if not b.strip():
+                                                html_r = await client.evaluate(ifs, 'document.body ? document.body.innerHTML : ""', return_by_value=True)
+                                                b = html_r.get("result", {}).get("value", "") or ""
+                                            urls = re.findall(r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+', b)
+                                            if urls:
+                                                elapsed = time.time() - start_time
+                                                return {"status": "success", "otp_url": html_module.unescape(urls[0]), "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
+                                        except Exception:
+                                            pass
+                                        await asyncio.sleep(0.1)
+                        except Exception as e:
+                            logger.warning(f"AXTree click failed: {e}")
 
                 logger.info(f"Kein neues OTP gefunden, warte {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
