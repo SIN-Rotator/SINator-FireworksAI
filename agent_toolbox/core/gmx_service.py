@@ -2844,7 +2844,7 @@ class GmxService:
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
                                 await asyncio.sleep(0.15)
                                 await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
-await asyncio.sleep(8)
+                                await asyncio.sleep(5)
 
                                 all_targets = await client.get_targets()
                                 for t in all_targets:
