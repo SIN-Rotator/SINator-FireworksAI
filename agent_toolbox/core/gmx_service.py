@@ -137,17 +137,22 @@ class GmxService:
         await client.connect()
         
         # Finde das GMX Tab spezifisch — nicht einfach das erste Page-Target
-        targets = await client.get_targets()
+targets = await client.get_targets()
         target = None
-        
-        # Priorität 1: GMX Tab mit SID (eingeloggt)
-        for t in targets:
+
+        for t in reversed(targets):
             url = t.get("url", "")
             if t.get("type") == "page" and "sid=" in url and "gmx.net" in url:
                 target = t
                 break
-        
-        # Priorität 2: GMX Tab ohne SID
+
+        if not target:
+            for t in reversed(targets):
+                url = t.get("url", "")
+                if t.get("type") == "page" and "gmx.net" in url:
+                    target = t
+                    break
+
         if not target:
             target = await get_page_target(client, url_filter="gmx.net")
         
