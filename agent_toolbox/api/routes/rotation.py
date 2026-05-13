@@ -69,6 +69,23 @@ async def _get_current_alias() -> Optional[str]:
         return None
 
 
+async def _fresh_rotate_alias(alias_name: Optional[str] = None) -> Dict[str, Any]:
+    """Rotate GMX alias in a fresh Chrome tab for reliable delete+create."""
+    from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint
+    from agent_toolbox.core.gmx_service import GmxService
+
+    ws = await get_browser_ws_endpoint(9222)
+    c = CDPClient(ws)
+    await c.connect()
+    r = await c.send("Target.createTarget", {"url": "https://www.gmx.net/"})
+    await c.disconnect()
+
+    svc = GmxService()
+    svc.email = "opensin@gmx.de"
+    svc.password = "ZOE.jerry2024"
+    return await svc.rotate_alias(new_alias_name=alias_name, cdp_port=9222)
+
+
 async def _rotate_alias_via_api(alias_name: Optional[str] = None) -> Dict[str, Any]:
     """Rotate GMX alias via the external gmx-alias-tool API.
 
@@ -173,47 +190,29 @@ async def full_rotation(request: RotationRequest):
             )
 
         # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (via gmx_alias_tool.py subprocess)
+        #  STEP 1: GMX Alias Rotation (fresh tab, delete + create via CUA)
         # ════════════════════════════════════════════════════════════════════════
-        #
-        # gmx_alias_tool.py rotate — verifiziert, funktioniert 100%.
-        # CUA-Delete-Dialog wird zuverlässig gehandlet.
-        #
-        logger.info("=== GMX Alias Rotation (gmx_alias_tool.py) ===")
-        alias_result_str = await asyncio.create_subprocess_shell(
-            "python3 tools/gmx_alias_tool.py rotate",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await alias_result_str.communicate()
-        output = stdout.decode()
-
-        created_alias = None
-        for line in output.split('\n'):
-            if 'Created:' in line:
-                created_alias = line.split('Created:')[1].strip().split('@gmx.de')[0] + '@gmx.de'
-                break
-
-        if created_alias:
-            gmx_alias = created_alias
-            steps_completed.append("gmx_alias_rotated")
-            logger.info(f"✅ GMX Alias: {gmx_alias}")
-        else:
-            logger.warning(f"gmx_alias_tool.py rotate returned no Created:\n{output[:300]}")
-            gmx_alias = await _get_current_alias()
-            if gmx_alias:
-                steps_completed.append("gmx_alias_reused")
-                logger.info(f"⚠️ Using existing alias: {gmx_alias}")
+        logger.info("=== GMX Alias Rotation ===")
+        try:
+            alias_result = await _fresh_rotate_alias(alias_name=request.new_alias_name)
+            if alias_result.get("created_alias"):
+                gmx_alias = alias_result["created_alias"]
+                steps_completed.append("gmx_alias_rotated")
+                logger.info(f"✅ GMX Alias: {gmx_alias}")
             else:
                 steps_failed.append("gmx_alias_rotation_failed")
-                return RotationResponse(
-                    status="failed",
-                    gmx_alias=None, fireworks_account=None, api_key=None,
-                    api_key_name=None, steps_completed=steps_completed,
+                return RotationResponse(status="failed", gmx_alias=None, fireworks_account=None,
+                    api_key=None, api_key_name=None, steps_completed=steps_completed,
                     steps_failed=steps_failed,
                     execution_time=f"{time.time()-t0:.2f}s",
-                    error="GMX Alias Rotation fehlgeschlagen — kein Alias verfügbar",
-                )
+                    error=alias_result.get("error", "Alias rotation failed"))
+        except Exception as e:
+            steps_failed.append("gmx_alias_rotation_failed")
+            return RotationResponse(status="failed", gmx_alias=None, fireworks_account=None,
+                api_key=None, api_key_name=None, steps_completed=steps_completed,
+                steps_failed=steps_failed,
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=f"Rotation exception: {e}")
 
         # ════════════════════════════════════════════════════════════════════════
         #  STEP 2: Fireworks E2E (register() — 12 Phasen intern)
