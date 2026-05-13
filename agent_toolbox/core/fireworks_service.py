@@ -1956,6 +1956,11 @@ class FireworksService:
 
             # PHASE 8: FIREWORKS LOGIN FLOW
             logger.info("[FW Register] Phase 8: Fireworks login flow")
+
+            # Reconnect to a fresh tab for login (old session may be stale after verify URL tab)
+            await client.disconnect()
+            client, session_id = await self._connect(cdp_port)
+            logger.info("[FW Register] Reconnected for login flow")
             login_result = await self._login_to_fireworks(client, session_id, email, password)
             if login_result.get("logged_in"):
                 steps_completed.append("login_successful")
