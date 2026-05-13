@@ -2839,11 +2839,11 @@ class GmxService:
 
             elapsed = time.time() - start_time
             return {
-                "status": "success" if confirm_url else "not_found",
-                "otp_url": confirm_url,
-                "mail_id": found_mail_id,
+                "status": "not_found",
+                "otp_url": None,
+                "mail_id": None,
                 "execution_time": f"{elapsed:.2f}s",
-                "error": None if confirm_url else f"Nicht gefunden nach {max_retries} Versuchen",
+                "error": f"Nicht gefunden nach {max_retries} Versuchen",
             }
         except Exception as e:
             elapsed = time.time() - start_time
