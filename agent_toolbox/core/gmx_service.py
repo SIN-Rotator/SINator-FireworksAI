@@ -2367,6 +2367,104 @@ class GmxService:
             }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+    #  OTP / EMAIL READING (V5 — Extension + CDP OOPIF)
+    # ═══════════════════════════════════════════════════════════════════════════════
+
+    async def read_fireworks_verification_email(self) -> Optional[str]:
+        """Liest Fireworks Verify-Email via GMX MailCheck Extension + CDP OOPIF.
+        
+        Flow:
+        1. Öffnet MailCheck Extension Popup
+        2. Findet Fireworks Email via data-email-id
+        3. Klickt Email → öffnet GMX Tab
+        4. Findet mailbody-ui.de OOPIF via CDP Target.getTargets
+        5. Attached OOPIF → liest body.innerText
+        6. Extrahiert Verify-URL mit Regex
+        
+        Returns: Verify-URL oder None
+        """
+        import re, asyncio as _asyncio
+        try:
+            from playwright.async_api import async_playwright as _ap
+
+            async with _ap() as p:
+                browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                
+                # Step 1: Open MailCheck extension
+                ext_page = await browser.contexts[0].new_page()
+                ext_url = "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html"
+                await ext_page.goto(ext_url)
+                await _asyncio.sleep(5)
+                
+                # Step 2: Find Fireworks email
+                text = await ext_page.evaluate("() => document.body.innerText")
+                if 'fireworks' not in text.lower():
+                    logger.warning("Keine Fireworks Email in MailCheck")
+                    await ext_page.close()
+                    return None
+                
+                # Step 3: Click Fireworks email
+                existing_ids = {t['targetId'] for t in (await self._cdp_get_targets())}
+                
+                await ext_page.evaluate("""(() => {
+                    var emails = document.querySelectorAll('[data-email-id]');
+                    for (var e of emails) {
+                        if (e.innerText.toLowerCase().includes('fireworks') &&
+                            (e.innerText.toLowerCase().includes('verify') || e.innerText.toLowerCase().includes('confirm'))) {
+                            e.click(); return;
+                        }
+                    }
+                })()""")
+                await _asyncio.sleep(5)
+                await ext_page.close()
+                
+                # Step 4: Find new mailbody-ui.de OOPIF
+                targets = await self._cdp_get_targets()
+                mailbody_target = None
+                for t in targets:
+                    if t['targetId'] not in existing_ids and 'mailbody-ui.de' in t.get('url', ''):
+                        mailbody_target = t
+                        break
+                
+                if not mailbody_target:
+                    logger.warning("mailbody-ui.de OOPIF nicht gefunden")
+                    return None
+                
+                # Step 5+6: Attach OOPIF + extract URL
+                ws_url = await get_browser_ws_endpoint(9222)
+                client = CDPClient(ws_url)
+                await client.connect()
+                sid = await client.attach_to_target(mailbody_target['targetId'])
+                await client.send_to_session(sid, "Runtime.enable")
+                
+                result = await client.evaluate(sid, "document.body.innerText", return_by_value=True)
+                text = result.get('result', {}).get('value', '')
+                await client.disconnect()
+                
+                # Extract verify URL
+                urls = re.findall(r'https?://app\.fireworks\.ai/[^\s]+', text)
+                if urls:
+                    logger.info(f"✅ Verify URL: {urls[0][:80]}...")
+                    return urls[0]
+                
+                logger.warning("Keine Verify-URL in Email-Body")
+                return None
+                
+        except Exception as e:
+            logger.error(f"OTP read failed: {e}")
+            return None
+
+    async def _cdp_get_targets(self):
+        """Hilfsmethode: CDP Target.getTargets."""
+        ws_url = await get_browser_ws_endpoint(9222)
+        client = CDPClient(ws_url)
+        await client.connect()
+        targets = await client.get_targets()
+        await client.disconnect()
+        return targets
+
+
 _gmx_service: Optional[GmxService] = None
 
 

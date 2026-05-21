@@ -143,3 +143,22 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"API Key error: {e}")
         return {"status": "error", "error": str(e)}
+
+
+async def verify_account(verify_url: str) -> bool:
+    """Open Fireworks verify URL to confirm account. Returns True if confirmed."""
+    import asyncio
+    from playwright.async_api import async_playwright
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            page = await browser.contexts[0].new_page()
+            await page.goto(verify_url)
+            await asyncio.sleep(5)
+            logger.info(f"Verify URL opened: {page.url[:80]}")
+            await page.close()
+            return True
+    except Exception as e:
+        logger.error(f"Verify error: {e}")
+        return False
