@@ -163,35 +163,55 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                 for w in json.loads(res.stdout).get('windows', []):
                     if 'Google Chrome' == w.get('app_name', '') and w.get('is_on_screen') and 'fireworks' in w.get('title', '').lower():
                         pid, wid = w['pid'], w['window_id']
-                        # Names
-                        for el_idx, name in [(124, "Super"), (128, "Cheetah")]:
+                        
+                        def _cua_click(el):
                             subprocess.run(["cua-driver", "call", "click"],
                                 capture_output=True, text=True, timeout=10,
-                                input=json.dumps({"pid": pid, "window_id": wid, "element_index": el_idx}))
-                            await asyncio.sleep(0.3)
+                                input=json.dumps({"pid": pid, "window_id": wid, "element_index": el}))
+                        
+                        def _cua_type(text):
                             subprocess.run(["cua-driver", "call", "type_text"],
                                 capture_output=True, text=True, timeout=5,
-                                input=json.dumps({"pid": pid, "text": name}))
-                            await asyncio.sleep(0.3)
-                        # Terms + Continue
-                        subprocess.run(["cua-driver", "call", "click"],
-                            capture_output=True, text=True, timeout=10,
-                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": 129}))
-                        await asyncio.sleep(0.3)
-                        subprocess.run(["cua-driver", "call", "click"],
-                            capture_output=True, text=True, timeout=10,
-                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": 137}))
-                        await asyncio.sleep(6)
-                        # Use-cases
-                        for uc_idx in [112, 115, 145, 151]:
-                            subprocess.run(["cua-driver", "call", "click"],
-                                capture_output=True, text=True, timeout=5,
-                                input=json.dumps({"pid": pid, "window_id": wid, "element_index": uc_idx}))
-                        await asyncio.sleep(0.2)
-                        subprocess.run(["cua-driver", "call", "click"],
-                            capture_output=True, text=True, timeout=10,
-                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": 160}))
-                        await asyncio.sleep(6)
+                                input=json.dumps({"pid": pid, "text": text}))
+                        
+                        def _cua_scan():
+                            r = subprocess.run(["cua-driver", "call", "get_window_state"],
+                                capture_output=True, text=True, timeout=15,
+                                input=json.dumps({"pid": pid, "window_id": wid}))
+                            return json.loads(r.stdout).get('tree_markdown', '')
+                        
+                        def _find_element(text, el_type="AXButton"):
+                            for line in _cua_scan().split('\n'):
+                                s = line.strip()
+                                if text in s and el_type in s:
+                                    m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
+                                    if m: return int(m.group(1))
+                            return None
+                        
+                        # Fill names
+                        for name in ["Super", "Cheetah"]:
+                            el = _find_element("Name", "AXTextField")
+                            if el:
+                                _cua_click(el); await asyncio.sleep(0.3)
+                                _cua_type(name); await asyncio.sleep(0.3)
+                        
+                        # Terms checkbox (re-scan after React re-render)
+                        el = _find_element("agree", "AXCheckBox")
+                        if el: _cua_click(el); await asyncio.sleep(0.3)
+                        
+                        # Continue
+                        el = _find_element("Continue")
+                        if el: _cua_click(el); await asyncio.sleep(6)
+                        
+                        # Use-cases (re-scan)
+                        for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
+                            el = _find_element(uc_text, "AXCheckBox")
+                            if el:
+                                _cua_click(el); await asyncio.sleep(0.2)
+                        
+                        # Submit
+                        el = _find_element("Submit")
+                        if el: _cua_click(el); await asyncio.sleep(6)
                         break
                 steps.append("onboarding_complete")
 
