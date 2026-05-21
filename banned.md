@@ -311,3 +311,36 @@ await client.send_to_session(sid, "Page.navigate", {"url": "https://navigator.gm
 
 **Fix:** CUA für ALLE Navigation nutzen (AXPress auf Links/Buttons).
 CDP nur für: DOM.performSearch, Input.dispatchMouseEvent, Cookie-Management.
+
+---
+
+## 🛑 BANNED: Fireworks Anti-Patterns (2026-05-21)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| Playwright `check()` auf React-Checkbox | "Clicking did not change state" — React-CB ignoriert JS-Click |
+| JS `.click()` auf React-Button | React controlled components ignorieren dispatchEvent |
+| `page.locator('input[type="email"]')` auf Fireworks | Input hat KEIN type-Attribut; use `input[name="email"]` |
+| `/settings/workspace/api-keys` URL | 404 Not Found; correct is `/settings/users/api-keys` |
+| `text=CREATE` als Button-Selector | Matcht Cookie-Banner "Create profiles for personalised advertising" |
+| `text=E-Mail` als Page-Link | Matcht News-Artikel (Text im Content, nicht Nav-Link) |
+
+---
+
+## 🛑 BANNED: GMX Iframe Direct Navigation (2026-05-21)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| `new_page().goto(iframe_url)` zu 3c.gmx.net | Triggert IAC (Intelligent Anti-Automation) restart |
+| `page.goto("3c.gmx.net/.../allEmailAddresses")` | Redirect zu session-expired oder IAC |
+| `Network.clearBrowserCookies` vor GMX-Zugriff | Killt GMX-Session mit — nur für Fireworks verwenden |
+
+## 🛑 BANNED: macos-use Agent (2026-05-21)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| `agent.invoke()` mit LLM | Tool-Validierung broken (loc:Input should be a valid list) |
+| Agent Tool calls | Pydantic `list[int]` validation fails on LLM JSON output |
+| Chromium launch via Agent | Chrome bereits offen; App-Tool crashed |
+
+**✅ Erlaubt:** CUA direkt für OS-Level-Klicks (kein LLM-Agent nötig)

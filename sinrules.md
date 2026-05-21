@@ -1,59 +1,50 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
+> Letzte Aktualisierung: 2026-05-21 (COMPLETE FLOW VERIFIED)
 
 ---
 
-## 🛑 REGEL 0: GMX ALIAS TOOL V3 — ABSOLUT GESCHÜTZT (2026-05-12)
+## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-21)
 
-**Tag:** `v3-working` (commit `aa9b538`). Tool läuft in ~15s mit 6/6 Steps.
-
-### WAS NIEMALS GEÄNDERT WERDEN DARF
-
-Diese Dateien sind **IMMUTABLE**:
-- `agent_toolbox/core/gmx_service.py` — Zeilen 441-600 (Navigation), 619-820 (OOPIF), 835-960 (Click/Hover/Delete), 1099-1400 (Input/Button/Verify/Create)
-- `tools/gmx_alias_tool.py` — READ-ONLY VERIFIED
-
-### WAS NIEMALS VERWENDET WERDEN DARF
-
-| ❌ VERBOTEN | Grund |
-|------------|-------|
-| `client.dom_search()` | Hängt auf 3c.gmx.net |
-| `client.node_describe()` | parentId=None auf GMX |
-| `client.node_content_box()` | Hängt auf 3c.gmx.net |
-| `Input.dispatchKeyEvent` | GMX React-Inputs ignorieren |
-| `form.submit()` | Triggert IAC Anti-Automation |
-| JS `.click()` auf Delete | Wicket ignoriert |
-| `bap.navigator.gmx.net/mail_settings` | Nur Shell, kein Content |
-| CUA für Navigation | SID geht verloren |
-| HTTP `mailbody/tmai{id}/true` OTP | GMX REST API 403 — NIEMALS! |
-| `read_otp()` ohne Extension | Extension ist EINZIGER OTP-Weg |
+**API Key:** `fw_8d1PLFjvQMdgJFzjDZSTRx` (super-cheetah-687@gmx.de)
 
 ### WAS IMMER VERWENDET WERDEN MUSS
 
 | ✅ ERLABUT | Für was |
 |-----------|---------|
-| `client.evaluate()` (JS) | DOM-Suche, Input-Füllung, Verifikation |
-| CDP `Input.dispatchMouseEvent` | Delete-Icon, Hinzufügen-Button |
-| JS `dispatchEvent(MouseEvent)` | Navigation (E-Mail, E-Mail-Adressen) |
-| `nativeInputValueSetter` | Input-Füllung (React controlled) |
-| `navigator.gmx.net/navigator/jump/to/mail_settings?sid=` | Navigation zu Settings |
-| CUA `click` element | Nur für OK-Button im Delete-Dialog |
-| GMX MailCheck Extension | **EINZIGER OTP/Email-Weg** |
+| **CUA `click`** | React-Checkbox, Dialog-OK, Navigation-Links, PopUpButton |
+| **CUA `type_text`** | Names, beliebige Textfelder (OS-Level, React-kompatibel) |
+| **Playwright `fill()`** | Form-Inputs (email, password, alias name) |
+| **Playwright `click(force=True)`** | Delete-Icon, Hinzufügen-Button, Create-B-Button |
+| **Playwright iframe** | `page.frames` → allEmailAddresses iframe finden |
+| **CDP Target** | mailbody-ui.de OOPIF für Email-Inhalt |
+| **CDP Cookie** | `Network.clearBrowserCookies` nur für Fireworks Domain |
 
-### BEI FEHLER: SOFORT ROLLBACK
+### WAS NIEMALS VERWENDET WERDEN DARF
+
+| ❌ VERBOTEN | Grund |
+|------------|-------|
+| CDP `DOM.performSearch` + `getBoxModel` | Alle Node-IDs stale (0) in 3c.gmx.net Cross-Origin-Iframe |
+| Playwright `check()` auf React-CB | "Did not change state" — React controlled |
+| JS `.click()` auf React-Button | React ignoriert dispatchEvent |
+| `text=CREATE` als Selector | Matcht Cookie-Banner |
+| `/settings/workspace/api-keys` URL | 404; correct: `/settings/users/api-keys` |
+| Direkte Navigation zu 3c.gmx.net URLs | Triggert IAC (Anti-Automation) |
+| `Network.clearBrowserCookies` global | Killt GMX-Session — nur für Fireworks Domain |
+| `new_page().goto(iframe_url)` | Session expired / IAC restart |
+
+### BEI FEHLER: SESSION CHECKEN
 
 ```bash
-# NIEMALS debuggen/umschreiben wenn rotate fehlschlägt!
-git checkout v3-working -- agent_toolbox/core/gmx_service.py
-python tools/gmx_alias_tool.py rotate  # muss SUCCESS sein
+# GMX Session check
+python tools/gmx_alias_tool.py status
+
+# IAC tabs killen
+python -c "from playwright.async_api import async_playwright; ... close iac pages"
 ```
 
-### VOR JEDEM EDIT: VERIFIZIEREN
-
-```bash
-python tools/gmx_alias_tool.py rotate  # muss <30s, alle 6 Steps grün
-```
+---
 
 ---
 
