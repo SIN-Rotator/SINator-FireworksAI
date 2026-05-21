@@ -29,24 +29,20 @@ GMX Rotation (19.8s) → Fireworks Login → Onboarding → API Key: fw_8d1PLFjv
 
 ## 🔴 TODO — Phase 2
 
-### 1. OTP Email Reader automatisieren
-**Was:** Verify-URL aus GMX MailCheck Extension extrahieren
-**Status:** Manuell bewiesen (CDP OOPIF → mailbody-ui.de)
-**Code:** Noch nicht in `gmx_service.py` integriert
+### 1. OTP Email Reader automatisieren ✅
+**Status:** `read_fireworks_verification_email()` in gmx_service.py
+**Flow:** MailCheck Extension → click email → CDP OOPIF → extract URL
 
-### 2. Fireworks Signup (neuer Account)
-**Was:** Create Account Flow: Signup-Form → OTP Email → Verify → Login
-**Status:** Existierender Account Login funktioniert
-**Fehlt:** Signup-Form mit 2x Passwort + Create Account Button + OTP Polling
+### 2. Fireworks Signup Flow ✅
+**Status:** `signup_fireworks()` in fireworks_service.py
+**Flow:** /signup → fill email+2x pw → Create Account → OTP poll (10×10s) → verify
 
-### 3. Full E2E mit neuem Alias
-**Was:** GMX Rotation → Fireworks Signup → OTP → Verify → Login → API Key
-**Status:** Rotation + Login + API Key funktioniert einzeln
-**Fehlt:** Orchestrierung in einem durchgehenden Lauf
+### 3. Full E2E ✅
+**Status:** `tools/rotate.py` — GMX session → rotation → signup/login → API key → pool
+**Todo:** Test mit frischem Alias (braucht Profile 73 Session)
 
-### 4. gmx-alias-tool API updaten
-**Was:** Standalone API auf Playwright umbauen
-**Status:** Läuft noch mit altem CDP-Code (server.py)
+### 4. gmx-alias-tool API updaten ⏳
+**Status:** Läuft noch mit altem CDP-Code
 **Repo:** `/Users/jeremy/dev/gmx-alias-tool`
 
 ## 📂 Cleanup erledigt
