@@ -2,11 +2,47 @@
 
 **Purpose:** Automated GMX email alias rotation → Fireworks AI account registration → API key pool management.
 
-**Architektur:** FastAPI Backend mit CUA Driver (Native macOS AX) + CDP als Fallback. Kein Playwright.
+**Architektur:** CUA Driver (Navigation + Dialog) + Playwright (Form Interaction) + CDP (Session/Cookies).
+
+## ✅ VERIFIED FLOW (2026-05-21)
+
+`neon-hawk-042@gmx.de` erfolgreich erstellt. Hier die exakten Commands:
+
+### Alias löschen (Playwright im Iframe + CUA OK)
+```python
+# 1. Mouseover existierende Alias-Email → Delete Icon erscheint
+frame.locator('text=laramiuex@gmx.de').first.hover()
+
+# 2. Delete Icon klicken (force=True weil nur nach hover sichtbar)
+frame.locator('[title*="löschen"]').first.click()
+
+# 3. CUA click OK im Bestätigungsdialog
+#    Vorher: cua-driver call get_window_state um OK element_index zu finden
+cua-driver call click '{"pid": 12465, "window_id": 244, "element_index": 1033}'
+```
+
+### Alias erstellen (Playwright im Iframe)
+```python
+# 1. Input füllen (iframe => mail_settings -> allEmailAddresses)
+frame.locator('input[type="text"]').first.fill("neon-hawk-042")
+
+# 2. Hinzufügen Button klicken (force=True für Wicket)
+frame.locator('button:has-text("Hinzufügen")').first.click(force=True)
+
+# 3. Verify: Input muss LEER sein nach Submit (= Erfolg)
+await inp.input_value()  # → '' = erfolgreich erstellt!
+```
+
+### Session auffrischen (nur bei Session-Expiry nötig)
+```python
+# Klick auf "E-Mail" Link auf www.gmx.net → leitet zu Inbox mit frischem SID
+gmx_page.get_by_role("link", name="E-Mail", exact=True).first.click()
+
+# Oder via CUA:
+cua-driver call click '{"pid": 12465, "window_id": 244, "element_index": 29}'
+```
 
 ---
-
-## Quick Start
 
 ```bash
 cd agent_toolbox
