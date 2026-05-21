@@ -934,16 +934,16 @@ class GmxService:
                     logger.warning("allEmailAddresses iframe nicht gefunden")
                     return False
 
-# Step 1: Mouseover alias row → delete icon appears
-                alias_row = frame.locator(f'text={alias_email}').first
-                await alias_row.hover()
+# Step 1: Mouseover alias row → delete icon appears (table row only, skip notification)
+                alias_row = frame.locator(f'.table_field:has-text("{alias_email}")').first
+                await alias_row.hover(force=True)
                 await asyncio.sleep(1)
 
                 # Step 2: Click delete icon (no force — needs isTrusted for Wicket)
                 del_icon = frame.locator('[title*="löschen"], [title*="entfernen"]').first
                 if await del_icon.count() == 0:
                     del_icon = frame.locator('a[title*="Lösch"]').first
-                await del_icon.click()
+                await del_icon.click(force=True)  # force needed — hover doesn't trigger CSS visibility
                 logger.info(f"Delete icon clicked for {alias_email}")
                 await asyncio.sleep(2)
 
