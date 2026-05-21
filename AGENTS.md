@@ -3,6 +3,62 @@
 ## 🛑🛑🛑 RED ZONE — V3 WORKING (2026-05-12) — NIEMALS ÄNDERN 🛑🛑🛑
 
 **Tag:** `v3-working` (commit `aa9b538`)
+
+---
+
+## ✅ V4 PLAYWRIGHT FLOW — VERIFIED 2026-05-21
+
+**Verification:** `neon-hawk-042@gmx.de` successfully created + verified.
+**Approach:** CUA for navigation, Playwright for form interaction, CDP DOM not used for form.
+
+### Alias Delete Flow (Playwright + CUA)
+
+```python
+# 1. Find allEmailAddresses iframe in mail_settings page
+frame = [f for f in page.frames if 'allEmailAddresses' in f.url][0]
+
+# 2. Mouseover alias email → delete icon appears  
+frame.locator(f'text={alias_email}').first.hover()
+await asyncio.sleep(1)
+
+# 3. Click delete icon (force=True — icon only visible after hover)
+frame.locator('[title*="löschen"]').first.click(force=True)
+await asyncio.sleep(2)
+
+# 4. CUA click OK in confirmation dialog
+cua-driver call click '{"pid": PID, "window_id": WID, "element_index": OK_INDEX}'
+await asyncio.sleep(3)
+
+# 5. Verify: alias_email not in frame.content()
+```
+
+### Alias Create Flow (Playwright — iframe URL direkt)
+
+```python
+# 1. Open allEmailAddresses iframe URL in new tab (bessere Wicket-Interaktion)
+new_page = await browser.new_page()
+await new_page.goto(iframe_url)  # z.B. https://3c-bap.gmx.net/.../allEmailAddresses;jsessionid=...
+
+# 2. Fill input + click Hinzufügen
+inp = new_page.locator('input[type="text"]').first
+await inp.fill("name-123")
+btn = new_page.locator('button:has-text("Hinzufügen")').first
+await btn.click(force=True)
+await asyncio.sleep(5)
+
+# 3. Verify: input cleared = success
+if not await inp.input_value():
+    print("✅ Created!")
+```
+
+### Session Refresh (wenn nötig)
+
+```python
+# Click "E-Mail" link → redirects to inbox with fresh SID
+gmx_page.get_by_role("link", name="E-Mail", exact=True).first.click()
+# Oder via CUA:
+cua-driver call click '{"pid": P, "wid": W, "element_index": 29}'
+```
 **Verification:** `python tools/gmx_alias_tool.py rotate` → ✅ success in ~15s
 
 ### ⚡ MANDATORY PREFLIGHT — VOR JEDEM EDIT AUSFÜHREN
