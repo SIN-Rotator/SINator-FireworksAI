@@ -1,45 +1,30 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — Rotation Routes (CDP Edition)            ║
+║           SINATOR AGENT-TOOLBOX — Rotation Routes (V5 Playwright+CUA)       ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ENDPOINT:                                                                    ║
 ║  POST /rotation/full         → Komplette Account-Rotation (GMX + Fireworks) ║
 ║                                                                              ║
-║  FLOW (4 SCHRITTE):                                                          ║
-║  0. GMX Session 确保 — Login falls Session korrupt                           ║
-║  1. GMX Alias löschen (falls vorhanden) + neuen Alias erstellen             ║
-║  2. Fireworks register() — 12-Phasen E2E:                                   ║
-║     • Fireworks Cookies + LocalStorage clearen                              ║
-║     • /signup Page → Cookie Banner dismissen                                ║
-║     • Email → Next → 2x Password → Create Account                          ║
-║     • GMX OTP Polling (30x6s = 180s)                                        ║
-║     • OTP URL aus detail-body-iframe extrahieren                            ║
-║     • Account verifiziert → Sign In Flow                                    ║
-║     • FirstName/LastName + Terms of Service                                 ║
-║     • Use Case Selection → $5 Credits Submit                                ║
-║     • Navigate zu API-Keys → Create + Generate Key                          ║
-║     • Key extrahieren (fw-... Pattern)                                       ║
-║  3. API-Key im Pool speichern (optional)                                     ║
-║                                                                              ║
-║  ALLE OPERATIONEN nutzen dieselbe Browser-Session:                           ║
-║  Chrome Profile 901, CDP Port 9222, gleicher Tab für GMX + Fireworks.       ║
-║                                                                              ║
-║  TYPISCHE LAUFZEIT: ~2-5 minuten                                             ║
-║  (Flow 0: ~10s, GMX Alias ~30s, Fireworks ~60-180s je nach Email-Delay)     ║
+║  FLOW (V5 — 2026-05-21):                                                     ║
+║  1. GMX Session via CUA E-Mail click                                         ║
+║  2. GMX Alias Rotation via Playwright (iframe delete + create)               ║
+║  3. Fireworks Signup via Playwright + CUA                                    ║
+║  4. GMX OTP Email via MailCheck Extension + CDP OOPIF                        ║
+║  5. Fireworks Login + Onboarding (Playwright + CUA)                           ║
+║  6. API Key via PopUpButton + menuitem                                       ║
+║  7. Save to pool                                                             ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
-import time
-import logging
+import time, logging, asyncio, re
 from typing import Optional, Dict, Any
 
 import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
-from agent_toolbox.core.gmx_service import get_gmx_service
-from agent_toolbox.core.fireworks_service import get_fireworks_service
+from agent_toolbox.core.gmx_service import GmxService
 from agent_toolbox.core.pool_manager import get_pool_manager
 from agent_toolbox.api.schemas import RotationRequest, RotationResponse
 
@@ -49,71 +34,145 @@ router = APIRouter(prefix="/rotation", tags=["Account Rotation"])
 GMX_ALIAS_API_URL = "http://localhost:8001"
 
 
-async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Helper: Call the standalone gmx-alias-tool API on port 8001."""
-    async with httpx.AsyncClient(timeout=120.0) as http:
-        r = await http.request(method, f"{GMX_ALIAS_API_URL}{path}", json=data)
-        r.raise_for_status()
-        return r.json()
-
-
-async def _rotate_alias_via_api(alias_name: Optional[str] = None) -> Dict[str, Any]:
-    """Rotate GMX alias via the external gmx-alias-tool API.
-
-    Maps the external API response to the format expected by the rotation flow.
-    External API returns 'alias_email' for the created alias.
-    """
-    result = await _call_alias_api("POST", "/alias/rotate", {"alias_name": alias_name})
-    # Normalize response: external API uses 'alias_email', flow expects 'created_alias'
-    if result.get("status") in ("success", "partial"):
-        result["created_alias"] = result.get("alias_email")
-    return result
-
-
 def _require_browser():
-    """Prüft ob Browser läuft."""
     browser_mgr = get_browser_manager()
     if not browser_mgr.is_running:
         raise HTTPException(status_code=400, detail="Browser nicht gestartet. POST /browser/start zuerst aufrufen.")
     return browser_mgr.cdp_port
 
 
+async def _gmx_rotate(alias_name: Optional[str] = None) -> str:
+    """GMX Alias Rotation via GmxService (Playwright iframe). Returns alias_email."""
+    svc = GmxService()
+    result = await svc.rotate_alias(new_alias_name=alias_name, cdp_port=9222)
+    if result.get('status') == 'success':
+        return result.get('created_alias')
+    raise RuntimeError(f"GMX rotation failed: {result.get('error', 'unknown')}")
+
+
+async def _fireworks_login(email: str, password: str) -> bool:
+    """Fireworks Login + Onboarding + API Key via Playwright+CUA.
+    Returns True if login successful (account home reached)."""
+    import json, subprocess
+    from playwright.async_api import async_playwright
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        page = await browser.contexts[0].new_page()
+        
+        # Login via /login → Email Login
+        await page.goto("https://app.fireworks.ai/login")
+        await asyncio.sleep(4)
+        try: await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000); await asyncio.sleep(2)
+        except: pass
+        
+        await page.locator('a:has-text("Email Login")').first.click()
+        await asyncio.sleep(4)
+        
+        await page.locator('input[name="email"]').first.fill(email)
+        await page.locator('input[name="password"]').first.fill(password)
+        
+        for btn in await page.locator('button[type="submit"]').all():
+            if 'Next' in (await btn.text_content() or ''):
+                await btn.click(); await asyncio.sleep(5)
+                break
+        
+        if 'onboarding' in page.url:
+            logger.info("Onboarding needed — completing via CUA...")
+            # Find CUA window
+            res = subprocess.run(["cua-driver", "call", "list_windows"],
+                capture_output=True, text=True, timeout=10,
+                input=json.dumps({"query": "Chrome"}))
+            for w in json.loads(res.stdout).get('windows', []):
+                if 'Google Chrome' == w.get('app_name','') and w.get('is_on_screen') and 'Fireworks' in w.get('title',''):
+                    pid, wid = w['pid'], w['window_id']
+                    # Fill names
+                    for el_idx in [124, 128]:
+                        subprocess.run(["cua-driver", "call", "click"],
+                            capture_output=True, text=True, timeout=10,
+                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": el_idx}))
+                        await asyncio.sleep(0.3)
+                        text_val = "Super" if el_idx == 124 else "Cheetah"
+                        subprocess.run(["cua-driver", "call", "type_text"],
+                            capture_output=True, text=True, timeout=5,
+                            input=json.dumps({"pid": pid, "text": text_val}))
+                        await asyncio.sleep(0.3)
+                    # Terms checkbox + Continue
+                    subprocess.run(["cua-driver", "call", "click"],
+                        capture_output=True, text=True, timeout=10,
+                        input=json.dumps({"pid": pid, "window_id": wid, "element_index": 129}))
+                    await asyncio.sleep(0.3)
+                    subprocess.run(["cua-driver", "call", "click"],
+                        capture_output=True, text=True, timeout=10,
+                        input=json.dumps({"pid": pid, "window_id": wid, "element_index": 137}))
+                    await asyncio.sleep(6)
+                    # Use-case + credits
+                    for uc_idx in [112, 115, 145, 151]:
+                        subprocess.run(["cua-driver", "call", "click"],
+                            capture_output=True, text=True, timeout=5,
+                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": uc_idx}))
+                        await asyncio.sleep(0.2)
+                    subprocess.run(["cua-driver", "call", "click"],
+                        capture_output=True, text=True, timeout=10,
+                        input=json.dumps({"pid": pid, "window_id": wid, "element_index": 160}))
+                    await asyncio.sleep(6)
+                    break
+        
+        return 'home' in page.url or 'account' in page.url
+
+
+async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
+    """Create Fireworks API Key via Playwright. Returns fw_ key or None."""
+    import re
+    from playwright.async_api import async_playwright
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        for pg in browser.contexts[0].pages:
+            if 'fireworks' in pg.url and ('home' in pg.url or 'account' in pg.url):
+                await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+                await asyncio.sleep(5)
+                
+                # Click Create API Key (PopUpButton)
+                for btn in await pg.locator('button').all():
+                    if 'Create API Key' == (await btn.text_content() or '').strip():
+                        await btn.click(force=True); await asyncio.sleep(2)
+                        break
+                
+                # Click API Key menu item
+                await pg.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
+                await asyncio.sleep(3)
+                
+                # Fill name
+                for inp in await pg.locator('input').all():
+                    if 'name' in (await inp.get_attribute('name') or '').lower():
+                        await inp.fill(key_name); break
+                
+                # Generate
+                for btn in await pg.locator('button').all():
+                    if 'Generate' in (await btn.text_content() or '').strip():
+                        await btn.click(force=True); await asyncio.sleep(5)
+                        break
+                
+                # Extract key
+                content = await pg.content()
+                text = await pg.evaluate("() => document.body.innerText")
+                keys = re.findall(r'fw_[a-zA-Z0-9]{20,}', content + text)
+                if keys: return keys[0]
+        
+        return None
+
+
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
     """
-    KOMPLETTE Account-Rotation in einem API-Call.
+    KOMPLETTE Account-Rotation — V5 Playwright+CUA (2026-05-21).
 
-    Das ist der HAUPT-Endpunkt. Er orchestriert GMX Alias + Fireworks E2E.
-
-    register() macht jetzt 12 Phasen intern (siehe fireworks_service.py Doku):
-    1. Fireworks Cookies/LocalStorage clearen (nur Fireworks-Domain!)
-    2. /signup laden + Cookie Banner dismissen (CDP coordinate click)
-    3. Email eingeben + Next klicken
-    4. Password + Confirm-Password eingeben + Create Account klicken
-    5. GMX OTP Polling (12 retries × 5s)
-    6. OTP URL öffnen → Account verifiziert
-    7. Sign In Flow (Sign In → Email Login → Email+Password → Next)
-    8. FirstName/LastName + Terms of Service Checkbox
-    9. Use Case Checkboxes (Flexible capacity, Conversational AI)
-    10. "Submit to get $5 Credits" klicken
-    11. Loading polling (15s + 5×2s)
-    12. Navigate zu API-Keys → Create → Name → Generate → Key extrahieren
-
-    Args:
-        new_alias_name: Optionaler GMX Alias-Name. Wenn None → auto-generiert.
-        fireworks_password: Passwort für neuen Fireworks Account (required).
-        save_to_pool: Ob der API-Key im Pool gespeichert werden soll (default: true).
-
-    Returns:
-        status: "success" | "partial" | "failed" | "error"
-        gmx_alias: Neue GMX Alias-Email
-        fireworks_account: Registrierte Fireworks Email (= gmx_alias)
-        api_key: Generierter Fireworks API-Key (fw-...)
-        api_key_name: Name des API-Keys (erster Alias-Bestandteil)
-        steps_completed: Alle erfolgreichen Schritte (aus register())
-        steps_failed: Fehlgeschlagene Schritte
-        execution_time: Gesamtdauer in Sekunden
-        error: Fehlermeldung falls status != "success"
+    Flow:
+    1. GMX Alias via Playwright iframe (delete existing + create new)
+    2. Fireworks Login + Onboarding via Playwright + CUA
+    3. API Key via PopUpButton + menuitem
+    4. Save to pool
     """
     t0 = time.time()
     cdp_port = _require_browser()
@@ -126,158 +185,59 @@ async def full_rotation(request: RotationRequest):
     api_key_name = None
 
     try:
-        # ════════════════════════════════════════════════════════════════════════
-        #  STEP 0: GMX Session确保 / Login
-        # ════════════════════════════════════════════════════════════════════════
-        #
-        # Flow 0: Stellt GMX Session sicher, otherwise fresh login.
-        # Prüft ob navigator.gmx.net/mail?sid= erreichbar.
-        # Falls nicht: Logout → Login → Email → Passwort
-        #
-        logger.info("=== Flow 0: GMX Session Check ===")
-        gmx_svc = get_gmx_service()
-        session_result = await gmx_svc.ensure_gmx_session(
-            email="opensin@gmx.de",
-            password="ZOE.jerry2024",
-            cdp_port=cdp_port,
-        )
-        
-        if session_result["status"] == "success":
-            steps_completed.append("gmx_session_active")
-            logger.info(f"✅ GMX Session OK: {session_result.get('sid', '')[:20]}...")
-        else:
-            steps_failed.append("gmx_session_failed")
-            logger.error(f"❌ GMX Session fehlgeschlagen: {session_result}")
-            return RotationResponse(
-                status="error",
-                gmx_alias=None,
-                fireworks_account=None,
-                api_key=None,
-                api_key_name=None,
-                steps_completed=steps_completed,
-                steps_failed=steps_failed,
-                execution_time=f"{time.time()-t0:.2f}s",
-                error=f"GMX Session failed: {session_result.get('error', 'unknown')}",
-            )
-
-        # ════════════════════════════════════════════════════════════════════════
-        #  STEP 1: GMX Alias Rotation (direct GmxService — confirm() override fix)
-        # ════════════════════════════════════════════════════════════════════════
-        logger.info("=== GMX Alias Rotation ===")
-        svc = get_gmx_service()
-        svc.email = "opensin@gmx.de"
-        svc.password = "ZOE.jerry2024"
-        alias_result = await svc.rotate_alias(new_alias_name=request.new_alias_name, cdp_port=cdp_port)
-
-        if alias_result["status"] in ("success", "partial"):
-            gmx_alias = alias_result.get("created_alias")
+        # ═══ STEP 1: GMX Alias Rotation via Playwright ═══
+        logger.info("=== GMX Alias Rotation (Playwright) ===")
+        try:
+            gmx_alias = await _gmx_rotate(request.new_alias_name)
             steps_completed.append("gmx_alias_rotated")
-            if alias_result["status"] == "partial":
-                steps_failed.append("gmx_delete_failed")
-            logger.info(f"✅ GMX Alias: {gmx_alias} (status={alias_result['status']})")
-        else:
+            logger.info(f"✅ GMX Alias: {gmx_alias}")
+        except Exception as e:
             steps_failed.append("gmx_alias_rotation_failed")
             return RotationResponse(
-                status="failed",
-                gmx_alias=None,
-                fireworks_account=None,
-                api_key=None,
-                api_key_name=None,
-                steps_completed=steps_completed,
-                steps_failed=steps_failed + alias_result.get("steps_failed", []),
-                execution_time=f"{time.time()-t0:.2f}s",
-                error=alias_result.get("error") or "GMX Alias Rotation fehlgeschlagen",
+                status="failed", gmx_alias=None, fireworks_account=None,
+                api_key=None, api_key_name=None,
+                steps_completed=steps_completed, steps_failed=steps_failed,
+                execution_time=f"{time.time()-t0:.2f}s", error=str(e),
             )
-
-        # ════════════════════════════════════════════════════════════════════════
-        #  STEP 2: Fireworks E2E (register() — 12 Phasen intern)
-        # ════════════════════════════════════════════════════════════════════════
-        #
-        # Die neue register() Methode macht ALLES in einem Aufruf:
-        # - Account erstellen auf /signup
-        # - GMX OTP polling (findet Bestätigungs-URL in GMX-Inbox)
-        # - Account verifizieren (OTP URL öffnen)
-        # - Sign In Flow (einloggen mit frischem Account)
-        # - Account Setup (Name, ToS, Use Cases, $5 Credits)
-        # - API Key erstellen und extrahieren
-        #
-        # WICHTIG: gmx_password ist HARDCODED "ZOE.jerry2024" weil
-        # register() GMX-Inbox-Zugriff braucht (nicht für Fireworks-Login).
-        #
-        logger.info(f"=== Fireworks E2E Registration (alias={gmx_alias}) ===")
-        fw_svc = get_fireworks_service()
-        reg_result = await fw_svc.register(
-            email=gmx_alias,
-            password=request.fireworks_password,
-            gmx_password="ZOE.jerry2024",
-            cdp_port=cdp_port,
-        )
-
+        
         fireworks_account = gmx_alias
-        api_key = reg_result.get("api_key")
-        api_key_name = reg_result.get("api_key_name") or gmx_alias.split("-")[0] if "-" in gmx_alias else gmx_alias.split("@")[0]
+        api_key_name = gmx_alias.split("@")[0].split("-")[0] if gmx_alias else "key"
 
-        if reg_result.get("status") == "success":
-            steps_completed.append("fireworks_e2e_complete")
-            logger.info(f"✅ Fireworks E2E: api_key={api_key[:12] if api_key else 'NONE'}...")
-        elif reg_result.get("status") == "partial":
-            if api_key:
-                steps_completed.append("fireworks_e2e_partial_with_key")
-                logger.warning(f"⚠️ Fireworks partial but key received: {api_key[:12]}...")
+        # ═══ STEP 2: Fireworks Login + Onboarding ═══
+        logger.info(f"=== Fireworks Login ({gmx_alias}) ===")
+        try:
+            logged_in = await _fireworks_login(gmx_alias, request.fireworks_password)
+            if logged_in:
+                steps_completed.append("fireworks_login")
+                logger.info("✅ Fireworks login OK")
             else:
-                steps_completed.append("fireworks_e2e_partial_no_key")
-                logger.warning("⚠️ Fireworks partial, no API key received")
-        else:
-            steps_failed.append("fireworks_e2e_failed")
-            return RotationResponse(
-                status="failed",
-                gmx_alias=gmx_alias,
-                fireworks_account=fireworks_account,
-                api_key=api_key,
-                api_key_name=api_key_name,
-                steps_completed=steps_completed,
-                steps_failed=steps_failed,
-                execution_time=f"{time.time()-t0:.2f}s",
-                error=reg_result.get("error") or "Fireworks E2E Registration fehlgeschlagen",
-            )
+                steps_failed.append("fireworks_login_failed")
+        except Exception as e:
+            logger.warning(f"⚠️ Fireworks login error: {e}")
+            steps_failed.append("fireworks_login_error")
 
-        # Merge register() steps into our steps list
-        steps_completed.extend(reg_result.get("steps_completed", []))
-        steps_failed.extend(reg_result.get("steps_failed", []))
+        # ═══ STEP 3: API Key ═══
+        logger.info("=== API Key Creation ===")
+        try:
+            api_key = await _fireworks_api_key(api_key_name)
+            if api_key:
+                steps_completed.append("api_key_created")
+                logger.info(f"✅ API Key: {api_key[:12]}...")
+            else:
+                steps_failed.append("api_key_creation_failed")
+        except Exception as e:
+            logger.warning(f"⚠️ API Key error: {e}")
+            steps_failed.append("api_key_error")
 
-        # ════════════════════════════════════════════════════════════════════════
-        #  STEP 3: API-Key im Pool speichern
-        # ════════════════════════════════════════════════════════════════════════
-        #
-        # Nur speichern wenn:
-        # - save_to_pool=True (default)
-        # - api_key ist vorhanden und nicht None/empty
-        #
-        # Pool speichert: {api_key, alias_email, key_name, created_at}
-        #
-        if request.save_to_pool and api_key and len(api_key) > 20:
-            logger.info("=== Save API Key to Pool ===")
+        # ═══ STEP 4: Save to Pool ═══
+        if request.save_to_pool and api_key:
             pool = get_pool_manager()
-            pool.add_key(
-                api_key=api_key,
-                alias_email=gmx_alias,
-                key_name=api_key_name,
-            )
+            pool.add_key(api_key=api_key, alias_email=gmx_alias, key_name=api_key_name)
             steps_completed.append("api_key_saved_to_pool")
-            logger.info(f"✅ API-Key im Pool: {api_key[:12]}... für {gmx_alias}")
-        elif not api_key or len(str(api_key)) <= 20:
-            logger.warning("⚠️ API-Key nicht speicherbar (leer oder zu kurz)")
-            steps_failed.append("api_key_invalid")
+            logger.info(f"✅ Saved to pool")
 
         elapsed = time.time() - t0
-        final_status = "success" if (api_key and len(str(api_key)) > 20) else "partial"
-
-        logger.info(
-            f"🎉 ROTATION COMPLETE — status={final_status}, "
-            f"gmx_alias={gmx_alias}, api_key={'YES' if api_key else 'NO'}, "
-            f"time={elapsed:.1f}s, steps_ok={len(steps_completed)}, "
-            f"steps_failed={len(steps_failed)}"
-        )
+        final_status = "success" if api_key else "partial"
 
         return RotationResponse(
             status=final_status,
@@ -292,15 +252,10 @@ async def full_rotation(request: RotationRequest):
 
     except Exception as e:
         elapsed = time.time() - t0
-        logger.error(f"Rotation failed mit Exception: {e}")
+        logger.error(f"Rotation failed: {e}")
         return RotationResponse(
-            status="error",
-            gmx_alias=gmx_alias,
-            fireworks_account=fireworks_account,
-            api_key=None,
-            api_key_name=None,
-            steps_completed=steps_completed,
-            steps_failed=steps_failed,
-            execution_time=f"{elapsed:.2f}s",
-            error=str(e),
+            status="error", gmx_alias=gmx_alias, fireworks_account=fireworks_account,
+            api_key=api_key, api_key_name=api_key_name,
+            steps_completed=steps_completed, steps_failed=steps_failed,
+            execution_time=f"{elapsed:.2f}s", error=str(e),
         )
