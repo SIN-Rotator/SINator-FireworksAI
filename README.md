@@ -2,16 +2,56 @@
 
 **Purpose:** Automated GMX email alias rotation → Fireworks AI account registration → API key pool management.
 
-**Architektur:** CUA Driver (Navigation + Dialog) + Playwright (Form Interaction) + CDP (Session/Cookies).
+**Architektur:** CUA Driver (Navigation + Dialog + React-CB) + Playwright (Form Interaction) + CDP (Session/Cookies/OTP Email).
 
-## ✅ VERIFIED FLOW (2026-05-21)
+## ✅ COMPLETE FLOW VERIFIED (2026-05-21)
 
-`neon-hawk-042@gmx.de` erfolgreich erstellt. Hier die exakten Commands:
+```
+GMX Rotation (19.8s) → Fireworks Signup → GMX Email Verify → Login
+→ Onboarding (CUA) → Use-Case + $5 → API Key: fw_8d1PLFjvQMdgJFzjDZSTRx
+```
 
 ### Alias löschen (Playwright im Iframe + CUA OK)
 ```python
-# 1. Mouseover existierende Alias-Email → Delete Icon erscheint
-frame.locator('text=laramiuex@gmx.de').first.hover()
+frame.locator('.table_field:has-text("alias@gmx.de")').first.hover(force=True)
+frame.locator('[title*="löschen"]').first.click(force=True)
+# CUA OK: cua-driver call click '{"pid":P,"wid":W,"element_index":OK}'
+```
+
+### Alias erstellen (Playwright im Iframe)
+```python
+frame.locator('input[type="text"]').first.fill("name-123")
+frame.locator('button:has-text("Hinzufügen")').first.click()
+# Verify: await inp.input_value() → '' = success
+```
+
+### Fireworks Login (Playwright)
+```python
+page.locator('a:has-text("Email Login")').first.click()       # /login OAuth-Seite
+page.locator('input[name="email"]').first.fill("email@gmx.de")  # KEIN type-Attribut!
+page.locator('input[name="password"]').first.fill("Passwort!")
+# Next: button[type="submit"] mit Text "Next"
+```
+
+### Fireworks Onboarding (CUA)
+```bash
+# ALLE Felder zuerst, DANN Terms-CB, DANN Continue
+cua-driver call type_text '{"pid":P,"text":"Vorname"}'     # First/Last Name
+cua-driver call click '{"pid":P,"wid":W,"element_index":129}'  # Terms CB
+cua-driver call click '{"pid":P,"wid":W,"element_index":137}'  # Continue
+# Use-Case: Checkboxen [112][115][145][151] + Submit [160]
+```
+
+### API Key (Playwright)
+```python
+await page.goto("https://app.fireworks.ai/settings/users/api-keys")  # NICHT workspace!
+# "Create API Key" = PopUpButton → force-click → [role="menuitem"] "API Key"
+for btn in page.locator('button').all():
+    if 'Create API Key' == (await btn.text_content() or '').strip():
+        await btn.click(force=True); break
+await page.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
+# Name + Generate
+```
 
 # 2. Delete Icon klicken (force=True weil nur nach hover sichtbar)
 frame.locator('[title*="löschen"]').first.click()
