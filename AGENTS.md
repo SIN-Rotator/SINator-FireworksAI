@@ -57,7 +57,31 @@ cua-driver call click '{"pid":29277,"wid":1088,"element_index":160}'  # Submit $
 ```python
 # RICHTIG: /settings/users/api-keys (nicht /settings/workspace/api-keys!)
 await page.goto("https://app.fireworks.ai/settings/users/api-keys")
-# → "API Keys" Link im Sidebar unter Settings → Users & Access
+
+# "Create API Key" ist ein PopUpButton → Dropdown mit [role="menuitem"]
+# Playwright force-click auf Button → dann Menu-Item "API Key" klicken
+for btn in page.locator('button').all():
+    if 'Create API Key' == (await btn.text_content() or '').strip():
+        await btn.click(force=True)
+        break
+await page.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
+
+# Name dialog
+for inp in page.locator('input').all():
+    if 'name' in (await inp.get_attribute('name') or '').lower():
+        await inp.fill("super-cheetah-key")
+        break
+# Generate button
+for btn in page.locator('button').all():
+    if 'Generate' in (await btn.text_content() or '').strip():
+        await btn.click(force=True); break
+# → fw_8d1PLFjvQMdgJFzjDZSTRx
+```
+
+### 🔑 COMPLETE FLOW VERIFIED 2026-05-21
+```
+GMX Rotation (19.8s) → Fireworks Signup → GMX Email Verify → Login
+→ Onboarding (CUA) → Use-Case + $5 → API Key: fw_8d1PLFjvQMdgJFzjDZSTRx
 ```
 
 ---
