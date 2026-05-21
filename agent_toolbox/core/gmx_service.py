@@ -935,7 +935,8 @@ class GmxService:
                     return False
 
                 # Step 1: Mouseover alias row → delete icon appears
-                alias_row = frame.locator(f'text={alias_email}').first
+                # Target table field (not system-message notification!)
+                alias_row = frame.locator(f'.table_field:has-text("{alias_email}"), .table_col-12:has-text("{alias_email}")').first
                 await alias_row.hover()
                 await asyncio.sleep(1)
 
@@ -1012,26 +1013,17 @@ class GmxService:
 
                 # Find mail_settings page with allEmailAddresses iframe
                 frame = None
-                addr_url = None
                 for pg in pages:
                     if 'mail_settings' in pg.url:
                         for f in pg.frames:
                             if 'allEmailAddresses' in f.url:
-                                addr_url = f.url
                                 frame = f
                                 break
                         break
 
-                if not addr_url:
+                if not frame:
                     logger.warning("allEmailAddresses iframe nicht via Playwright gefunden")
                     return None
-
-                # Open iframe URL directly for reliable Wicket interaction
-                new_page = await browser.contexts[0].new_page()
-                await new_page.goto(addr_url)
-                await asyncio.sleep(4)
-                logger.info(f"Opened allEmailAddresses directly: {new_page.url[:100]}")
-                addr_page = new_page
 
                 for attempt in range(3):
                     current_alias = alias_name if attempt == 0 else self.generate_alias_name()
@@ -1039,7 +1031,7 @@ class GmxService:
                     logger.info(f"Playwright attempt {attempt+1}/3: {current_email}")
 
                     # Fill input
-                    inp = addr_page.locator('input[type="text"]').first
+                    inp = frame.locator('input[type="text"]').first
                     if attempt == 0:
                         await inp.fill(current_alias)
                     else:
@@ -1048,7 +1040,7 @@ class GmxService:
                     await asyncio.sleep(0.5)
 
                     # Click Hinzufügen
-                    btn = addr_page.locator('button:has-text("Hinzufügen")').first
+                    btn = frame.locator('button:has-text("Hinzufügen")').first
                     await btn.click(force=True)
                     logger.info(f"Playwright: Hinzufügen clicked")
                     await asyncio.sleep(5)
@@ -1057,14 +1049,12 @@ class GmxService:
                     inp_val = await inp.input_value()
                     if not inp_val:
                         logger.info(f"Playwright: ✅ {current_email} created")
-                        await addr_page.close()
                         return current_email
 
                     # Also check page content
-                    content = await addr_page.content()
+                    content = await frame.content()
                     if current_email in content:
                         logger.info(f"Playwright: ✅ {current_email} created")
-                        await addr_page.close()
                         return current_email
 
                     logger.warning(f"Playwright: {current_email} not created, retrying...")
