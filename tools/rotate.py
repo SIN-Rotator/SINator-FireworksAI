@@ -43,9 +43,20 @@ async def main():
     alias = result.get('created_alias')
     logger.info(f"✅ GMX Alias: {alias} ({result.get('execution_time')})")
 
-    # ═══ Step 2: Fireworks Login + Onboarding ═══
-    logger.info("=== Fireworks Login ===")
-    from fireworks_service import login_fireworks
+    # ═══ Step 2: Fireworks Account (Signup or Login) ═══
+    logger.info("=== Fireworks Account ===")
+    from fireworks_service import signup_fireworks, login_fireworks
+    
+    # Try signup first (new account)
+    logger.info("Attempting signup...")
+    signup_result = await signup_fireworks(alias, args.password)
+    
+    if signup_result.get('status') == 'success':
+        logger.info("✅ Fireworks signup + verify OK")
+    else:
+        logger.info(f"Signup: {signup_result.get('status')} — trying login")
+    
+    # Login (works for both new and existing accounts)
     login_result = await login_fireworks(alias, args.password)
     if login_result.get('status') != 'success':
         logger.error(f"❌ Login failed: {login_result.get('error')}")
