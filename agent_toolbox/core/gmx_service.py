@@ -934,17 +934,16 @@ class GmxService:
                     logger.warning("allEmailAddresses iframe nicht gefunden")
                     return False
 
-                # Step 1: Mouseover alias row → delete icon appears
-                # Target table field (not system-message notification!)
-                alias_row = frame.locator(f'.table_field:has-text("{alias_email}"), .table_col-12:has-text("{alias_email}")').first
+# Step 1: Mouseover alias row → delete icon appears
+                alias_row = frame.locator(f'text={alias_email}').first
                 await alias_row.hover()
                 await asyncio.sleep(1)
 
-                # Step 2: Click delete icon
+                # Step 2: Click delete icon (no force — needs isTrusted for Wicket)
                 del_icon = frame.locator('[title*="löschen"], [title*="entfernen"]').first
                 if await del_icon.count() == 0:
-                    del_icon = frame.locator('a[title*="Lösch"], [class*="delete"], [class*="remove"]').first
-                await del_icon.click(force=True)  # force — icon erst nach hover sichtbar
+                    del_icon = frame.locator('a[title*="Lösch"]').first
+                await del_icon.click()
                 logger.info(f"Delete icon clicked for {alias_email}")
                 await asyncio.sleep(2)
 
@@ -1041,7 +1040,7 @@ class GmxService:
 
                     # Click Hinzufügen
                     btn = frame.locator('button:has-text("Hinzufügen")').first
-                    await btn.click(force=True)
+                    await btn.click()
                     logger.info(f"Playwright: Hinzufügen clicked")
                     await asyncio.sleep(5)
 
@@ -1189,7 +1188,7 @@ class GmxService:
                                 import re
                                 _emails = re.findall(r'[\w-]+@gmx\.d[et]', _content)
                                 for _e in _emails:
-                                    if 'opensil' not in _e:
+                                    if _e != 'opensin@gmx.de':
                                         alias_to_delete = _e
                                         logger.info(f"Delete Alias: {alias_to_delete}")
                                         _deleted = await self._delete_alias_via_playwright(alias_to_delete, cdp_port)
