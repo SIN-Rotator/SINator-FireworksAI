@@ -6,6 +6,59 @@
 
 ---
 
+## ✅ V5 FIREWORKS LOGIN — VERIFIED 2026-05-21
+
+**Account:** `super-cheetah-687@gmx.de` / `ZOE.jerry2024!`
+
+### Schritt 1: Login (Playwright)
+```python
+# /login → "Email Login" Link finden unter OAuth-Buttons
+page.locator('a:has-text("Email Login")').first.click()
+# Email-Feld: name="email" (KEIN type-Attribut!)
+page.locator('input[name="email")'].first.fill("super-cheetah-687@gmx.de")
+# Password
+page.locator('input[name="password"]').first.fill("ZOE.jerry2024!")
+# Submit
+for btn in await page.locator('button[type="submit"]').all():
+    if 'Next' in (await btn.text_content() or ''): btn.click()
+```
+
+### Schritt 2: Onboarding Profil (CUA)
+```bash
+# Terms checkbox (nur CUA kann React-CB toggeln!)
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":129}'
+# Names via CUA type_text
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":124}'  # First Name
+cua-driver call type_text '{"pid":29277,"text":"Super"}'
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":128}'  # Last Name
+cua-driver call type_text '{"pid":29277,"text":"Cheetah"}'
+# Continue
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":137}'
+```
+
+### Schritt 3: Use-Case + $5 Credits (CUA)
+```bash
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":112}'  # Prototype
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":115}'  # Flexible exp
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":145}'  # Conversat. AI
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":151}'  # Search
+cua-driver call click '{"pid":29277,"wid":1088,"element_index":160}'  # Submit $5 Credits
+# → /account/home
+```
+
+### 🔑 Key Learnings
+- Fireworks Login-Form: `input[name="email"]` (KEIN `type`-Attribut!)
+- React-Checkbox: Playwright `check()` + JS `click()` ignoriert → NUR CUA `AXPress`
+- Cookie-Banner MUSS vor Form-Suche dismissed werden
+- Onboarding-Reihenfolge: ALLE Felder zuerst → DANN Terms-CB → DANN Continue
+- `text=CREATE` matched Cookie-Banner — spezifischere Selektoren!
+
+---
+
+**Tag:** `v3-working` (commit `aa9b538`)
+
+---
+
 ## ✅ V4 PLAYWRIGHT FLOW — VERIFIED 2026-05-21
 
 **Verification:** `neon-hawk-042@gmx.de` successfully created + verified.
