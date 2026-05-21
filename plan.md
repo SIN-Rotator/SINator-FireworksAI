@@ -41,9 +41,11 @@ api_key = create_api_key()
 ```
 
 ### PRIO 2: API-Key Pool aktivieren (1 Tag)
-**Datei:** `agent_toolbox/core/pool_manager.py`
-**Status:** Existiert (7.6KB), aber noch nie mit echten Keys befüllt
-**Fix:** Key nach Erstellung in `data/fireworksai-pool.json` speichern
+**Datei:** `agent_toolbox/core/pool_manager.py` ✅
+**Status:** Bereits implementiert + getestet. Pool hat 2 Keys.
+- `fw_8d1PLFjvQMdgJFzjDZSTRx` → super-cheetah-687 (2026-05-21)
+- `fw_4SyZoeCFsyn5L4hpT63LGV` → blaze-scorpion-746 (used)
+- Rotation.py speichert Keys automatisch via `pool.add_key()`
 
 ### PRIO 3: fireworks_service.py ersetzen (1-2 Tage)
 **Datei:** `agent_toolbox/core/fireworks_service.py` (155KB, 3103 Zeilen)
