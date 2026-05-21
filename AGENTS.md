@@ -53,6 +53,13 @@ cua-driver call click '{"pid":29277,"wid":1088,"element_index":160}'  # Submit $
 - Onboarding-Reihenfolge: ALLE Felder zuerst → DANN Terms-CB → DANN Continue
 - `text=CREATE` matched Cookie-Banner — spezifischere Selektoren!
 
+### API Key URL
+```python
+# RICHTIG: /settings/users/api-keys (nicht /settings/workspace/api-keys!)
+await page.goto("https://app.fireworks.ai/settings/users/api-keys")
+# → "API Keys" Link im Sidebar unter Settings → Users & Access
+```
+
 ---
 
 **Tag:** `v3-working` (commit `aa9b538`)
