@@ -151,35 +151,16 @@ class GmxOtpResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class FireworksRegisterRequest(BaseModel):
-    """Request für Fireworks Registrierung."""
-    email: str = Field(..., description="GMX Alias-Email für Registrierung")
+    """Request für Fireworks Login."""
+    email: str = Field(..., description="GMX Alias-Email")
     password: str = Field(..., description="Passwort für Fireworks Account")
-    gmx_password: str = Field(..., description="GMX Account Passwort (für OTP-Zugriff)")
-    first_name: Optional[str] = Field(default=None, description="Vorname (wenn None, aus Email generiert)")
-    last_name: Optional[str] = Field(default=None, description="Nachname (wenn None, aus Email generiert)")
+    gmx_password: Optional[str] = Field(default=None, description="GMX Passwort (deprecated)")
 
 
 class FireworksRegisterResponse(BaseModel):
-    """Response für Fireworks Registrierung."""
+    """Response für Fireworks Login."""
     status: str = Field(..., description="success | failed | error")
-    account_email: str = Field(..., description="Registrierte Email")
-    execution_time: str = Field(..., description="Ausführungszeit")
-    error: Optional[str] = Field(default=None, description="Fehlermeldung")
-
-
-class FireworksConfirmRequest(BaseModel):
-    """Request für Fireworks Bestätigung."""
-    confirm_url: str = Field(..., description="Bestätigungs-URL aus OTP-Email")
-    email: str = Field(..., description="Account Email für Login")
-    password: str = Field(..., description="Account Passwort für Login")
-    first_name: Optional[str] = Field(default=None, description="Vorname")
-    last_name: Optional[str] = Field(default=None, description="Nachname")
-
-
-class FireworksConfirmResponse(BaseModel):
-    """Response für Fireworks Bestätigung."""
-    status: str = Field(..., description="success | failed | error")
-    account_confirmed: bool = Field(..., description="True wenn Account bestätigt")
+    account_email: str = Field(..., description="Account Email")
     execution_time: str = Field(..., description="Ausführungszeit")
     error: Optional[str] = Field(default=None, description="Fehlermeldung")
 
@@ -194,23 +175,6 @@ class FireworksApiKeyResponse(BaseModel):
     status: str = Field(..., description="success | failed | error")
     api_key: Optional[str] = Field(default=None, description="Generierter API-Key")
     key_name: str = Field(..., description="Name des Keys")
-    execution_time: str = Field(..., description="Ausführungszeit")
-    error: Optional[str] = Field(default=None, description="Fehlermeldung")
-
-
-class FireworksConfirmExistingRequest(BaseModel):
-    """Request für Recovery-Flow: Existierenden Account verifizieren + API-Key."""
-    email: str = Field(..., description="Fireworks Account Email (GMX Alias)")
-    password: str = Field(..., description="Fireworks Account Passwort")
-
-
-class FireworksConfirmExistingResponse(BaseModel):
-    """Response für Recovery-Flow: Account verifiziert + API-Key erstellt."""
-    status: str = Field(..., description="success | partial | failed | error")
-    account_email: str = Field(..., description="Account Email")
-    api_key: Optional[str] = Field(default=None, description="Generierter API-Key")
-    api_key_name: Optional[str] = Field(default=None, description="Name des API-Keys")
-    account_verified: bool = Field(default=False, description="True wenn Account bestätigt")
     execution_time: str = Field(..., description="Ausführungszeit")
     error: Optional[str] = Field(default=None, description="Fehlermeldung")
 

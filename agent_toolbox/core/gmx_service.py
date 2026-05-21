@@ -5,7 +5,7 @@
 ║                                                                              ║
 ║  ⚠️  WICHTIG: CUA DRIVER IST IMMER DIE ERSTE WAHL!                           ║
 ║  GMX Extension für Email-Zugriff — NICHT lightmailer URLs!                   ║
-║  Siehe command_registry.json für vollständige Dokumentation.                 ║
+║  Siehe AGENTS.md für vollständige Dokumentation.                           ║
 ║                                                                              ║
 ║  ZWECK:                                                                      ║
 ║  GMX Session-Management, Alias-Erstellung/Löschung, OTP-Lesen               ║
