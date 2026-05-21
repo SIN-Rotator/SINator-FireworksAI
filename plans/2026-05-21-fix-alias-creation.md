@@ -1,40 +1,46 @@
-# Fix GMX Alias Creation — Plan
+# Fix GMX Alias Creation + Fireworks Flow — Plan
 
 ## Problem
 Raw CDP kann Cross-Origin-Iframes (`3c.gmx.net`) nicht handlen.
 Alle DOM.getBoxModel Calls returnen stale NodeIDs (0).
 
-## Lösung: Playwright für Iframe-Interaktion
-CUA bleibt für Navigation (E-Mail → Einstellungen).
-Playwright übernimmt die Alias-Formular-Interaktion innerhalb des Iframes.
+## Lösung: Playwright + CUA Hybrid
+CUA für Navigation + React-Checkbox. Playwright für Form-Interaktion.
 
-## Tasks
+## Resultat (2026-05-21)
 
-### ✅ Done
-- [x] CUA Navigation fix (E-Mail Link → Einstellungen → E-Mail-Adressen)
-- [x] Session detection (app_name filter)
-- [x] Element regex fix (both `] - [N]` and `- [N]` formats)
+### ✅ COMPLETE FLOW VERIFIED
+```
+GMX Rotation (19.8s) → Fireworks Signup → GMX Email Verify → Login
+→ Onboarding (CUA) → Use-Case + $5 → API Key: fw_8d1PLFjvQMdgJFzjDZSTRx
+```
 
-### 🔧 Phase 1: Playwright Integration
-- [ ] `pip install playwright && playwright install chromium`
-- [ ] Playwright connect zu laufendem Chrome (CDP Port 9222)
-- [ ] Iframe finden (`page.frames` filter by URL `3c.gmx.net`)
-- [ ] Input-Feld im Iframe via `frame.fill('[name*="localPart"]', alias_name)`
-- [ ] Button via `frame.click('button:has-text("Hinzufügen")')`
-- [ ] Verification: `frame.text_content()` check auf alias email
+### ✅ GMX Alias Rotation
+- [x] CUA Navigation (E-Mail Link → Einstellungen → allEmailAddresses)
+- [x] Delete: `.table_field:has-text()` hover(force=True) → `[title*="löschen"]` click(force=True) → CUA OK
+- [x] Create: `input[type="text"]` fill → `button:has-text("Hinzufügen")` click → verify empty input
+- [x] 3/3 successful, 19.8s average
 
-### 🔧 Phase 2: Integration in gmx_service.py
-- [ ] Neue Methode `_create_alias_via_playwright(alias_name, cdp_port)`
-- [ ] Replace `_find_alias_input_coords` + `_fill_alias_input_via_cdp` + `_click_button_via_cdp`
-- [ ] Keep CUA navigation unchanged
-- [ ] Test standalone create + rotate
+### ✅ Fireworks Flow
+- [x] Verify-URL aus GMX MailCheck Extension + CDP OOPIF extrahiert
+- [x] Account bestätigt (server-seitig)
+- [x] Login: `/login` → "Email Login" → `input[name="email"]` → onboarding
+- [x] Onboarding via CUA: names (type_text) + Terms-CB (AXPress) + Continue
+- [x] Use-Case + $5 Credits via CUA: checkboxes + Submit
+- [x] API Key: `/settings/users/api-keys` → PopUpButton → menuitem → Generate
+- [x] API Key extrahiert: `fw_8d1PLFjvQMdgJFzjDZSTRx`
 
-### 🔧 Phase 3: End-to-End Test
-- [ ] Full rotation: delete existing → create new alias
-- [ ] Verify alias exists on GMX page
-- [ ] Push to GitHub
+### Key Learnings
+- Fireworks Login-Form: `input[name="email"]` (KEIN `type`-Attribut!)
+- React-Checkbox: Playwright `check()` + JS `click()` ignoriert → NUR CUA `AXPress`
+- Cookie-Banner MUSS vor Form-Suche dismissed werden
+- Onboarding-Reihenfolge: ALLE Felder zuerst → DANN Terms-CB → DANN Continue
+- API Keys URL: `/settings/users/api-keys` (nicht `/settings/workspace/api-keys`)
+- `text=CREATE` matched Cookie-Banner — spezifischere Selektoren!
+- IAC: Direkte Navigation zu 3c.gmx.net URLs trigger Anti-Automation
 
-## Alternativen (nicht gewählt)
-- **mlx-use / Vision**: Overkill für diesen Use-Case, stealth-runner dependency zu schwer
-- **HTTP API**: Reverse-Engineering nötig, Wicket Forms komplex
-- **Raw CDP + OOPIF Sessions**: Zu fragil, NodeIDs stale
+### Banned Approaches
+- CDP `DOM.performSearch` + `getBoxModel` (nodeId=0 in cross-origin iframes)
+- Playwright `check()` auf React-Checkbox ("did not change state")
+- Direct URL navigation to `3c.gmx.net` → IAC restart
+- `macos-use` Agent (tool validation bug)
