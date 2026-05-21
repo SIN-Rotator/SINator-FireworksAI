@@ -32,6 +32,20 @@ async def main():
 
     t0 = time.time()
 
+    # ═══ Step 0: GMX Session Refresh ═══
+    logger.info("=== GMX Session Refresh ===")
+    import re as _re
+    from playwright.async_api import async_playwright as _ap
+    async with _ap() as _p:
+        _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        for _pg in _b.contexts[0].pages:
+            if 'www.gmx.net' in _pg.url:
+                await _pg.get_by_role("link", name="E-Mail", exact=True).first.click()
+                await asyncio.sleep(5)
+                if 'navigator' in _pg.url:
+                    logger.info("✅ GMX Session active")
+                break
+
     # ═══ Step 1: GMX Alias Rotation ═══
     logger.info("=== GMX Alias Rotation ===")
     from gmx_service import GmxService
