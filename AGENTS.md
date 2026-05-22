@@ -38,12 +38,21 @@ cua-driver call click '{"pid":29277,"wid":1088,"element_index":137}'
 
 ### Schritt 3: Use-Case + $5 Credits (CUA)
 ```bash
-cua-driver call click '{"pid":29277,"wid":1088,"element_index":112}'  # Prototype
-cua-driver call click '{"pid":29277,"wid":1088,"element_index":115}'  # Flexible exp
-cua-driver call click '{"pid":29277,"wid":1088,"element_index":145}'  # Conversat. AI
-cua-driver call click '{"pid":29277,"wid":1088,"element_index":151}'  # Search
-cua-driver call click '{"pid":29277,"wid":1088,"element_index":160}'  # Submit $5 Credits
-# → /account/home
+# Spezifische Checkboxen:
+cua-driver call click '{"pid":P,"wid":W,"element_index":127}'  # Faster speeds
+cua-driver call click '{"pid":P,"wid":W,"element_index":152}'  # Conversational AI
+cua-driver call click '{"pid":P,"wid":W,"element_index":168}'  # Submit $5 Credits
+# → /settings/users/api-keys (oder /account/home)
+```
+
+### After Onboarding → Login Redirect
+```python
+# Onboarding Continue leitet zu Login mit "Account confirmed!" Banner
+# Muss erneut einloggen:
+page.locator('a:has-text("Email Login")').first.click()
+page.locator('input[name="email"]').first.fill("email@gmx.de")  
+page.locator('input[name="password"]').first.fill("Passwort!")
+# Next → /account/home
 ```
 
 ### 🔑 Key Learnings
