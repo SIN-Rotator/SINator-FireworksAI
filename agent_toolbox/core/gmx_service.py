@@ -64,6 +64,96 @@ logger = logging.getLogger(__name__)
 
 GMX_HOME_URL = "https://www.gmx.net/"
 
+# ── Rate-Limiting / Anti-Bot Protection ──────────────────────────────────────
+_RATE_LIMIT_STATE = {"hits": 0, "last_hit": 0.0, "cooloff_until": 0.0}
+_RATE_LIMIT_MAX_HITS = 3
+_RATE_LIMIT_WINDOW = 300  # 5 Minuten
+_RATE_LIMIT_COOLOFF = 120  # 2 Minuten Cooloff nach Max-Hits
+_RATE_LIMIT_RETRIES = 2
+
+
+def _is_rate_limited(url: str = "", body_text: str = "") -> bool:
+    """Prüft ob GMX Rate-Limiting / Anti-Bot aktiv ist."""
+    signals = [
+        "iac/restart", "session-expired", "ERR_BLOCKED_BY_RESPONSE",
+        "429", "413", "too many requests", "wiederholte anmeldung",
+        "blocked", "access denied", "robot",
+    ]
+    combined = (url + " " + body_text).lower()
+    return any(s in combined for s in signals)
+
+
+def _track_rate_limit(detected: bool) -> bool:
+    """Circuit Breaker: trackt Rate-Limit-Hits, löst Cooloff aus."""
+    now = time.time()
+    if detected:
+        if now - _RATE_LIMIT_STATE["last_hit"] > _RATE_LIMIT_WINDOW:
+            _RATE_LIMIT_STATE["hits"] = 0
+        _RATE_LIMIT_STATE["hits"] += 1
+        _RATE_LIMIT_STATE["last_hit"] = now
+        if _RATE_LIMIT_STATE["hits"] >= _RATE_LIMIT_MAX_HITS:
+            _RATE_LIMIT_STATE["cooloff_until"] = now + _RATE_LIMIT_COOLOFF
+            logger.warning(f"⚠️ Rate-Limit Circuit Breaker: {_RATE_LIMIT_COOLOFF}s Cooloff")
+            return True
+    return False
+
+
+def _in_cooloff() -> bool:
+    return time.time() < _RATE_LIMIT_STATE["cooloff_until"]
+
+
+def _gmx_throttle(delay: float = 3.0):
+    """Proaktive Verzögerung zwischen GMX-Operationen."""
+    import random
+    jitter = random.uniform(-0.5, 1.0)
+    time.sleep(max(0, delay + jitter))
+
+
+async def _purge_gmx_cookies(client: Optional["CDPClient"] = None, session_id: str = ""):
+    """Löscht stale GMX-Cookies von Disk + Chrome (vor Recovery)."""
+    from pathlib import Path
+    for p in [Path("./data/gmx-cookies.json"), Path("./backup/session/gmx-cookies-master.json")]:
+        if p.exists():
+            p.unlink()
+            logger.info(f"🧹 Gelöscht: {p}")
+    if client and session_id:
+        try:
+            cookies = await client.send_to_session(session_id, "Network.getAllCookies")
+            for ck in cookies.get("cookies", []):
+                domain = ck.get("domain", "")
+                if "gmx" in domain or "gmxn" in domain:
+                    await client.send_to_session(session_id, "Network.deleteCookies", {
+                        "name": ck["name"], "domain": "." + domain.lstrip("."),
+                    })
+            logger.info("🧹 GMX-Cookies aus Chrome gelöscht")
+        except Exception as e:
+            logger.debug(f"Cookie-Purge fehlgeschlagen: {e}")
+
+
+async def _rate_limit_safe_call(fn, *args, max_retries: int = _RATE_LIMIT_RETRIES, **kwargs):
+    """Wrapper: führt fn aus, erkennt Rate-Limiting, retryt mit Purge."""
+    for attempt in range(max_retries + 1):
+        if _in_cooloff():
+            wait = _RATE_LIMIT_STATE["cooloff_until"] - time.time()
+            logger.info(f"⏳ Cooloff: noch {wait:.0f}s warten...")
+            await asyncio.sleep(wait + 1)
+
+        result = await fn(*args, **kwargs)
+        if isinstance(result, dict):
+            url = result.get("current_url", "")
+            error = result.get("error", "")
+            if _is_rate_limited(url, error):
+                _track_rate_limit(True)
+                logger.warning(f"⚠️ Rate-Limit erkannt (attempt {attempt+1}/{max_retries+1})")
+                if attempt < max_retries:
+                    await _purge_gmx_cookies()
+                    await asyncio.sleep(5)
+                    continue
+            else:
+                _track_rate_limit(False)
+        return result
+    return result
+
 
 class GmxService:
     """
@@ -227,7 +317,7 @@ class GmxService:
         """
         # ── STEP 0: IAC-Tabs schließen (GMX Antibot) ───────────────────────────
         await self._close_iac_tabs(client, session_id)
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1)
 
         # ── STEP 1: Gespeicherte Cookies injizieren ─────────────────────────────
         await self._inject_saved_cookies(client, session_id)
@@ -235,10 +325,16 @@ class GmxService:
 
         # ── STEP 2: Immer zur Homepage navigieren ──────────────────────────────
         await client.navigate(session_id, "https://www.gmx.net/")
-        await asyncio.sleep(3)
+        await asyncio.sleep(4)
 
         url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
         current_url = url_result.get("result", {}).get("value", "")
+
+        # Rate-Limit Check: IAC/restart nach Navigation
+        if _is_rate_limited(current_url):
+            _track_rate_limit(True)
+            logger.warning(f"⚠️ Rate-Limit nach Navigation: {current_url[:80]}")
+            return {"success": False, "current_url": current_url, "error": f"rate_limited:{current_url[:60]}"}
 
         # Already on 3c-bap settings page (direct navigation successful)
         if "3c-bap.gmx.net" in current_url and "jsessionid" in current_url:
@@ -252,7 +348,6 @@ class GmxService:
             if sid and "mail_settings" in current_url:
                 return {"success": True, "current_url": current_url, "sid": sid}
             if sid and "mail" in current_url:
-                # Navigate to mail_settings with SID
                 settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
                 await client.navigate(session_id, settings_url)
                 await asyncio.sleep(5)
@@ -287,12 +382,19 @@ class GmxService:
                 return_by_value=True,
             )
 
-        # Poll for SID in URL (max 15s, check alle 2s)
+        # Poll for SID in URL (max 16s, check alle 2s)
         sid = None
         for attempt in range(8):
             await asyncio.sleep(2)
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
             current_url = url_result.get("result", {}).get("value", "")
+
+            # Rate-Limit Check während Polling
+            if _is_rate_limited(current_url):
+                _track_rate_limit(True)
+                logger.warning(f"⚠️ Rate-Limit während SID-Polling: {current_url[:60]}")
+                return {"success": False, "current_url": current_url, "error": f"rate_limited_poll:{current_url[:60]}"}
+
             sid_match = re.search(r'[?&]sid=([^&]+)', current_url)
             if sid_match and "navigator.gmx.net" in current_url:
                 sid = sid_match.group(1)
@@ -436,10 +538,18 @@ class GmxService:
                         break
 
             if not has_gmx_page:
-                logger.warning("Keine GMX Page — injiziere Cookies und navigiere zu GMX")
+                logger.warning("Keine GMX Page — purge + injiziere Cookies und navigiere zu GMX")
+                await _purge_gmx_cookies(client, session_id)
                 await self._inject_saved_cookies(client, session_id)
                 await client.send_to_session(session_id, "Page.navigate", {"url": "https://www.gmx.net"})
                 await asyncio.sleep(5)
+                # Rate-Limit Check nach Navigation
+                rl_url = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+                rl_url_val = rl_url.get("result", {}).get("value", "")
+                if _is_rate_limited(rl_url_val):
+                    _track_rate_limit(True)
+                    logger.warning(f"⚠️ Rate-Limit in Navigation: {rl_url_val[:60]}")
+                    return False
                 # After navigation, re-check targets
                 targets = await client.get_targets()
                 for t in targets:
@@ -1176,7 +1286,13 @@ class GmxService:
 
         client = None
         try:
+            if _in_cooloff():
+                wait = _RATE_LIMIT_STATE["cooloff_until"] - time.time()
+                logger.info(f"⏳ Rate-Limit Cooloff: noch {wait:.0f}s warten...")
+                await asyncio.sleep(wait + 1)
+
             client, session_id, target_id = await self._connect_to_browser(cdp_port)
+            _gmx_throttle(2)
 
             # --- STEP 1: Navigate to allEmailAddresses ---
             nav_ok = await self._navigate_to_all_email_addresses(client, session_id, target_id)
@@ -1224,6 +1340,9 @@ class GmxService:
             if not _deleted:
                 steps_completed.append("no_existing_alias")
                 deleted_alias = None
+
+            # Proaktive Verzögerung zwischen Delete und Create
+            _gmx_throttle(4)
 
             # --- STEP 3: Create new alias via Playwright ---
             if not new_alias_name:

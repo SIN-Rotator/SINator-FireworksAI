@@ -153,10 +153,39 @@ rtk test pytest tests/ -v
 | 2b | GMX CUA-Tests in pytest | — | ❌ | ❌ **Nicht testbar** (CUA braucht echten Chrome) |
 | 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | ✅ **DONE** |
 | 4 | gmx-alias-tool API Konsolidierung | 1h | 🟢 Niedrig | ✅ **DONE** |
+| 5 | Rate-Limiting / Anti-Bot Schutz | 3h | 🔴 Hoch | ✅ **DONE** |
 
 ---
 
-## 🚀 Quick Start (V5)
+## 🚀 V7 — Rate-Limiting / Anti-Bot Protection (DONE)
+
+### Problem
+GMX blockiert bei zu vielen Anfragen mit IAC/restart, `ERR_BLOCKED_BY_RESPONSE`, oder Session-Expired. Es gab keine Erkennung — stale Cookies wurden immer wieder injiziert, was den Fehler perpetuierte.
+
+### Lösung (5 Komponenten)
+
+| # | Komponente | File | Beschreibung |
+|---|-----------|------|-------------|
+| 1 | `_is_rate_limited()` | `gmx_service.py:76` | Prüft URL + Body auf IAC/Restart/429/Blocked-Signale |
+| 2 | `_track_rate_limit()` | `gmx_service.py:86` | Circuit Breaker: 3 Hits in 5min → 120s Cooloff |
+| 3 | `_purge_gmx_cookies()` | `gmx_service.py:104` | Löscht stale Cookies von Disk + Chrome vor Recovery |
+| 4 | `_gmx_throttle()` | `gmx_service.py:97` | Proaktive 3s-Verzögerung + Jitter zwischen GMX-Ops |
+| 5 | `_rate_limit_safe_call()` | `gmx_service.py:117` | Retry-Wrapper: erkennt Rate-Limit, purgt, retryt (max 2x) |
+
+### Integration
+
+| Funktion | Integration | Verhalten |
+|----------|-----------|----------|
+| `_ensure_mail_session()` | Rate-Limit-Check nach Navigation + während SID-Polling | Bei Hit → sofort return mit `error: "rate_limited:..."` |
+| `_navigate_to_all_email_addresses()` | Rate-Limit-Check nach Cookie-Injection + Navigation | Bei Hit → purge + return False (triggert Retry) |
+| `rotate_alias()` | Cooloff-Check am Start + `_gmx_throttle(2)` vor Nav + `_gmx_throttle(4)` zwischen Delete/Create | Automatische Verlangsamung bei Wiederholungen |
+
+### Files geändert
+- `agent_toolbox/core/gmx_service.py` — Rate-Limit-Logik + Integration in 3 Schlüsselfunktionen
+
+---
+
+## 🚀 Quick Start (V6)
 
 ```bash
 # Chrome mit Profile 901 (OHNE accessibility!)
