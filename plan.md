@@ -3,8 +3,8 @@
 ## ✅ V5 Status: COMPLETE FLOW VERIFIED
 
 ```
-GMX Rotation (19.8s) → Fireworks Signup → OTP → Login → Onboarding → API Key → Pool
-Latest: crystal-beetle-676 → fw_MdM6tGucgWuuc7zQyJGeTK
+GMX Login → Rotation (19.8s) → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key → Pool
+Latest: omega-condor-654 → fw_GEB2TRxTFzcFNweZwMuq5b
 ```
 
 | Flow | Name | Status | Tool |
@@ -17,14 +17,14 @@ Latest: crystal-beetle-676 → fw_MdM6tGucgWuuc7zQyJGeTK
 | #4 | Onboarding | ✅ | CUA: "First"+"Last" type_text + Terms AXPress |
 | #5 | Use-Case + $5 | ✅ | CUA dynamic scan text-based checkboxes |
 | #6 | API Key | ✅ | PopUpButton force-click + menuitem + Generate |
-| #7 | Pool | ✅ | Auto-save (4 keys total, 3 available) |
+| #7 | Pool | ✅ | Auto-save (5 keys total, 4 available) |
 
 ## ✅ V5 Completed Milestones
 
 | # | Task | Ergebnis |
 |---|------|----------|
 | 1 | Full-Flow Automation | `rotation.py` V5 — Playwright+CUA hybrid |
-| 2 | API-Key Pool | 4 Keys (3 available), auto-save |
+| 2 | API-Key Pool | 5 Keys (4 available), auto-save |
 | 3 | fireworks_service.py | 3103→114 Zeilen (-96%), V5 Playwright+CUA |
 | 4 | Cleanup | Obsolete files gelöscht (preflight.py, command_registry.json, etc.) |
 | 5 | Single Command | `python tools/rotate.py` — E2E in einem Befehl |
