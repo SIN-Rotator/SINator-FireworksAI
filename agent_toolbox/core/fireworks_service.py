@@ -231,9 +231,39 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                     await _fireworks_playwright_onboarding(page)
                 steps.append("onboarding_complete")
 
-            if 'home' in page.url or 'account' in page.url or 'settings' in page.url:
-                steps.append("login_success")
-                return {"status": "success", "steps_completed": steps}
+            # Wait for redirect after onboarding (poll up to 15s)
+            for attempt in range(8):
+                await asyncio.sleep(2)
+                if any(x in page.url for x in ['home', 'account', 'settings']):
+                    logger.info(f"Redirect detected ({page.url[:60]})")
+                    steps.append("login_success")
+                    return {"status": "success", "steps_completed": steps}
+
+            # Force navigate to API keys
+            logger.warning(f"Kein Redirect — force navigate ({page.url[:60]})")
+            try:
+                await page.goto("https://app.fireworks.ai/settings/users/api-keys", timeout=15000, wait_until='domcontentloaded')
+                await asyncio.sleep(3)
+                if any(x in page.url for x in ['home', 'account', 'settings']):
+                    steps.append("login_success")
+                    return {"status": "success", "steps_completed": steps}
+            except: pass
+
+            # Still on onboarding? Try home page
+            if 'onboarding' in page.url:
+                logger.warning("Noch auf /onboarding — retry force navigate zu home")
+                retries = 2
+                for r in range(retries):
+                    try:
+                        await page.goto("https://app.fireworks.ai/", timeout=15000, wait_until='domcontentloaded')
+                        await asyncio.sleep(4)
+                        if any(x in page.url for x in ['home', 'account', 'settings', 'fireworks']):
+                            steps.append("login_success")
+                            return {"status": "success", "steps_completed": steps}
+                    except: pass
+                    if r < retries - 1:
+                        logger.warning(f"Retry {r+1}/{retries}...")
+                        await asyncio.sleep(3)
 
             return {"status": "error", "steps_completed": steps, "error": f"Login failed: {page.url[:80]}"}
 
@@ -299,8 +329,15 @@ async def _fireworks_playwright_onboarding(page) -> None:
             logger.info("Playwright onboarding complete")
             return
     logger.warning("Playwright onboarding — kein Redirect, force navigate")
-    await page.goto("https://app.fireworks.ai/settings/users/api-keys")
-    await asyncio.sleep(2)
+    try:
+        await page.goto("https://app.fireworks.ai/settings/users/api-keys", timeout=15000, wait_until='domcontentloaded')
+        await asyncio.sleep(3)
+    except:
+        try:
+            await page.goto("https://app.fireworks.ai/settings/users/api-keys", timeout=20000)
+            await asyncio.sleep(3)
+        except:
+            logger.error("Force navigate failed")
 
 
 async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
