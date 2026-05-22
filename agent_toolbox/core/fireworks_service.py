@@ -73,59 +73,34 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
                 # Create Account
                 for btn in await page.locator('button[type="submit"]').all():
                     if 'Create Account' in (await btn.text_content() or ''):
-                        await btn.click(force=True); await asyncio.sleep(4)
+                        await btn.click(force=True)
                         logger.info("Create Account clicked")
+                        break
+                # Verify page advanced (wait for redirect away from /signup)
+                for _ in range(10):
+                    await asyncio.sleep(1)
+                    if '/signup' not in page.url or 'verify' in page.url:
+                        logger.info(f"Page advanced to: {page.url[:60]}")
                         break
                 steps.append("create_clicked")
             
-            # Step 2: Poll for OTP email with 3-level recovery
+            # Step 2: Poll for OTP email (max 108s = 18×6s)
             logger.info("Waiting for Fireworks verification email...")
             verify_url = None
             from gmx_service import GmxService
             svc = GmxService()
             
-            for attempt in range(30):
+            for attempt in range(18):
                 await asyncio.sleep(6)
                 verify_url = await svc.read_fireworks_verification_email()
                 if verify_url:
                     logger.info(f"✅ OTP found (attempt {attempt+1})")
                     break
-                logger.info(f"OTP poll {attempt+1}/30...")
-                
-                # 3-level recovery every 6 attempts (36s intervals)
-                if attempt > 0 and attempt % 6 == 0:
-                    level = attempt // 6  # 1, 2, 3, 4
-                    
-                    # Level 1: GMX Session refresh
-                    if level >= 1:
-                        logger.warning(f"OTP-Level-1: Session Refresh (attempt {attempt})")
-                        try:
-                            await svc.ensure_gmx_session()
-                        except Exception as e:
-                            logger.error(f"Session refresh failed: {e}")
-                    
-                    # Level 2: Extension tabs schließen + neu öffnen
-                    if level >= 2:
-                        logger.warning(f"OTP-Level-2: Extension neu laden (attempt {attempt})")
-                        try:
-                            from playwright.async_api import async_playwright as _ap
-                            async with _ap() as _p:
-                                _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-                                for _pg in _b.contexts[0].pages:
-                                    if 'mail-panel' in _pg.url or 'mailbody' in _pg.url:
-                                        await _pg.close()
-                                await asyncio.sleep(1)
-                        except Exception as e:
-                            logger.error(f"Extension cleanup failed: {e}")
-                    
-                    # Level 3: CDP reconnect (force-fresh connection)
-                    if level >= 3:
-                        logger.warning(f"OTP-Level-3: CDP Reconnect (attempt {attempt})")
-                        await asyncio.sleep(3)
+                logger.info(f"OTP poll {attempt+1}/18...")
             
             if not verify_url:
                 steps.append("otp_not_found")
-                return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 30 attempts"}
+                return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 18 attempts"}
             
             steps.append("otp_found")
             
@@ -172,9 +147,22 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                 await asyncio.sleep(1)
             except: pass
 
-            # Email Login
-            await page.locator('a:has-text("Email Login")').first.click()
-            await asyncio.sleep(3)
+            # Email Login — retry wrapper for stale frame / navigation
+            for attempt in range(3):
+                try:
+                    em = page.locator('a:has-text("Email Login")').first
+                    if await em.count() > 0:
+                        await em.click()
+                    else:
+                        # Try direct /login with email param
+                        await page.goto("https://app.fireworks.ai/login?useEmail=true")
+                    await asyncio.sleep(3)
+                    if await page.locator('input[name="email"]').first.count() > 0:
+                        break
+                    logger.warning(f"Login form not visible (attempt {attempt+1})")
+                except Exception as e:
+                    logger.warning(f"Login click failed (attempt {attempt+1}): {e}")
+                    await asyncio.sleep(2)
             steps.append("login_page")
 
             # Fill credentials
@@ -373,6 +361,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
 
 async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
     """Click Generate, poll for key, handle Missing Name modal, retry."""
+    import asyncio
     import re as _re
 
     for retry in range(3):
@@ -435,8 +424,8 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
         async with async_playwright() as p:
             browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             for pg in browser.contexts[0].pages:
-                if 'fireworks' in pg.url and ('home' in pg.url or 'account' in pg.url):
-                    logger.info("Navigating to API Keys page")
+                if 'fireworks' in pg.url:
+                    logger.info(f"Found Fireworks page: {pg.url[:60]}")
                     await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
                     await asyncio.sleep(3)
 
@@ -447,13 +436,39 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
                             await asyncio.sleep(2)
                             break
 
-                    await pg.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
+                    # Verify menu appeared before clicking menuitem
+                    menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+                    for _ in range(5):
+                        if await menu.count() > 0:
+                            break
+                        await asyncio.sleep(1)
+                    await menu.click(force=True)
                     await asyncio.sleep(3)
 
                     # Delegate to retry handler
                     return await _generate_and_poll_key(pg, key_name)
 
-            return {"status": "error", "error": "No Fireworks page found"}
+            # No Fireworks page found — open new one
+            logger.warning("No Fireworks page found — navigating fresh")
+            pg = await browser.contexts[0].new_page()
+            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await asyncio.sleep(3)
+
+            for btn in await pg.locator('button').all():
+                if 'Create API Key' == (await btn.text_content() or '').strip():
+                    await btn.click(force=True)
+                    await asyncio.sleep(2)
+                    break
+
+            menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+            for _ in range(5):
+                if await menu.count() > 0:
+                    break
+                await asyncio.sleep(1)
+            await menu.click(force=True)
+            await asyncio.sleep(3)
+
+            return await _generate_and_poll_key(pg, key_name)
 
     except Exception as e:
         logger.error(f"API Key error: {e}")

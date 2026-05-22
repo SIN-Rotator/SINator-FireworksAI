@@ -43,28 +43,57 @@ async def main():
         _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
         _pg = await _b.contexts[0].new_page()
         await _pg.goto("https://www.gmx.net/")
-        await asyncio.sleep(4)
-        _login_btn = _pg.locator('button:has-text("Login")').first
-        if await _login_btn.count() > 0:
-            await _login_btn.click()
-            await asyncio.sleep(4)
+        await asyncio.sleep(5)
+
+        # Cookie banner accept
+        try:
+            ck = _pg.locator('button:has-text("Accept All")').first
+            if await ck.count() > 0:
+                await ck.click(force=True); await asyncio.sleep(2)
+        except: pass
+
+        # Check if already logged in (session restored from Chrome profile)
+        _all_btn_texts = [(await _btn.text_content() or "").strip().lower() for _btn in await _pg.locator('button').all()]
+        _is_logged_in = any(t in ('logout', 'zum postfach', 'account wechseln') for t in _all_btn_texts)
+        _has_login_btn = any(t in ('login', 'anmelden', 'einloggen') for t in _all_btn_texts)
+
+        if _is_logged_in:
+            logger.info("✅ Bereits eingeloggt (Session restored)")
+            # Navigate to inbox to refresh SID
+            for _btn in await _pg.locator('button').all():
+                _t = (await _btn.text_content() or "").strip().lower()
+                if _t in ('zum postfach', 'e-mail'):
+                    await _btn.click(force=True); await asyncio.sleep(5); break
+        elif _has_login_btn:
+            for _btn in await _pg.locator('button').all():
+                _t = (await _btn.text_content() or "").strip().lower()
+                if _t in ('login', 'anmelden', 'einloggen'):
+                    await _btn.click(force=True); await asyncio.sleep(4); break
+
+            # Email field
             _email = _pg.locator('input[type="email"]').first
             if await _email.count() == 0:
                 _email = _pg.locator('input[name="username"]').first
             if await _email.count() > 0:
                 await _email.fill("opensin@gmx.de")
                 await asyncio.sleep(1)
+
                 for _btn in await _pg.locator('button').all():
-                    if (await _btn.text_content() or "").strip() == "Weiter":
+                    _t = (await _btn.text_content() or "").strip().lower()
+                    if _t in ('weiter', 'next', 'continue'):
                         await _btn.click(force=True); await asyncio.sleep(4); break
+
                 _pw = _pg.locator('input[type="password"]').first
                 if await _pw.count() > 0:
                     await _pw.fill("ZOE.jerry2024")
                     await asyncio.sleep(1)
                     for _btn in await _pg.locator('button').all():
-                        if (await _btn.text_content() or "").strip() == "Login":
+                        _t = (await _btn.text_content() or "").strip().lower()
+                        if _t in ('login', 'anmelden', 'einloggen'):
                             await _btn.click(force=True); await asyncio.sleep(6); break
-        if "sid=" in _pg.url or "navigator.gmx.net" in _pg.url:
+
+        await asyncio.sleep(3)
+        if "sid=" in _pg.url or "navigator.gmx.net" in _pg.url or "bap.navigator.gmx.net" in _pg.url:
             logger.info("✅ GMX Login erfolgreich")
             import json as _json
             _cookies = await _b.contexts[0].cookies()
@@ -72,7 +101,6 @@ async def main():
         else:
             logger.warning("⚠️ GMX Login fehlgeschlagen")
         await _pg.close()
-        await _b.close()
 
     # ═══ Step 1: GMX Alias Rotation ═══
     logger.info("=== GMX Alias Rotation ===")

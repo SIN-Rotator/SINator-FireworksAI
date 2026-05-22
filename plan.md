@@ -144,19 +144,46 @@ rtk test pytest tests/ -v
 
 ---
 
-## 🎯 V7 — Self-Healing & Robustheit (PLANNED)
+## ✅ V7 — Self-Healing & Robustheit (DONE 2026-05-22)
 
 | Prio | Task | Aufwand | Impact | Status |
 |:----:|------|:-------:|:------:|:------:|
-| 1 | Rate-Limit Circuit Breaker verbessern | 2h | 🔴 Hoch | ⏳ **EXISTIERT, WIRD ERWEITERT** |
-| 2 | OTP Timeout Recovery | 2h | 🔴 Hoch | 📝 **GEPLANT** |
-| 3 | API Key "Missing Name" Auto-Retry | 1h | 🟡 Mittel | 📝 **GEPLANT** |
+| 1 | Rate-Limit Circuit Breaker verbessert | 2h | 🔴 Hoch | ✅ **DONE** |
+| 2 | OOPIF Polling Fix (statt Timeout-Recovery) | 2h | 🔴 Hoch | ✅ **DONE** |
+| 3 | API Key "Missing Name" Auto-Retry | 1h | 🟡 Mittel | ✅ **DONE** |
 
 ### Current E2E Status (2026-05-22)
 ```
 GMX Login (5s) → Alias Rotation (55s) → FW Signup (30s+OTP) → Login → Onboarding → API Key → Pool
-Latest: alpha-lion-808 → fw_XUNpNqcWyRcJjuvmZK3dS9 (6 Keys total, 204s)
+Latest: cosmic-phoenix-268 → (6 Keys total, ~204s)
 ```
+
+### V7.1 — Rate-Limit Circuit Breaker (DONE)
+- Exponential Backoff: 30s → 60s → 120s → 300s statt fixem 120s
+- HTTP Status-Code Parsing via `_check_http_status_codes()` (CDP Network Events)
+- Warm-up Phase nach Cooloff: readonly zuerst, dann delete+create
+- `_BACKOFF_STAGES = [30, 60, 120, 300]`
+- Reset nach 10min ohne Rate-Limit
+
+### V7.2 — OOPIF Polling statt Timeout-Recovery (DONE)
+- **Problem gelöst:** `read_fireworks_verification_email()` suchte mailbody-ui.de OOPIF nur 1× nach 5s — bei langsamer GMX-Tab-Ladung wurde es verpasst
+- **Fix:** Pollt alle 2s für max 20s (10 Versuche) statt 1× 5s
+- **Entscheidung:** 3-Level Recovery (Session-Refresh/CDP-Reconnect) entfernt — OOPIF-Polling adressiert die Root Cause
+- OTP-Polling von 30×6s auf 18×6s reduziert (keine Recovery nötig da OOPIF zuverlässiger gefunden wird)
+
+### V7.3 — API Key "Missing Name" Auto-Retry (DONE)
+- `_generate_and_poll_key()` mit 3 Retries implementiert
+- Retry 0: Normaler Generate-Versuch
+- Retry 1-2: Modal Close → Input neu füllen (mit Suffix) → Generate
+- Wait von disabled→enabled vor jedem Generate-Klick
+- DOM-Polling max 10s für Key-Extraktion
+
+### V7 Extra Fixes
+- `login_fireworks()`: 3× Retry-Wrapper für "Email Login" Klick (stale frame / navigation)
+- `create_api_key()`: Robusteres Page-Matching (jede fireworks-Seite, nicht nur home/account) + Fallback mit neuer Page
+- `signup_fireworks()`: Redirect-Verifikation nach "Create Account" (10s Polling)
+- `_generate_and_poll_key()`: Fehlendes `import asyncio` ergänzt
+- `rotate.py`: GMX-Login-Detection für bereits eingeloggte Sessions
 
 ---
 

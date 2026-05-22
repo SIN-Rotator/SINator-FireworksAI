@@ -2628,19 +2628,23 @@ class GmxService:
                         }
                     }
                 })()""")
-                await _asyncio.sleep(5)
                 await ext_page.close()
                 
-                # Step 4: Find new mailbody-ui.de OOPIF
-                targets = await self._cdp_get_targets()
+                # Step 4: Find new mailbody-ui.de OOPIF (poll max 20s)
                 mailbody_target = None
-                for t in targets:
-                    if t['targetId'] not in existing_ids and 'mailbody-ui.de' in t.get('url', ''):
-                        mailbody_target = t
+                for _attempt in range(10):
+                    await _asyncio.sleep(2)
+                    targets = await self._cdp_get_targets()
+                    for t in targets:
+                        if t['targetId'] not in existing_ids and 'mailbody-ui.de' in t.get('url', ''):
+                            mailbody_target = t
+                            break
+                    if mailbody_target:
+                        logger.info(f"mailbody-ui.de OOPIF gefunden (attempt {_attempt+1})")
                         break
                 
                 if not mailbody_target:
-                    logger.warning("mailbody-ui.de OOPIF nicht gefunden")
+                    logger.warning("mailbody-ui.de OOPIF nicht gefunden nach 20s")
                     return None
                 
                 # Step 5+6: Attach OOPIF + extract URL
