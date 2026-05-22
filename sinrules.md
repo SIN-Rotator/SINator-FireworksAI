@@ -1,13 +1,14 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-22 (COMPLETE FLOW V5 VERIFIED)
+> Letzte Aktualisierung: 2026-05-22 (V8 — 30 Keys, ~209s avg)
 
 ---
 
 ## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-22)
 
-**Latest API Key:** `fw_MdM6tGucgWuuc7zQyJGeTK` (crystal-beetle-676@gmx.de)
+**Latest API Key:** `fw_6rWU4KGUPts6zVnaRreu6R` (pulse-jaguar-899@gmx.de)
+**Pool:** 30 Keys (29 available, 1 used)
 **E2E Single Command:** `python tools/rotate.py`
 
 ### WAS IMMER VERWENDET WERDEN MUSS
@@ -17,9 +18,9 @@
 | **CUA `click`** | React-Checkbox, Dialog-OK, Navigation-Links, PopUpButton |
 | **CUA `type_text`** | Names (First/Last), beliebige Textfelder (OS-Level, React-kompatibel) |
 | **CUA `get_window_state`** | AX-Tree scannen (vor/nach JEDEM Klick!) |
-| **Playwright `fill()`** | Form-Inputs (email, password, alias name) |
-| **Playwright `click(force=True)`** | Delete-Icon, Create-Button, PopUpButton, Generate |
-| **Playwright iframe** | `page.frames` → allEmailAddresses iframe für Alias-OPs |
+| **Playwright `fill()`** | Form-Inputs (email, password, alias name) auf New-Tab allEmailAddresses |
+| **Playwright `click(force=True)`** | Delete-Icon, Create-Button, PopUpButton, Generate auf New-Tab |
+| **Playwright new-tab** | allEmailAddresses iframe-URL als Top-Level öffnen — umgeht Viewport/Trusted-Event-Issues |
 | **CDP Target** | mailbody-ui.de OOPIF für Email-Inhalt |
 | **CDP Cookie** | `Network.deleteCookies` + `clearBrowserCookies` NUR für Fireworks Domain |
 
@@ -28,8 +29,10 @@
 | ❌ VERBOTEN | Grund |
 |------------|-------|
 | CDP `DOM.performSearch` + `getBoxModel` | Node-IDs stale (0) in 3c.gmx.net Cross-Origin-Iframe |
+| CDP `Page.navigate` zu `/mail?...` oder `/mail_settings?...` | Triggert IAC Anti-Automation — Session wird erkannt |
 | Playwright `check()` auf React-CB | "Did not change state" — React ignoriert |
 | JS `.click()` auf React-Button | React ignoriert dispatchEvent |
+| evaluate `.click()` auf off-screen iframe | isTrusted=false → Wicket ignoriert |
 | `input[type="email"]` auf Fireworks | Input hat KEIN type-Attribut! → `input[name="email"]` |
 | `text=CREATE` als Selector | Matcht Cookie-Banner |
 | `/settings/workspace/api-keys` URL | 404; correct: `/settings/users/api-keys` |
@@ -37,7 +40,6 @@
 | CUA `"Name"` statt `"First"+"Last"` | Matcht "Company Name" zuerst → falsches Feld |
 | `_re` import NUR global | Wird in inner function scope nicht gefunden |
 | `Network.clearBrowserCookies` global | Killt GMX-Session — nur für Fireworks Domain |
-| Direct `page.goto()` zu iframe-URL | Triggert IAC restart, Session expired |
 | `pkill -9 -f "Google Chrome"` | Killt User-Chrome → Session tot |
 
 ### MANDATORY PATTERNS

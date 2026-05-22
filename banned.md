@@ -345,13 +345,33 @@ CDP nur für: DOM.performSearch, Input.dispatchMouseEvent, Cookie-Management.
 
 ---
 
-## 🛑 BANNED: GMX Iframe Direct Navigation (2026-05-21)
+## 🛑 BANNED: GMX Iframe Direct Navigation (2026-05-22 — UPDATED V8)
 
 | ❌ Verboten | Grund |
 |------------|-------|
-| `new_page().goto(iframe_url)` zu 3c.gmx.net | Triggert IAC (Intelligent Anti-Automation) restart |
-| `page.goto("3c.gmx.net/.../allEmailAddresses")` | Redirect zu session-expired oder IAC |
-| `Network.clearBrowserCookies` vor GMX-Zugriff | Killt GMX-Session mit — nur für Fireworks verwenden |
+| CDP `Page.navigate` zu `/mail` oder `/mail_settings` | Triggert IAC Anti-Automation → Einstellungen AXButton nicht sichtbar |
+| CDP `Page.navigate` zu `/email_addresses?sid=...` | Redirects immer zu `/mail_settings/mail` — GMX SPA blockiert direkte URL |
+| `new_page().goto(iframe_url)` zu 3c.gmx.net im alten Approach | Früher erlaubt, JETZT New-Tab mit voller iframe-URL als Top-Level |
+| Playwright `fill()`/`click()` auf off-screen 3c-bap iframe | Element outside viewport — trusted events benötigen sichtbaren Viewport |
+| JS `evaluate("el => el.click()")` auf off-screen iframe | isTrusted=false → Wicket/Apache Wicket ignoriert |
+
+**✅ V8 Korrektur — New-Tab Approach:**
+```python
+# 1. Playwright goto inbox (kein CDP!)
+await pg.goto(f"https://bap.navigator.gmx.net/mail?sid={sid}")
+
+# 2. CUA click Einstellungen (nur auf /mail sichtbar!)
+cua_click(find_element("Einstellungen", "AXButton"))
+
+# 3. JS click hidden nav-menu
+await pg.evaluate("document.querySelector('#nav-menu button...').click()")
+
+# 4. Extract iframe URL → open in new tab as top-level document
+iframe_url = await _get_iframe_url()  # 6×3s retry
+new_pg = await browser.new_page()
+await new_pg.goto(iframe_url)
+# Now fill() + click() work normally (element IS on-screen)
+```
 
 ## 🛑 BANNED: macos-use Agent (2026-05-21)
 

@@ -1,15 +1,18 @@
 # SINator Knowledge Database — Lessons Learned
 
 > "Once Verified = Read-Only. New code = New file. Learnings → Here."
-> Last verified: 2026-05-22 — COMPLETE FLOW: crystal-beetle-676 → `fw_MdM6tGucgWuuc7zQyJGeTK`
+> Last verified: 2026-05-22 — V8 COMPLETE: pulse-jaguar-899 → `fw_6rWU4KGUPts6zVnaRreu6R` (30 Keys)
 
-## 🟢 WHAT WORKS (V5 Playwright+CUA Hybrid)
+## 🟢 WHAT WORKS (V8 Playwright+CUA+CDP Hybrid)
 
-### GMX Alias Rotation (19.8s avg, 3/3 verified)
-- **Delete**: Playwright iframe: `.table_field:has-text(alias)` hover(force=True) → `[title*="löschen"]` click(force=True) → CUA OK dialog
-- **Create**: Playwright iframe: fill `input[type="text"]` → `button:has-text("Hinzufügen")` click → verify `inp.input_value() == ''`
-- **Email filter**: `e != 'opensin@gmx.de'` (exact match, NOT substring — fixes `opensil` typo bug)
-- **Nav**: CUA E-Mail AXLink → Einstellungen AXButton → allEmailAddresses iframe in mail_settings
+### GMX Alias Rotation (~63s, New-Tab Approach)
+- **Nav**: Playwright `goto("inbox?sid=...")` → CUA click Einstellungen [148] → JS evaluate click hidden `#nav-menu` button → extract allEmailAddresses iframe URL
+- **Delete**: Playwright new-tab iframe-URL → hover `.table_field:has-text(alias)` → click `[title*="löschen"]` force=True → click OK button in confirmation dialog
+- **Create**: Playwright new-tab iframe-URL → fill `input[name*="localPart"]` → click `button:has-text("Hinzufügen")` force=True → verify `input_value() == ''`
+- **Iframe URL helper**: `_get_iframe_url()` mit 6×3s Retry-Loop
+- **Email filter**: `e != 'opensin@gmx.de'` (exact match)
+
+> **⚠️ WICHTIG:** allEmailAddresses iframe ist OFF-SCREEN auf `/produkte_ha`. Öffne iframe-URL in NEUEM TAB als Top-Level-Dokument. Playwright `fill()`/`click()` funktioniert dann normal.
 
 ### Fireworks Login (Playwright)
 - **Login URL**: `/login` → "Email Login" link → `/login/email?redirectURI=`
@@ -75,10 +78,12 @@
 
 | Commit | Date | Status |
 |--------|------|--------|
-| `35cd420` (HEAD) | May 22 | ✅ **LATEST**: crystal-beetle-676 → `fw_MdM6tGucgWuuc7zQyJGeTK` |
+| `3ac4b30` (HEAD) | May 22 | ✅ **LATEST**: pulse-jaguar-899 → `fw_6rWU4KGUPts6zVnaRreu6R` (30 Keys) |
+| `58618c9` | May 22 | ✅ V8 GMX Nav Fix: Playwright inbox + CUA Einstellungen + JS hidden-nav + New-Tab iframe |
+| `54e0efa` | May 22 | ✅ Perf: Wartezeiten reduziert (~30s Ersparnis) |
+| `35cd420` | May 22 | ✅ crystal-beetle-676 → `fw_MdM6tGucgWuuc7zQyJGeTK` |
 | `1d3ddf5` | May 21 | ✅ Complete flow: GMX → FW → `fw_8d1PLFjvQMdgJFzjDZSTRx` |
 | `aa9b538` (v3) | May 12 | ⚠️ CDP-based, broke when GMX enabled accessible mode |
-| `f61091d` | May 11 | ❌ Broken verify (false positive on stale nodes) |
 
 ## 🚀 QUICK REFERENCE
 
