@@ -35,30 +35,34 @@ Latest: crystal-beetle-676 → fw_MdM6tGucgWuuc7zQyJGeTK
 
 ## 🚧 V6: Stabilisierung & Robustheit
 
-## 🔴 PRIORITÄT 1 — Dynamische CUA Window-Erkennung (CURRENT TASK)
+## ✅ PRIORITÄT 1 — Dynamische CUA Window-Erkennung (COMPLETE)
 
-### Problem
-`fireworks_service.py` hardcodiert `pid`/`wid` für CUA `click`/`type_text` in `login_fireworks()`:
+### Was wurde gemacht
+Neue `agent_toolbox/core/cua_helper.py` mit shared `find_cua_window()` — ersetzt 4x duplizierte `list_windows` + hardcodierte `pid`/`wid`:
+
+| Datei | Call Site | Vorher | Nachher |
+|-------|-----------|--------|---------|
+| `fireworks_service.py:160` | `login_fireworks()` onboarding | 10 Zeilen inline list_windows | 1 Zeile `find_cua_window(["fireworks"])` |
+| `gmx_service.py:434` | `_navigate_to_all_email_addresses()` | 12 Zeilen inline | 1 Zeile `find_cua_window(["GMX","gmx","freemail"])` |
+| `gmx_service.py:760` | `delete_existing_alias()` dialog OK | 13 Zeilen inline | 1 Zeile `find_cua_window(["GMX","E-Mail"])` |
+| `gmx_service.py:951` | `_delete_alias_via_playwright()` dialog OK | 12 Zeilen inline | 1 Zeile `find_cua_window(["GMX","Einstell"])` |
+
+### Features
+- ✅ Case-insensitive `app_name` + `title` matching
+- ✅ `include_minimized_fallback` — on-screen zuerst, dann alle Window-States
+- ✅ Kein Crash bei Timeout/JSON-Fehler/fehlendem `cua-driver`
+- ✅ In **beiden Repos** deployed (SINator-fireworksai + gmx-alias-tool)
+
+### Helper API
 ```python
-for w in json.loads(res.stdout).get('windows', []):
-    if 'Google Chrome' == w.get('app_name', '') and ...
-        pid, wid = w['pid'], w['window_id']
-```
-Nach Chrome-Neustart ändern sich beide → CUA findet kein Fenster → onboarding fails.
+from cua_helper import find_cua_window, cua_click, cua_type_text, cua_get_window_state
 
-### Fix-Plan
-- [ ] `_cua_find_window()` helper: durch alle `list_windows` iterieren, case-insensitive `app_name == 'Google Chrome'` + `title.lower()` contains `'fireworks'`
-- [ ] `_cua_find_window()` auch für `gmx_service.py` GMX-Navigation (title `'gmx'` + `'freemail'` oder `'mail'`)
-- [ ] Fallback: wenn kein Fenster → `list_windows(include_minimized=True)` + ersten Treffer nehmen
-- [ ] Unit-Test: simulierte `list_windows` Outputs parsen
-
-### Files
-- `agent_toolbox/core/fireworks_service.py` — `login_fireworks()`: PID/WID dynamic
-- `agent_toolbox/core/gmx_service.py` — `_delete_alias_via_playwright()`: CUA OK dialog PID/WID
-
-### Verification
-```bash
-python tools/rotate.py --dry-run  # CUA scan + match ohne tatsächlichen Klick
+result = find_cua_window(title_keywords=["fireworks"])
+if result:
+    pid, wid = result
+    cua_click(pid, wid, element_index=42)
+    cua_type_text(pid, text="Hallo")
+    tree = cua_get_window_state(pid, wid)
 ```
 
 ---
@@ -138,14 +142,14 @@ Alle Tests mit bestehender Chrome-Session durchgeführt. Kein Test mit:
 
 ---
 
-## 📊 V6 Prioritäten-Matrix
+## 🎯 V6 Nächste Tasks
 
-| Prio | Task | Aufwand | Impact | Risk |
-|:----:|------|:-------:|:------:|:----:|
-| 1 | Dynamische CUA Window-Erkennung | 1h | 🔴 Hoch | Niedrig |
-| 2 | E2E Regressionstests | 2h | 🟡 Mittel | Mittel |
-| 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | Mittel |
-| 4 | gmx-alias-tool API Konsolidierung | 1h | 🟢 Niedrig | Niedrig |
+| Prio | Task | Aufwand | Impact | Status |
+|:----:|------|:-------:|:------:|:------:|
+| 1 | Dynamische CUA Window-Erkennung | 1h | 🔴 Hoch | ✅ **DONE** |
+| 2 | E2E Regressionstests | 2h | 🟡 Mittel | ⏳ Next |
+| 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | ⏳ |
+| 4 | gmx-alias-tool API Konsolidierung | 1h | 🟢 Niedrig | ⏳ |
 
 ---
 

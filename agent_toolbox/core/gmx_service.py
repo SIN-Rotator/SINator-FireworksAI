@@ -431,19 +431,9 @@ class GmxService:
                 await asyncio.sleep(5)
 
             # Step 1: Find CUA window (Google Chrome only, avoid iTerm2)
-            res = subprocess.run(
-                ["cua-driver", "call", "list_windows"],
-                capture_output=True, text=True, timeout=10,
-                input=json.dumps({"query": "Chrome"})
-            )
-            wd = json.loads(res.stdout)
-            cua_pid = cua_wid = None
-            for w in wd.get('windows', []):
-                if (w.get('is_on_screen') and w.get('app_name') == 'Google Chrome'
-                        and ('GMX' in w.get('title', '') or 'gmx' in w.get('title', '').lower())):
-                    cua_pid = w['pid']
-                    cua_wid = w['window_id']
-                    break
+            from cua_helper import find_cua_window
+            cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
+            cua_pid, cua_wid = cua if cua else (None, None)
 
             if not cua_pid:
                 logger.warning("GMX window nicht via CUA gefunden")
@@ -753,23 +743,10 @@ class GmxService:
             await asyncio.sleep(3)
 
             # Step 6: CUA click OK button in dialog
-            # We need the Chrome window pid + window_id
-            # Use a known/fixed pid: 85447, or detect dynamically
             try:
-                import subprocess as sp
-                res = sp.run(
-                    ["cua-driver", "call", "list_windows"],
-                    input=json.dumps({"query": "Chrome"}),
-                    capture_output=True, text=True, timeout=10
-                )
-                windows_data = json.loads(res.stdout)
-                cua_pid = None
-                cua_wid = None
-                for w in windows_data.get('windows', []):
-                    if 'GMX' in w.get('title', '') and w.get('is_on_screen'):
-                        cua_pid = w['pid']
-                        cua_wid = w['window_id']
-                        break
+                from cua_helper import find_cua_window
+                cua = find_cua_window(title_keywords=["GMX", "E-Mail", "Einstell"])
+                cua_pid, cua_wid = cua if cua else (None, None)
 
                 if cua_pid and cua_wid:
                     ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
@@ -948,18 +925,9 @@ class GmxService:
                 await asyncio.sleep(2)
 
                 # Step 3: CUA click OK in confirmation dialog
-                res = subprocess.run(
-                    ["cua-driver", "call", "list_windows"],
-                    capture_output=True, text=True, timeout=10,
-                    input=json.dumps({"query": "Chrome"})
-                )
-                wd = json.loads(res.stdout)
-                cua_pid = cua_wid = None
-                for w in wd.get('windows', []):
-                    if (w.get('is_on_screen') and w.get('app_name') == 'Google Chrome'
-                            and ('GMX' in w.get('title', '') or 'Einstell' in w.get('title', ''))):
-                        cua_pid = w['pid']; cua_wid = w['window_id']
-                        break
+                from cua_helper import find_cua_window
+                cua = find_cua_window(title_keywords=["GMX", "Einstell"])
+                cua_pid, cua_wid = cua if cua else (None, None)
 
                 if cua_pid:
                     await asyncio.sleep(1)
