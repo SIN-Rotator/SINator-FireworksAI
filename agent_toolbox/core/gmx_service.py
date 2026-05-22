@@ -65,10 +65,10 @@ logger = logging.getLogger(__name__)
 GMX_HOME_URL = "https://www.gmx.net/"
 
 # ── Rate-Limiting / Anti-Bot Protection ──────────────────────────────────────
-_RATE_LIMIT_STATE = {"hits": 0, "last_hit": 0.0, "cooloff_until": 0.0}
+_RATE_LIMIT_STATE = {"hits": 0, "last_hit": 0.0, "cooloff_until": 0.0, "backoff_stage": 0}
 _RATE_LIMIT_MAX_HITS = 3
 _RATE_LIMIT_WINDOW = 300  # 5 Minuten
-_RATE_LIMIT_COOLOFF = 120  # 2 Minuten Cooloff nach Max-Hits
+_BACKOFF_STAGES = [30, 60, 120, 300]  # Exponentielles Backoff
 _RATE_LIMIT_RETRIES = 2
 
 
@@ -83,23 +83,64 @@ def _is_rate_limited(url: str = "", body_text: str = "") -> bool:
     return any(s in combined for s in signals)
 
 
+async def _check_http_status_via_cdp(client, session_id: str) -> bool:
+    """Prüft CDP Network.responseReceived Events auf HTTP 429/413/503."""
+    if not client or not session_id:
+        return False
+    try:
+        # Enable Network domain + get recent responses
+        await client.send_to_session(session_id, "Network.enable")
+        responses = await client.send_to_session(session_id, "Network.getResponseBodyForInterception", {})
+        # Fallback: evaluate via JS for recent XHR/fetch status
+        js = """
+        (function() {
+            var entries = performance.getEntriesByType('resource') || [];
+            var bad = entries.filter(e => e.responseStatus >= 400 && e.responseStatus < 600);
+            return bad.map(e => ({url: e.name, status: e.responseStatus}));
+        })()
+        """
+        result = await client.evaluate(session_id, js, return_by_value=True)
+        bad_reqs = (result.get('result') or {}).get('value', [])
+        for req in bad_reqs:
+            if req.get('status') in (429, 413, 502, 503):
+                logger.warning(f"HTTP {req['status']} erkannt: {req.get('url','')[:60]}")
+                return True
+        return False
+    except Exception as e:
+        logger.debug(f"HTTP Status-Check fehlgeschlagen: {e}")
+        return False
+
+
 def _track_rate_limit(detected: bool) -> bool:
-    """Circuit Breaker: trackt Rate-Limit-Hits, löst Cooloff aus."""
+    """Circuit Breaker: trackt Rate-Limit-Hits, löst exponentielles Backoff aus."""
     now = time.time()
     if detected:
         if now - _RATE_LIMIT_STATE["last_hit"] > _RATE_LIMIT_WINDOW:
             _RATE_LIMIT_STATE["hits"] = 0
+            _RATE_LIMIT_STATE["backoff_stage"] = 0
         _RATE_LIMIT_STATE["hits"] += 1
         _RATE_LIMIT_STATE["last_hit"] = now
         if _RATE_LIMIT_STATE["hits"] >= _RATE_LIMIT_MAX_HITS:
-            _RATE_LIMIT_STATE["cooloff_until"] = now + _RATE_LIMIT_COOLOFF
-            logger.warning(f"⚠️ Rate-Limit Circuit Breaker: {_RATE_LIMIT_COOLOFF}s Cooloff")
+            stage = _RATE_LIMIT_STATE["backoff_stage"]
+            cooloff = _BACKOFF_STAGES[min(stage, len(_BACKOFF_STAGES) - 1)]
+            _RATE_LIMIT_STATE["cooloff_until"] = now + cooloff
+            _RATE_LIMIT_STATE["backoff_stage"] = stage + 1
+            logger.warning(f"⚠️ Rate-Limit Circuit Breaker: {cooloff}s Cooloff (Stage {stage+1}/{len(_BACKOFF_STAGES)})")
             return True
+    else:
+        # Reset backoff after 10min without hit
+        if now - _RATE_LIMIT_STATE["last_hit"] > 600:
+            _RATE_LIMIT_STATE["backoff_stage"] = 0
     return False
 
 
 def _in_cooloff() -> bool:
     return time.time() < _RATE_LIMIT_STATE["cooloff_until"]
+
+
+def _get_cooloff_remaining() -> int:
+    remaining = _RATE_LIMIT_STATE["cooloff_until"] - time.time()
+    return max(0, int(remaining))
 
 
 def _gmx_throttle(delay: float = 3.0):
@@ -130,23 +171,29 @@ async def _purge_gmx_cookies(client: Optional["CDPClient"] = None, session_id: s
             logger.debug(f"Cookie-Purge fehlgeschlagen: {e}")
 
 
-async def _rate_limit_safe_call(fn, *args, max_retries: int = _RATE_LIMIT_RETRIES, **kwargs):
-    """Wrapper: führt fn aus, erkennt Rate-Limiting, retryt mit Purge."""
+async def _rate_limit_safe_call(fn, *args, max_retries: int = _RATE_LIMIT_RETRIES, client=None, session_id="", **kwargs):
+    """Wrapper: führt fn aus, erkennt Rate-Limiting (Text + HTTP-Status), retryt mit Purge."""
     for attempt in range(max_retries + 1):
         if _in_cooloff():
-            wait = _RATE_LIMIT_STATE["cooloff_until"] - time.time()
-            logger.info(f"⏳ Cooloff: noch {wait:.0f}s warten...")
+            wait = _get_cooloff_remaining()
+            logger.info(f"⏳ Cooloff: noch {wait}s warten...")
             await asyncio.sleep(wait + 1)
 
         result = await fn(*args, **kwargs)
         if isinstance(result, dict):
             url = result.get("current_url", "")
             error = result.get("error", "")
-            if _is_rate_limited(url, error):
+            rate_limited = _is_rate_limited(url, error)
+
+            # Auch HTTP-Status-Codes prüfen
+            if not rate_limited and client and session_id:
+                rate_limited = await _check_http_status_via_cdp(client, session_id)
+
+            if rate_limited:
                 _track_rate_limit(True)
                 logger.warning(f"⚠️ Rate-Limit erkannt (attempt {attempt+1}/{max_retries+1})")
                 if attempt < max_retries:
-                    await _purge_gmx_cookies()
+                    await _purge_gmx_cookies(client, session_id)
                     await asyncio.sleep(5)
                     continue
             else:
@@ -1286,10 +1333,35 @@ class GmxService:
 
         client = None
         try:
+            # Cooloff-Check
             if _in_cooloff():
                 wait = _RATE_LIMIT_STATE["cooloff_until"] - time.time()
-                logger.info(f"⏳ Rate-Limit Cooloff: noch {wait:.0f}s warten...")
+                stage = _RATE_LIMIT_STATE["backoff_stage"]
+                logger.info(f"⏳ Rate-Limit Cooloff: noch {wait:.0f}s warten (Stage {stage})")
                 await asyncio.sleep(wait + 1)
+                # Warm-up nach Cooloff: erst readonly Session-Check
+                logger.info("🔄 Warm-up: Session-Check nach Cooloff")
+                try:
+                    import asyncio as _a
+                    from playwright.async_api import async_playwright as _ap
+                    async with _ap() as _pw:
+                        _br = await _pw.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
+                        _p = await _br.contexts[0].new_page()
+                        await _p.goto("https://www.gmx.net/")
+                        await _a.sleep(3)
+                        # Click E-Mail
+                        await _p.get_by_role("link", name="E-Mail", exact=True).first.click(timeout=5000)
+                        await _a.sleep(5)
+                        if 'navigator.gmx.net/mail?sid=' in _p.url or 'bap.navigator.gmx.net/mail?sid=' in _p.url:
+                            logger.info("✅ Warm-up: Session OK")
+                        else:
+                            logger.warning("⚠️ Warm-up: Session tot — Recovery wird nötig")
+                            await self.ensure_gmx_session()
+                        await _p.close()
+                except Exception as _e:
+                    logger.error(f"Warm-up fehlgeschlagen: {_e}")
+                # Setze Backoff zurück bei erfolgreichem Warm-up
+                _RATE_LIMIT_STATE["backoff_stage"] = max(0, stage - 1)
 
             client, session_id, target_id = await self._connect_to_browser(cdp_port)
             _gmx_throttle(2)

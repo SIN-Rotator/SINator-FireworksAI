@@ -78,23 +78,54 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
                         break
                 steps.append("create_clicked")
             
-            # Step 2: Poll for OTP email
+            # Step 2: Poll for OTP email with 3-level recovery
             logger.info("Waiting for Fireworks verification email...")
             verify_url = None
             from gmx_service import GmxService
             svc = GmxService()
             
-            for attempt in range(12):
+            for attempt in range(30):
                 await asyncio.sleep(6)
                 verify_url = await svc.read_fireworks_verification_email()
                 if verify_url:
                     logger.info(f"✅ OTP found (attempt {attempt+1})")
                     break
-                logger.info(f"OTP poll {attempt+1}/12...")
+                logger.info(f"OTP poll {attempt+1}/30...")
+                
+                # 3-level recovery every 6 attempts (36s intervals)
+                if attempt > 0 and attempt % 6 == 0:
+                    level = attempt // 6  # 1, 2, 3, 4
+                    
+                    # Level 1: GMX Session refresh
+                    if level >= 1:
+                        logger.warning(f"OTP-Level-1: Session Refresh (attempt {attempt})")
+                        try:
+                            await svc.ensure_gmx_session()
+                        except Exception as e:
+                            logger.error(f"Session refresh failed: {e}")
+                    
+                    # Level 2: Extension tabs schließen + neu öffnen
+                    if level >= 2:
+                        logger.warning(f"OTP-Level-2: Extension neu laden (attempt {attempt})")
+                        try:
+                            from playwright.async_api import async_playwright as _ap
+                            async with _ap() as _p:
+                                _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                                for _pg in _b.contexts[0].pages:
+                                    if 'mail-panel' in _pg.url or 'mailbody' in _pg.url:
+                                        await _pg.close()
+                                await asyncio.sleep(1)
+                        except Exception as e:
+                            logger.error(f"Extension cleanup failed: {e}")
+                    
+                    # Level 3: CDP reconnect (force-fresh connection)
+                    if level >= 3:
+                        logger.warning(f"OTP-Level-3: CDP Reconnect (attempt {attempt})")
+                        await asyncio.sleep(3)
             
             if not verify_url:
                 steps.append("otp_not_found")
-                return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 10 attempts"}
+                return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 30 attempts"}
             
             steps.append("otp_found")
             
@@ -340,8 +371,63 @@ async def _fireworks_playwright_onboarding(page) -> None:
             logger.error("Force navigate failed")
 
 
+async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
+    """Click Generate, poll for key, handle Missing Name modal, retry."""
+    import re as _re
+
+    for retry in range(3):
+        suffix = f"-{retry}" if retry > 0 else ""
+        name = key_name + suffix
+
+        # Ensure name is filled
+        await pg.locator(f'input[name="name"]').first.fill(name)
+        await asyncio.sleep(1)
+
+        # Wait for Generate to be enabled (max 5s)
+        generate_btn = None
+        for _ in range(5):
+            for btn in await pg.locator('button').all():
+                if 'Generate' == (await btn.text_content() or '').strip():
+                    generate_btn = btn
+                    break
+            if generate_btn and not await generate_btn.is_disabled():
+                break
+            await asyncio.sleep(1)
+
+        if not generate_btn:
+            logger.warning(f"Generate button not found (retry {retry})")
+            continue
+
+        await generate_btn.click(force=True)
+
+        # Poll for key (10s)
+        for _ in range(10):
+            await asyncio.sleep(1)
+            text = await pg.evaluate("() => document.body.innerText")
+            keys = _re.findall(r'fw_[a-zA-Z0-9]{20,}', text)
+            if keys:
+                return {"status": "success", "api_key": keys[0]}
+
+        # Check for Missing Name modal
+        body = await pg.evaluate("() => document.body.innerText")
+        if 'Missing' in body and 'Name' in body:
+            logger.warning(f"Missing Name Modal — close + retry ({retry+1}/3)")
+            for btn in await pg.locator('button').all():
+                txt = (await btn.text_content() or '').strip()
+                if txt in ['Close', 'Cancel', 'OK', '×']:
+                    await btn.click(force=True)
+                    await asyncio.sleep(1)
+                    break
+            continue
+
+        # Other error — abort
+        break
+
+    return {"status": "error", "error": "API Key not found after retry"}
+
+
 async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
-    """Create Fireworks API Key via Playwright. Returns {status, api_key, error}"""
+    """Create Fireworks API Key via Playwright with auto-retry. Returns {status, api_key, error}"""
     import asyncio
     from playwright.async_api import async_playwright
 
@@ -350,64 +436,22 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
             browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             for pg in browser.contexts[0].pages:
                 if 'fireworks' in pg.url and ('home' in pg.url or 'account' in pg.url):
+                    logger.info("Navigating to API Keys page")
                     await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
                     await asyncio.sleep(3)
 
+                    # Open Create API Key dialog
                     for btn in await pg.locator('button').all():
                         if 'Create API Key' == (await btn.text_content() or '').strip():
-                            await btn.click(force=True); await asyncio.sleep(2)
+                            await btn.click(force=True)
+                            await asyncio.sleep(2)
                             break
 
                     await pg.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
                     await asyncio.sleep(3)
 
-                    for inp in await pg.locator('input').all():
-                        if 'name' in (await inp.get_attribute('name') or '').lower():
-                            await inp.fill(key_name)
-                            await asyncio.sleep(1)
-                            break
-
-                    # Wait for Generate button to be enabled
-                    generate_btn = None
-                    for btn in await pg.locator('button').all():
-                        if 'Generate' in (await btn.text_content() or '').strip():
-                            generate_btn = btn
-                            break
-                    if generate_btn:
-                        disabled = await generate_btn.get_attribute('disabled')
-                        if disabled is not None:
-                            logger.warning("Generate button disabled — waiting for enable")
-                            for _ in range(5):
-                                await asyncio.sleep(1)
-                                disabled = await generate_btn.get_attribute('disabled')
-                                if disabled is None:
-                                    break
-                        await generate_btn.click(force=True)
-
-                    # Poll for API Key in DOM (max 10s, check alle 1s)
-                    api_key = None
-                    for _ in range(10):
-                        await asyncio.sleep(1)
-                        text = await pg.evaluate("() => document.body.innerText")
-                        keys = re.findall(r'fw_[a-zA-Z0-9]{20,}', text)
-                        if keys:
-                            api_key = keys[0]
-                            break
-
-                    if api_key:
-                        logger.info(f"API Key created: {api_key[:12]}...")
-                        return {"status": "success", "api_key": api_key}
-
-                    # Check for "Missing API Key Name!" error modal
-                    body = await pg.evaluate("() => document.body.innerText")
-                    if 'Missing' in body and 'Name' in body:
-                        logger.warning("API Key error modal — close and retry")
-                        for btn in await pg.locator('button').all():
-                            txt = (await btn.text_content() or '').strip()
-                            if txt in ['Close', 'Cancel', 'OK', '×']:
-                                await btn.click(force=True); await asyncio.sleep(1)
-                                break
-                    return {"status": "error", "error": "API Key not found after polling"}
+                    # Delegate to retry handler
+                    return await _generate_and_poll_key(pg, key_name)
 
             return {"status": "error", "error": "No Fireworks page found"}
 
