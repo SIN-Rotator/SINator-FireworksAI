@@ -4,12 +4,22 @@
 
 **Architektur:** CUA Driver (Navigation + Dialog + React-CB) + Playwright (Form Interaction) + CDP (Session/Cookies/OTP Email).
 
-## ✅ COMPLETE FLOW VERIFIED (2026-05-21)
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
 
+**Full automated flow in ONE command:**
+```bash
+python tools/rotate.py
+# → GMX Alias (28s) → Fireworks Signup → OTP → Verify
+# → Login → Onboarding → Use-Cases → $5 → API Key → Pool
 ```
-GMX Rotation (19.8s) → Fireworks Signup → GMX Email Verify → Login
-→ Onboarding (CUA) → Use-Case + $5 → API Key: fw_8d1PLFjvQMdgJFzjDZSTRx
-```
+
+**API Key Pool (4 keys):**
+| Key | Alias |
+|-----|-------|
+| `fw_MdM6tGucgWuuc7zQyJGeTK` | crystal-beetle-676 |
+| `fw_13zisuhmRLAtfZknN7EJ8v` | super-cheetah-687 |
+| `fw_8d1PLFjvQMdgJFzjDZSTRx` | super-cheetah-687 |
+| `fw_4SyZoeCFsyn5L4hpT63LGV` | blaze-scorpion-746 |
 
 ### Alias löschen (Playwright im Iframe + CUA OK)
 ```python

@@ -88,3 +88,18 @@ python tools/gmx_alias_tool.py rotate
 # Fireworks API Key URL
 https://app.fireworks.ai/settings/users/api-keys
 ```
+
+## 🟢 COMPLETE E2E FLOW — 2026-05-22
+
+### Verified: crystal-beetle-676@gmx.de → fw_MdM6tGucgWuuc7zQyJGeTK
+
+**Full flow time:** ~2 minutes (28s GMX + ~90s Fireworks)
+
+### Critical Learnings
+- **CUA Names**: Search "First" + "Last" (NOT "Name" — matches Company Name!)
+- **Fireworks Logout before Signup**: CDP `Network.deleteCookies` + `clearBrowserCookies` 
+- **Re-Login after Onboarding Continue**: Continue redirects to login → login again
+- **Use-Case indices change**: Must use dynamic CUA scanning (text-based, not hardcoded)
+- **_re import**: Must be in EVERY function that uses dynamic CUA scanning
+- **GMX Session**: Profile 901 (Jeremy) with `--user-data-dir` + `--profile-directory`
+- **OTP Poll**: MailCheck Extension + CDP Target.getTargets for mailbody-ui.de OOPIF

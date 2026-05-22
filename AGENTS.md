@@ -6,9 +6,30 @@
 
 ---
 
-## ✅ V5 FIREWORKS LOGIN — VERIFIED 2026-05-21
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
 
-**Account:** `super-cheetah-687@gmx.de` / `ZOE.jerry2024!`
+**Full automated flow verified:**
+```bash
+python tools/rotate.py
+# → GMX Alias Rotation (28s) → Fireworks Signup → OTP → Verify
+# → Login → Onboarding → Use-Cases → $5 Credits → API Key → Pool
+```
+
+**Latest API Key:** `fw_MdM6tGucgWuuc7zQyJGeTK` (crystal-beetle-676@gmx.de)
+
+### E2E Steps (proven working)
+1. **GMX Session**: `page.locator('a:has-text("E-Mail")').click()` → inbox with SID
+2. **GMX Rotation**: CUA nav → Playwright iframe delete + create (~28s)
+3. **Fireworks Logout**: CDP `Network.deleteCookies` + `clearBrowserCookies` (before signup!)
+4. **Signup**: `/signup` → `input[name="email"]` → 2x password → Create Account
+5. **OTP Poll**: GMX MailCheck extension → CDP OOPIF mailbody-ui.de → extract URL
+6. **Verify**: Open verify URL → account confirmed
+7. **Login**: `/login` → "Email Login" → `input[name="email"]` + password → Next
+8. **Onboarding**: CUA "First" + "Last" (NOT "Name"!) → Terms checkbox → Continue
+9. **Re-Login**: Onboarding Continue redirects to login → login again
+10. **Use-Cases**: CUA "Faster speeds" + "Conversational AI" → Submit
+11. **API Key**: `/settings/users/api-keys` → Create API Key PopUpButton → API Key menu → Generate
+12. **Pool**: Auto-save to `data/fireworksai-pool.json`
 
 ### Schritt 1: Login (Playwright)
 ```python
