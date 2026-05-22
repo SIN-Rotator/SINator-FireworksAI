@@ -36,7 +36,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
             
             # Step 1: Signup form
             await page.goto("https://app.fireworks.ai/signup")
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             
             # Cookie
             try:
@@ -55,7 +55,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
             # Next
             for btn in await page.locator('button[type="submit"]').all():
                 if 'Next' in (await btn.text_content() or ''):
-                    await btn.click(force=True); await asyncio.sleep(5)
+                    await btn.click(force=True); await asyncio.sleep(3)
                     break
             steps.append("next_clicked")
             
@@ -73,7 +73,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
                 # Create Account
                 for btn in await page.locator('button[type="submit"]').all():
                     if 'Create Account' in (await btn.text_content() or ''):
-                        await btn.click(force=True); await asyncio.sleep(8)
+                        await btn.click(force=True); await asyncio.sleep(4)
                         logger.info("Create Account clicked")
                         break
                 steps.append("create_clicked")
@@ -84,13 +84,13 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
             from gmx_service import GmxService
             svc = GmxService()
             
-            for attempt in range(10):
-                await asyncio.sleep(10)
+            for attempt in range(12):
+                await asyncio.sleep(6)
                 verify_url = await svc.read_fireworks_verification_email()
                 if verify_url:
                     logger.info(f"✅ OTP found (attempt {attempt+1})")
                     break
-                logger.info(f"OTP poll {attempt+1}/10...")
+                logger.info(f"OTP poll {attempt+1}/12...")
             
             if not verify_url:
                 steps.append("otp_not_found")
@@ -133,17 +133,17 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
             page = await browser.contexts[0].new_page()
 
             await page.goto("https://app.fireworks.ai/login")
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
 
             # Cookie accept
             try:
                 await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000)
-                await asyncio.sleep(2)
+                await asyncio.sleep(1)
             except: pass
 
             # Email Login
             await page.locator('a:has-text("Email Login")').first.click()
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
             steps.append("login_page")
 
             # Fill credentials
@@ -155,7 +155,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
             for btn in await page.locator('button[type="submit"]').all():
                 if 'Next' in (await btn.text_content() or ''):
                     await btn.click()
-                    await asyncio.sleep(6)
+                    await asyncio.sleep(4)
                     break
             steps.append("form_submitted")
 
@@ -202,7 +202,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                     
                     # Continue
                     el = _find_element("Continue")
-                    if el: _cua_click(el); await asyncio.sleep(6)
+                    if el: _cua_click(el); await asyncio.sleep(4)
                     
                     # Use-cases
                     for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
@@ -269,7 +269,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Continue' in txt or 'Next' in txt:
-            await btn.click(force=True); await asyncio.sleep(5)
+            await btn.click(force=True); await asyncio.sleep(3)
             break
     
     # Use-case checkboxes
@@ -289,7 +289,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Submit' in txt or 'Get $5' in txt:
-            await btn.click(force=True); await asyncio.sleep(6)
+            await btn.click(force=True); await asyncio.sleep(4)
             break
     
     # Poll for redirect (max 20s)
@@ -300,7 +300,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
             return
     logger.warning("Playwright onboarding — kein Redirect, force navigate")
     await page.goto("https://app.fireworks.ai/settings/users/api-keys")
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
 
 
 async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
@@ -314,7 +314,7 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
             for pg in browser.contexts[0].pages:
                 if 'fireworks' in pg.url and ('home' in pg.url or 'account' in pg.url):
                     await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
 
                     for btn in await pg.locator('button').all():
                         if 'Create API Key' == (await btn.text_content() or '').strip():
@@ -389,7 +389,7 @@ async def verify_account(verify_url: str) -> bool:
             browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             page = await browser.contexts[0].new_page()
             await page.goto(verify_url)
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             logger.info(f"Verify URL opened: {page.url[:80]}")
             await page.close()
             return True
