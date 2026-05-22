@@ -41,6 +41,10 @@ async def main():
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
         _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        # Cleanup: alle alten Pages schließen (Chrome stellt sie wieder her)
+        for _old in _b.contexts[0].pages:
+            try: await _old.close()
+            except: pass
         _pg = await _b.contexts[0].new_page()
         await _pg.goto("https://www.gmx.net/")
         await asyncio.sleep(3)

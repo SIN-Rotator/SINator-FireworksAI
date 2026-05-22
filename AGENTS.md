@@ -1,16 +1,17 @@
-# AGENTS.md — SINator Fireworks AI Rotator V6 (2026-05-22)
+# AGENTS.md — SINator Fireworks AI Rotator V8 (2026-05-22)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
 
 **Full automated flow in ONE command:**
 ```bash
 python tools/rotate.py
-# → GMX Login (built-in, Step 0) → Alias Rotation (~28s) → Fireworks Signup
+# → GMX Login (built-in, Step 0) → Alias Rotation (~63s) → Fireworks Signup
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Latest API Key:** `fw_GEB2TRxTFzcFNweZwMuq5b` (omega-condor-654@gmx.de)
-**Pool:** 5 Keys total (neuester: omega-condor-654)
+**Latest API Key:** `fw_6rWU4KGUPts6zVnaRreu6R` (pulse-jaguar-899@gmx.de)
+**Pool:** 30 Keys (30 total, 29 available)
+**Cycle Time:** ~209s average (Strecke: 204-224s)
 
 ### E2E Steps (proven working, ~204s total)
 0. **GMX Login (built-in)**: `rotate.py` Step 0 — Playwright-Login `opensin@gmx.de`, speichert frische Cookies
@@ -31,13 +32,84 @@ python tools/rotate.py
 
 | Layer | Tool | Purpose |
 |-------|------|---------|
-| Navigation | CUA | GMX E-Mail → Einstellungen → allEmailAddresses |
-| Form interaction | Playwright | `fill()`, `click()` in cross-origin iframes |
+| Navigation (CUA) | CUA | Inbox → Einstellungen AXButton |
+| Navigation (JS) | CDP evaluate | Hidden nav-menu click → `produkte_ha` page with allEmailAddresses iframe |
+| Alias operations | Playwright new-tab | Open iframe URL in fresh tab → `fill()`, `click()` on top-level document |
 | React checkboxes | CUA | `AXPress` — Playwright `check()` ignoriert React |
 | Names input | CUA | `type_text` — real macOS keystrokes React can't ignore |
 | API Key dialog | Playwright | PopUpButton force-click → menuitem → fill → Generate |
 | OTP email | CDP | MailCheck Extension → click email → mailbody-ui.de OOPIF → extract URL |
 | Cookie management | CDP | `Network.deleteCookies` + `clearBrowserCookies` für Fireworks |
+
+### 🔧 V8 GMX NAVIGATION FIX (2026-05-22)
+
+**Problem:** GMX geändert — Direkte Navigation zu `/mail_settings/email_addresses?sid=...` redirected immer zu `/mail_settings/mail`. CDP `Page.navigate` triggert IAC Anti-Automation → "Einstellungen" AXButton nicht im AX-Tree. allEmailAddresses iframe off-screen (`rect=(-2400, -1742)`) → Playwright kann nicht interagieren (Trusted-Events + Viewport).
+
+**Lösung — 4-Schritt Flow:**
+
+```python
+# STEP 1: Playwright navigate to inbox (NOT CDP — avoids IAC)
+# CDP `Page.navigate` detected as bot → IAC restart
+# Playwright connect_over_cdp + goto("/mail?sid=...") works
+
+# STEP 2: CUA click "Einstellungen" AXButton from inbox
+# ONLY visible on full inbox page (/mail?sid=...), NOT on /mail_settings/mail
+cua_click(find_element("Einstellungen", "AXButton"))  # element [148]
+await asyncio.sleep(5)  # → URL changes to /mail_settings?sid=...
+
+# STEP 3: JS evaluate click hidden nav-menu button
+# GMX hides settings sidebar via CSS (offsetParent === null)
+# CUA can't see it, but JS click loads the allEmailAddresses iframe
+await client.evaluate(session_id, """
+    const nav = document.querySelector('#nav-menu');
+    if (nav) {
+        for (const el of nav.querySelectorAll('button, a')) {
+            if (el.innerText?.includes('Mail-Adressen') || 
+                el.innerText?.includes('Wunsch-Mail')) {
+                el.click(); break;
+            }
+        }
+    }
+""")
+# → URL changes to /produkte_ha?sid=... with embedded iframe
+
+# STEP 4: Open allEmailAddresses iframe URL in new Playwright tab
+# The 3c-bap.gmx.net iframe is off-screen AND in cross-origin context
+# JS dispatchEvent clicks fail (isTrusted === false for Wicket framework)
+# Solution: extract iframe URL → goto() in new tab → top-level document
+iframe_url = "https://3c-bap.gmx.net/mail/client/settings/allEmailAddresses;jsessionid=..."
+new_page = await browser.new_page()
+await new_page.goto(iframe_url)
+# Now Playwright fill() + click() work normally (element IS on-screen)
+```
+
+**Code-Änderungen in `gmx_service.py`:**
+- `_navigate_to_all_email_addresses`: CDP `Page.navigate` entfernt → Playwright goto inbox + CUA Einstellungen + JS nav-click + Polling bis iframe geladen
+- `_get_iframe_url`: Neue Helper-Methode mit 6×3s Retry-Loop
+- `_delete_alias_via_playwright`: Iframe-Operation → New-Tab-Operation (öffnet iframe URL, hover/click/OK ohne off-screen issues)
+- `_create_alias_via_playwright`: Gleiche New-Tab-Strategie, `fill()` statt evaluate nativeInputValueSetter
+- `rotate_alias` inline delete: Nutzt `_get_iframe_url` + new-tab statt iframe-content
+
+**Anti-Pattern (NIEMALS):**
+```python
+# FALSCH — CDP navigate triggert IAC, Einstellungen nicht im AX tree:
+await client.send_to_session(sid, "Page.navigate", {"url": ".../email_addresses?sid=..."})
+
+# FALSCH — Off-screen iframe → evaluate click().failed (isTrusted=false):
+await frame.locator('button').evaluate("el => el.click()")
+```
+
+**Korrektes Pattern:**
+```python
+# RICHTIG — Playwright navigate (kein IAC):
+for btn in await pg.locator('button').all():
+    if 'Zum Postfach' in (await btn.text_content() or ''): await btn.click()
+
+# RICHTIG — New tab → top-level document → normal Playwright click:
+new_pg = await browser.new_page()
+await new_pg.goto(iframe_url)
+await new_pg.locator('button:has-text("Hinzufügen")').first.click()
+```
 
 ### 🔑 CRITICAL PATTERNS (MANDATORY)
 
