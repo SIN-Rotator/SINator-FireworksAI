@@ -1136,9 +1136,9 @@ class GmxService:
                             for _f in _pg.frames:
                                 if 'allEmailAddresses' in _f.url:
                                     return _f.url
-                    if _retry < 5:
-                        await asyncio.sleep(3)
-                return None
+                if _retry < 5:
+                    await asyncio.sleep(3)
+            return None
         except Exception as _e:
             logger.error(f"get_iframe_url failed: {_e}")
             return None
