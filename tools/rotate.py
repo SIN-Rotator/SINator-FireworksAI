@@ -100,7 +100,7 @@ async def main():
             _json.dump(_cookies, open("data/gmx-cookies.json", "w"), indent=2)
         else:
             logger.warning("⚠️ GMX Login fehlgeschlagen")
-        await _pg.close()
+        # Keep page open so GmxService can find it via CDP+CUA
 
     # ═══ Step 1: GMX Alias Rotation ═══
     logger.info("=== GMX Alias Rotation ===")
