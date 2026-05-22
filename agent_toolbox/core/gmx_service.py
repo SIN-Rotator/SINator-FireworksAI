@@ -194,7 +194,7 @@ async def _rate_limit_safe_call(fn, *args, max_retries: int = _RATE_LIMIT_RETRIE
                 logger.warning(f"⚠️ Rate-Limit erkannt (attempt {attempt+1}/{max_retries+1})")
                 if attempt < max_retries:
                     await _purge_gmx_cookies(client, session_id)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
                     continue
             else:
                 _track_rate_limit(False)
@@ -372,7 +372,7 @@ class GmxService:
 
         # ── STEP 2: Immer zur Homepage navigieren ──────────────────────────────
         await client.navigate(session_id, "https://www.gmx.net/")
-        await asyncio.sleep(4)
+        await asyncio.sleep(2)
 
         url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
         current_url = url_result.get("result", {}).get("value", "")
@@ -397,7 +397,7 @@ class GmxService:
             if sid and "mail" in current_url:
                 settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
                 await client.navigate(session_id, settings_url)
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
                 return {"success": True, "current_url": settings_url, "sid": sid}
 
         # Click E-Mail nav (we landed on homepage in STEP 2)
@@ -451,7 +451,7 @@ class GmxService:
         if sid:
             settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
             await client.navigate(session_id, settings_url)
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
             return {"success": True, "current_url": settings_url, "sid": sid}
 
         return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren (poll timeout)"}
@@ -589,7 +589,7 @@ class GmxService:
                 await _purge_gmx_cookies(client, session_id)
                 await self._inject_saved_cookies(client, session_id)
                 await client.send_to_session(session_id, "Page.navigate", {"url": "https://www.gmx.net"})
-                await asyncio.sleep(5)
+                await asyncio.sleep(3)
                 # Rate-Limit Check nach Navigation
                 rl_url = await client.evaluate(session_id, "window.location.href", return_by_value=True)
                 rl_url_val = rl_url.get("result", {}).get("value", "")
@@ -688,7 +688,7 @@ class GmxService:
                 if el and el > 0:
                     logger.info(f"CUA click Einstellungen [{el}]")
                     cua_click(el)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
                 else:
                     logger.warning("Einstellungen not found in AX tree")
             else:
@@ -708,7 +708,7 @@ class GmxService:
                                 __t = (await __btn.text_content() or '').strip().lower()
                                 if __t in ('zum postfach', 'e-mail'):
                                     await __btn.click(force=True)
-                                    await asyncio.sleep(5)
+                                    await asyncio.sleep(3)
                                     break
                         logger.info(f"Playwright nav done: {__pg.url[:80]}")
                         # Update SID from new URL
@@ -1671,7 +1671,7 @@ class GmxService:
             # Click "Weiter" button via CDP
             if val.get("clickX", 0) > 0:
                 await client.click_at(session_id, val["clickX"], val["clickY"])
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             
             # Step 2: Fill password
             pw_js = """
@@ -1784,12 +1784,12 @@ class GmxService:
             # STILL enter email + password (first attempt - will be ignored by GMX)
             logger.info("[Flow 0] Step B2: Enter email+password (first attempt - GMX ignores)...")
             await _do_email_password_login(client, session_id, email, password)
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             
             # c) Click profile icon → login again (ZWEITE login attempt - jetzt funktioniert)
             logger.info("[Flow 0] Step C: Second login attempt (this one works)...")
             await _click_profile_icon_and_action(client, session_id, "login")
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
             
             # Check if login form is visible
             login_form_result = await client.evaluate(
