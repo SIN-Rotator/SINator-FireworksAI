@@ -616,20 +616,21 @@ class GmxService:
                 logger.info("Bereits auf E-Mail-Adressen Seite")
                 return True
 
-            # Navigate directly to mail_settings with SID (skip homepage — SPA doesn't show logged-in state via CDP)
+            # Navigate directly to mail_settings/email_addresses with SID
+            # Using /email_addresses path to skip settings landing page
             if sid:
-                gmx_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+                gmx_url = f"https://bap.navigator.gmx.net/mail_settings/email_addresses?sid={sid}"
             elif current_url and "navigator.gmx.net/mail" in current_url:
                 sid_match = re.search(r'sid=([a-f0-9]{70,})', current_url)
                 if sid_match:
                     sid = sid_match.group(1)
-                    gmx_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+                    gmx_url = f"https://bap.navigator.gmx.net/mail_settings/email_addresses?sid={sid}"
                 else:
                     gmx_url = "https://www.gmx.net/"
             else:
                 gmx_url = "https://www.gmx.net/"
             await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
-            await asyncio.sleep(5)
+            await asyncio.sleep(8)
             # Bring GMX tab to front so CUA can read its window title
             if target_id:
                 try:
@@ -672,7 +673,10 @@ class GmxService:
 
             # Already on settings page?
             trees = get_tree()
+            # Debug: log first 200 chars of AX tree
+            logger.debug(f"AX tree (first 300): {trees[:300].replace(chr(10), ' | ')}")
             if 'E-Mail-Adressen' in trees:
+                logger.info("E-Mail-Adressen already in tree")
                 return True
 
             # If already on accessible inbox, skip E-Mail click
@@ -683,9 +687,11 @@ class GmxService:
                     logger.info(f"CUA click Einstellungen [{el}]")
                     cua_click(el)
                     await asyncio.sleep(5)
-                    if 'E-Mail-Adressen' in get_tree():
+                    trees2 = get_tree()
+                    if 'E-Mail-Adressen' in trees2:
                         logger.info("E-Mail-Adressen Seite erreicht!")
                         return True
+                    logger.debug(f"After Einstellungen: {trees2[:300].replace(chr(10), ' | ')}")
 
             # Step 2: Click E-Mail AXLink (only if not on inbox already)
             if 'Barrierefreies Postfach' not in trees:
@@ -694,17 +700,23 @@ class GmxService:
                     logger.info(f"CUA click E-Mail [{el}]")
                     cua_click(el)
                     await asyncio.sleep(5)
+                else:
+                    logger.warning(f"'E-Mail' AXLink not found in tree")
 
             # Step 3: Click Einstellungen button
-            if 'Barrierefreies Postfach' in get_tree():
+            trees3 = get_tree()
+            logger.debug(f"After E-Mail: {trees3[:300].replace(chr(10), ' | ')}")
+            if 'Barrierefreies Postfach' in trees3:
                 el = find_element('Einstellungen', 'AXButton')
                 if el and el > 0:
                     logger.info(f"CUA click Einstellungen [{el}]")
                     cua_click(el)
                     await asyncio.sleep(5)
-                    if 'E-Mail-Adressen' in get_tree():
+                    trees4 = get_tree()
+                    if 'E-Mail-Adressen' in trees4:
                         logger.info("E-Mail-Adressen Seite erreicht!")
                         return True
+                    logger.debug(f"After settings click: {trees4[:300].replace(chr(10), ' | ')}")
 
             logger.warning("CUA navigation konnte E-Mail-Adressen nicht erreichen")
             return False
@@ -1201,23 +1213,53 @@ class GmxService:
                     logger.warning("allEmailAddresses iframe nicht via Playwright gefunden")
                     return None
 
+                # Debug: log all inputs + buttons in frame
+                all_inputs = []
+                for inp in await frame.locator('input').all():
+                    attrs = {}
+                    try:
+                        attrs['type'] = await inp.get_attribute('type')
+                        attrs['name'] = await inp.get_attribute('name')
+                        attrs['placeholder'] = await inp.get_attribute('placeholder')
+                    except: pass
+                    try:
+                        attrs['value'] = await inp.input_value()
+                    except: pass
+                    all_inputs.append(attrs)
+                logger.info(f"Frame inputs: {[i for i in all_inputs if i.get('type') != 'hidden']}")
+
+                all_btns = []
+                for btn in await frame.locator('button').all():
+                    try:
+                        txt = (await btn.text_content() or '').strip()[:30]
+                        disabled = await btn.is_disabled()
+                        all_btns.append(f'{txt} (disabled={disabled})')
+                    except: pass
+                logger.info(f"Frame buttons: {all_btns}")
+
                 for attempt in range(3):
                     current_alias = alias_name if attempt == 0 else self.generate_alias_name()
                     current_email = f"{current_alias}@gmx.de"
                     logger.info(f"Playwright attempt {attempt+1}/3: {current_email}")
 
-                    # Fill input
-                    inp = frame.locator('input[type="text"]').first
-                    if attempt == 0:
-                        await inp.fill(current_alias)
-                    else:
-                        await inp.clear()
-                        await inp.fill(current_alias)
-                    await asyncio.sleep(0.5)
+                    # Find the right input — prefer name='localPart' or placeholder containing 'ihr-name'
+                    inp = frame.locator('input[name*="localPart"]').first
+                    if await inp.count() == 0:
+                        inp = frame.locator('input[placeholder*="ihr-name"]').first
+                    if await inp.count() == 0:
+                        inp = frame.locator('input[type="text"]').first
+                    logger.info(f"Input found: name={await inp.get_attribute('name') or '?'}, type={await inp.get_attribute('type') or '?'}")
 
-                    # Click Hinzufügen
+                    # Fill input
+                    await inp.clear()
+                    await inp.fill(current_alias)
+                    await asyncio.sleep(1)
+                    filled = await inp.input_value()
+                    logger.info(f"Input filled: '{filled}'")
+
+                    # Click Hinzufügen (force=True for covered elements)
                     btn = frame.locator('button:has-text("Hinzufügen")').first
-                    await btn.click()
+                    await btn.click(force=True)
                     logger.info("Playwright: Hinzufügen clicked")
                     await asyncio.sleep(5)
 
@@ -1227,11 +1269,25 @@ class GmxService:
                         logger.info(f"Playwright: ✅ {current_email} created")
                         return current_email
 
-                    # Also check page content
+                    # Check page content for alias or error
                     content = await frame.content()
                     if current_email in content:
-                        logger.info(f"Playwright: ✅ {current_email} created")
+                        logger.info(f"Playwright: ✅ {current_email} created (found in DOM)")
                         return current_email
+
+                    # Check for error messages (briefly, don't wait 30s)
+                    try:
+                        err_el = frame.locator('.fielderror, .error, .alert, [class*="error"], [class*="alert"]').first
+                        if await err_el.count() > 0:
+                            err_text = await err_el.text_content(timeout=5000)
+                            if err_text:
+                                logger.warning(f"GMX error: {err_text.strip()}")
+                    except Exception:
+                        pass
+                    body_text = await frame.locator('body').text_content()
+                    if 'bereits vergeben' in body_text or 'nicht verfügbar' in body_text:
+                        logger.warning(f"Alias '{current_alias}' not available — generating new")
+                        continue
 
                     logger.warning(f"Playwright: {current_email} not created, retrying...")
                     await asyncio.sleep(1)
