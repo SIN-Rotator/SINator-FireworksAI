@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 # Projekt-Root zum Path hinzufügen (Parent-Dir damit 'agent_toolbox' als Modul gefunden wird)
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "agent_toolbox" / "core"))  # cua_helper, gmx_service, etc.
 
 from agent_toolbox.api.routes.browser import router as browser_router
 from agent_toolbox.api.routes.gmx import router as gmx_router
