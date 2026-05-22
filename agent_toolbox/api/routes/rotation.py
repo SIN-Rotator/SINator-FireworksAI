@@ -115,9 +115,11 @@ async def full_rotation(request: RotationRequest):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=str(Path(__file__).parent.parent.parent.parent),
+            env={**__import__("os").environ, "PYTHONUNBUFFERED": "1"},
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=360)
-        output = stdout.decode()
+        # rotate.py uses logging which goes to stderr, not stdout
+        output = stderr.decode() + stdout.decode()
 
         # Parse output for API key and alias
         api_key_match = re.search(r'API Key:\s+(fw_\S+)', output)
