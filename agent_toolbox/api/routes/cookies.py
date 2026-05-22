@@ -81,7 +81,12 @@ async def inject_cookies(request: CookieInjectRequest):
         cookie_mgr = get_cookie_manager()
         cookies = cookie_mgr.load_cookies(filename=request.filename)
 
-        injected_count = await cookie_mgr.inject_cookies(browser_mgr._context, cookies)
+        # Cookies werden jetzt via Playwright in rotate.py Step 0 injiziert.
+        # BrowserManager hat keinen Playwright Context mehr.
+        raise RuntimeError(
+            "Cookie injection removed. Use Playwright-based login in rotate.py instead. "
+            "The dashboard handles login automatically via the rotation pipeline."
+        )
 
         session_active = False
         if request.verify_session:

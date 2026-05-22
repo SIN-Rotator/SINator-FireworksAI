@@ -98,12 +98,17 @@ async def browser_status():
     browser_mgr = get_browser_manager()
 
     page_count = 0
-    if browser_mgr.is_running and browser_mgr._context:
-        page_count = len(browser_mgr._context.pages)
+    try:
+        if browser_mgr.is_running and hasattr(browser_mgr, '_context') and browser_mgr._context:
+            page_count = len(browser_mgr._context.pages)
+    except Exception:
+        pass
+
+    temp_profile = getattr(browser_mgr, '_temp_profile_dir', None)
 
     return BrowserStatusResponse(
         is_running=browser_mgr.is_running,
         cdp_port=browser_mgr.cdp_port if browser_mgr.is_running else None,
-        temp_profile=browser_mgr._temp_profile_dir,
+        temp_profile=temp_profile,
         page_count=page_count,
     )
