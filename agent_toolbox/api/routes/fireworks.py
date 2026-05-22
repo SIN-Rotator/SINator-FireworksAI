@@ -1,7 +1,8 @@
 """
-SINATOR — Fireworks Routes V5 (Playwright+CUA, 2026-05-21)
+SINATOR — Fireworks Routes V6 (Playwright+CUA, 2026-05-22)
 """
-import time, logging
+import time
+import logging
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager

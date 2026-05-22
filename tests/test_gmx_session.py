@@ -5,7 +5,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
 
 import asyncio
-import re
 import pytest
 
 

@@ -1,28 +1,31 @@
-# AGENTS.md — SINator Fireworks AI Rotator V5
+# AGENTS.md — SINator Fireworks AI Rotator V6 (2026-05-22)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
 
 **Full automated flow in ONE command:**
 ```bash
 python tools/rotate.py
-# → GMX Alias Rotation (~28s) → Fireworks Signup → OTP → Verify
-# → Login → Onboarding → Use-Cases → $5 Credits → API Key → Pool
+# → GMX Login (built-in, Step 0) → Alias Rotation (~28s) → Fireworks Signup
+# → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Latest API Key:** `fw_MdM6tGucgWuuc7zQyJGeTK` (crystal-beetle-676@gmx.de)
+**Latest API Key:** `fw_GEB2TRxTFzcFNweZwMuq5b` (omega-condor-654@gmx.de)
+**Pool:** 5 Keys total (neuester: omega-condor-654)
 
-### E2E Steps (proven working)
-1. **GMX Session**: `page.locator('a:has-text("E-Mail")').click()` → inbox with SID
+### E2E Steps (proven working, ~204s total)
+0. **GMX Login (built-in)**: `rotate.py` Step 0 — Playwright-Login `opensin@gmx.de`, speichert frische Cookies
+1. **GMX Session**: IAC-Tabs cleanup → `www.gmx.net` → "E-Mail" click → 15s SID-Polling
 2. **GMX Rotation**: Playwright iframe delete + create (~28s)
-3. **Fireworks Logout**: CDP `Network.deleteCookies` + `clearBrowserCookies` (before signup!)
+3. **Fireworks Logout**: CDP `Network.deleteCookies` + `clearBrowserCookies` (nur Fireworks-Domain!)
 4. **Signup**: `/signup` → `input[name="email"]` → 2x password → Create Account
 5. **OTP Poll**: GMX MailCheck extension → CDP OOPIF mailbody-ui.de → extract URL
-6. **Verify**: Open verify URL → account confirmed
+6. **Verify**: `Target.createTarget(verify_url)` → account confirmed
 7. **Login**: `/login` → "Email Login" → `input[name="email"]` + password → Next
 8. **Onboarding**: CUA "First" + "Last" (NOT "Name"!) → Terms checkbox → Continue
-9. **Use-Cases**: CUA dynamic scan text-based → checkboxes → Submit
-10. **API Key**: `/settings/users/api-keys` → Create API Key PopUpButton → menuitem → Generate
-11. **Pool**: Auto-save to `data/fireworksai-pool.json`
+9. **Playwright-Onboarding-Fallback**: Falls CUA Submit keinen Redirect triggert → Playwright füllt Formular + Submit
+10. **Use-Cases**: CUA dynamic scan text-based → checkboxes → Submit
+11. **API Key**: `/settings/users/api-keys` → Create API Key PopUpButton → menuitem → Generate (mit `disabled`-Wait + DOM-Polling)
+12. **Pool**: Auto-save to `data/fireworksai-pool.json`
 
 ### Architecture: Playwright + CUA Hybrid
 
@@ -82,7 +85,7 @@ btn = frame.locator('button:has-text("Hinzufügen")').first
 await btn.click(force=True)
 # verify: inp.input_value() == '' = success
 
-# 7. API Key (Playwright)
+# 7. API Key (Playwright) — V6 mit disabled-Wait + DOM-Polling
 await page.goto("https://app.fireworks.ai/settings/users/api-keys")
 for btn in await page.locator('button').all():
     if 'Create API Key' == (await btn.text_content() or '').strip():
@@ -91,9 +94,36 @@ await page.locator('[role="menuitem"]:has-text("API Key")').first.click(force=Tr
 for inp in await page.locator('input').all():
     if 'name' in (await inp.get_attribute('name') or '').lower():
         await inp.fill(key_name); break
-for btn in await page.locator('button').all():
-    if 'Generate' in (await btn.text_content() or '').strip():
-        await btn.click(force=True); break
+await asyncio.sleep(1)  # Wait für React Re-Render
+# Wait for disabled → enabled transition
+for _ in range(15):
+    for btn in await page.locator('button').all():
+        txt = (await btn.text_content() or '').strip()
+        if 'Generate' == txt and not await btn.is_disabled():
+            await btn.click(force=True); break
+    else: await asyncio.sleep(0.5); continue
+    break
+# Poll für API Key im DOM (max 10s)
+api_key = None
+for _ in range(10):
+    body = await page.evaluate("document.body.innerText")
+    m = _re.search(r'fw_[a-zA-Z0-9]{20,}', body)
+    if m: api_key = m.group(0); break
+    await asyncio.sleep(1)
+if not api_key:
+    raise RuntimeError("API Key not generated")
+```
+
+**API Key Error Handling:**
+```python
+# "Missing API Key Name!" Modal erkennen + schließen
+body = await page.evaluate("document.body.innerText")
+if 'Missing' in body and 'Name' in body:
+    for btn in await page.locator('button').all():
+        if 'Close' in (await btn.text_content() or ''):
+            await btn.click(force=True); break
+    await asyncio.sleep(1)
+    # Retry: fill + Generate
 ```
 
 ### 🏗️ Project Structure
@@ -104,7 +134,7 @@ SINator-fireworksai/
 │   ├── core/
 │   │   ├── cdp_client.py                Raw CDP Websocket Client
 │   │   ├── gmx_service.py               GMX: Session, Alias (Playwright+CUA+CDP), OTP
-│   │   ├── fireworks_service.py          V5: 114 lines Playwright+CUA (replaces 3103 line CDP)
+│   │   ├── fireworks_service.py          V6: Playwright+CUA + Playwright-Onboarding-Fallback
 │   │   ├── browser_manager.py           Browser Lifecycle
 │   │   ├── pool_manager.py              API-Key Pool CRUD
 │   │   └── cookie_manager.py            Cookie Management (legacy)
@@ -168,6 +198,8 @@ kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 | `_re` import NUR global | Wird in inner function scope nicht gefunden |
 | `Network.clearBrowserCookies` global | Killt GMX-Session — nur für Fireworks Domain |
 | `page.goto()` zu iframe-URL | Triggert IAC restart, Session expired |
+| CUA Submit-Klick bei Onboarding | Triggert keinen Redirect → Playwright-Fallback nötig |
+| `ERR_BLOCKED_BY_RESPONSE` ignorieren | GMX Rate-Limiting → Cookies löschen + Chrome restart |
 
 ---
 

@@ -1,11 +1,12 @@
 """
-SINATOR — Fireworks Service V5 (Playwright + CUA, 2026-05-21)
+SINATOR — Fireworks Service V6 (Playwright+CUA + Fallback, 2026-05-22)
 
 Lightweight wrapper replacing the 3103-line CDP fireworks_service.py.
 Uses Playwright for form interaction, CUA for React checkboxes.
 """
-import logging, re
-from typing import Optional, Dict, Any
+import logging
+import re
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,8 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
     3. Open verify URL to confirm account
     4. Returns {status, verify_url, steps_completed}
     """
-    import asyncio, sys, re as _re
+    import asyncio
+    import sys
     from playwright.async_api import async_playwright
     from pathlib import Path as _Path
     
@@ -118,7 +120,10 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
 async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + CUA onboarding.
     Returns: {status, steps_completed, error}"""
-    import asyncio, json, subprocess, re as _re
+    import asyncio
+    import json
+    import subprocess
+    import re as _re
     from playwright.async_api import async_playwright
 
     steps = []
@@ -154,9 +159,9 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                     break
             steps.append("form_submitted")
 
-            # Onboarding via CUA
+            # Onboarding via CUA with Playwright fallback
             if 'onboarding' in page.url:
-                logger.info("Onboarding — via CUA")
+                logger.info("Onboarding via CUA + Playwright")
                 from cua_helper import find_cua_window
                 cua = find_cua_window(title_keywords=["fireworks"])
                 if cua:
@@ -184,14 +189,14 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                                 if m: return int(m.group(1))
                         return None
                     
-                    # Fill names — "First" / "Last" NOT "Name" (avoids Company Name)
+                    # Fill names via CUA
                     for name, target in [("Super", "First"), ("Cheetah", "Last")]:
                         el = _find_element(target, "AXTextField")
                         if el:
                             _cua_click(el); await asyncio.sleep(0.3)
                             _cua_type(name); await asyncio.sleep(0.3)
                     
-                    # Terms checkbox (re-scan after React re-render)
+                    # Terms checkbox
                     el = _find_element("agree", "AXCheckBox")
                     if el: _cua_click(el); await asyncio.sleep(0.3)
                     
@@ -199,20 +204,34 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                     el = _find_element("Continue")
                     if el: _cua_click(el); await asyncio.sleep(6)
                     
-                    # Use-cases (re-scan)
+                    # Use-cases
                     for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
                         el = _find_element(uc_text, "AXCheckBox")
                         if el:
                             _cua_click(el); await asyncio.sleep(0.2)
                     
-                    # Submit
+                    # Submit — try CUA first
                     el = _find_element("Submit")
-                    if el: _cua_click(el); await asyncio.sleep(6)
+                    if el:
+                        _cua_click(el)
+                        for attempt in range(8):
+                            await asyncio.sleep(2)
+                            if 'home' in page.url or 'account' in page.url or 'settings' in page.url:
+                                logger.info(f"Redirect detected (attempt {attempt+1})")
+                                break
+                        else:
+                            logger.warning("CUA Submit — kein Redirect, Playwright-Fallback")
+                            # Playwright fallback: fill form directly
+                            await _fireworks_playwright_onboarding(page)
+                    else:
+                        logger.warning("CUA Submit nicht gefunden — Playwright-Fallback")
+                        await _fireworks_playwright_onboarding(page)
                 else:
-                    logger.warning("CUA: Fireworks window not found, skipping onboarding")
+                    logger.warning("CUA window not found — Playwright-Fallback")
+                    await _fireworks_playwright_onboarding(page)
                 steps.append("onboarding_complete")
 
-            if 'home' in page.url or 'account' in page.url:
+            if 'home' in page.url or 'account' in page.url or 'settings' in page.url:
                 steps.append("login_success")
                 return {"status": "success", "steps_completed": steps}
 
@@ -221,6 +240,67 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Fireworks login error: {e}")
         return {"status": "error", "steps_completed": steps, "error": str(e)}
+
+
+async def _fireworks_playwright_onboarding(page) -> None:
+    """Playwright-based onboarding fallback (fill names, checkboxes, submit)."""
+    import asyncio
+    
+    # Fill First Name
+    fn = page.locator('input[name="firstName"]').first
+    if await fn.count() == 0:
+        fn = page.locator('input[name="first"]').first
+    if await fn.count() > 0:
+        await fn.fill("Super"); await asyncio.sleep(0.5)
+    
+    # Fill Last Name
+    ln = page.locator('input[name="lastName"]').first
+    if await ln.count() == 0:
+        ln = page.locator('input[name="last"]').first
+    if await ln.count() > 0:
+        await ln.fill("Cheetah"); await asyncio.sleep(0.5)
+    
+    # Terms checkbox
+    terms = page.locator('input[type="checkbox"]').first
+    if await terms.count() > 0:
+        await terms.check(force=True); await asyncio.sleep(0.5)
+    
+    # Continue button
+    for btn in await page.locator('button').all():
+        txt = (await btn.text_content() or '').strip()
+        if 'Continue' in txt or 'Next' in txt:
+            await btn.click(force=True); await asyncio.sleep(5)
+            break
+    
+    # Use-case checkboxes
+    for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
+        cb = page.locator(f'label:has-text("{uc}")').first
+        if await cb.count() > 0:
+            await cb.click(force=True); await asyncio.sleep(0.3)
+        else:
+            # Try direct checkbox
+            for inp in await page.locator('input[type="checkbox"]').all():
+                label = await inp.get_attribute('aria-label') or ''
+                if uc.lower() in label.lower():
+                    await inp.check(force=True); await asyncio.sleep(0.3)
+                    break
+    
+    # Submit
+    for btn in await page.locator('button').all():
+        txt = (await btn.text_content() or '').strip()
+        if 'Submit' in txt or 'Get $5' in txt:
+            await btn.click(force=True); await asyncio.sleep(6)
+            break
+    
+    # Poll for redirect (max 20s)
+    for _ in range(10):
+        await asyncio.sleep(2)
+        if any(x in page.url for x in ['home', 'account', 'settings']):
+            logger.info("Playwright onboarding complete")
+            return
+    logger.warning("Playwright onboarding — kein Redirect, force navigate")
+    await page.goto("https://app.fireworks.ai/settings/users/api-keys")
+    await asyncio.sleep(3)
 
 
 async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
@@ -246,21 +326,53 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
 
                     for inp in await pg.locator('input').all():
                         if 'name' in (await inp.get_attribute('name') or '').lower():
-                            await inp.fill(key_name); break
-
-                    for btn in await pg.locator('button').all():
-                        if 'Generate' in (await btn.text_content() or '').strip():
-                            await btn.click(force=True); await asyncio.sleep(5)
+                            await inp.fill(key_name)
+                            await asyncio.sleep(1)
                             break
 
-                    content = await pg.content()
-                    text = await pg.evaluate("() => document.body.innerText")
-                    keys = re.findall(r'fw_[a-zA-Z0-9]{20,}', content + text)
-                    if keys:
-                        logger.info(f"API Key created: {keys[0][:12]}...")
-                        return {"status": "success", "api_key": keys[0]}
+                    # Wait for Generate button to be enabled
+                    generate_btn = None
+                    for btn in await pg.locator('button').all():
+                        if 'Generate' in (await btn.text_content() or '').strip():
+                            generate_btn = btn
+                            break
+                    if generate_btn:
+                        disabled = await generate_btn.get_attribute('disabled')
+                        if disabled is not None:
+                            logger.warning("Generate button disabled — waiting for enable")
+                            for _ in range(5):
+                                await asyncio.sleep(1)
+                                disabled = await generate_btn.get_attribute('disabled')
+                                if disabled is None:
+                                    break
+                        await generate_btn.click(force=True)
 
-            return {"status": "error", "error": "API Key not found on page"}
+                    # Poll for API Key in DOM (max 10s, check alle 1s)
+                    api_key = None
+                    for _ in range(10):
+                        await asyncio.sleep(1)
+                        text = await pg.evaluate("() => document.body.innerText")
+                        keys = re.findall(r'fw_[a-zA-Z0-9]{20,}', text)
+                        if keys:
+                            api_key = keys[0]
+                            break
+
+                    if api_key:
+                        logger.info(f"API Key created: {api_key[:12]}...")
+                        return {"status": "success", "api_key": api_key}
+
+                    # Check for "Missing API Key Name!" error modal
+                    body = await pg.evaluate("() => document.body.innerText")
+                    if 'Missing' in body and 'Name' in body:
+                        logger.warning("API Key error modal — close and retry")
+                        for btn in await pg.locator('button').all():
+                            txt = (await btn.text_content() or '').strip()
+                            if txt in ['Close', 'Cancel', 'OK', '×']:
+                                await btn.click(force=True); await asyncio.sleep(1)
+                                break
+                    return {"status": "error", "error": "API Key not found after polling"}
+
+            return {"status": "error", "error": "No Fireworks page found"}
 
     except Exception as e:
         logger.error(f"API Key error: {e}")

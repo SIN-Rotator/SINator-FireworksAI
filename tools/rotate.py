@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-SINator — Single Command Rotation Tool V5 (2026-05-21)
-
-GMX Alias Rotation → Fireworks Login → Onboarding → API Key — in einem Lauf.
+SINator — Single Command Rotation Tool V6 (2026-05-22)
+ 
+ GMX Login (built-in) → Alias Rotation → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key — in einem Lauf.
 
 Usage:
     python tools/rotate.py              # Auto-generated alias
     python tools/rotate.py my-alias-123 # Specific alias name
 """
-import sys, asyncio, time, logging, argparse
+import sys
+import asyncio
+import time
+import logging
+import argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,22 +36,43 @@ async def main():
 
     t0 = time.time()
 
-    # ═══ Step 0: GMX Session ═══
-    logger.info("=== GMX Session ===")
-    import re as _re
+    # ═══ Step 0: GMX Login (frische Session) ═══
+    logger.info("=== GMX Login ===")
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
         _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-        for _pg in _b.contexts[0].pages:
-            if 'gmx' in _pg.url.lower():
-                await _pg.goto("https://www.gmx.net/")
-                await asyncio.sleep(3)
-                # Click E-Mail header link
-                await _pg.locator('a:has-text("E-Mail")').first.click(timeout=5000)
-                await asyncio.sleep(5)
-                if 'sid=' in _pg.url:
-                    logger.info("✅ GMX Session active")
-                break
+        _pg = await _b.contexts[0].new_page()
+        await _pg.goto("https://www.gmx.net/")
+        await asyncio.sleep(4)
+        _login_btn = _pg.locator('button:has-text("Login")').first
+        if await _login_btn.count() > 0:
+            await _login_btn.click()
+            await asyncio.sleep(4)
+            _email = _pg.locator('input[type="email"]').first
+            if await _email.count() == 0:
+                _email = _pg.locator('input[name="username"]').first
+            if await _email.count() > 0:
+                await _email.fill("opensin@gmx.de")
+                await asyncio.sleep(1)
+                for _btn in await _pg.locator('button').all():
+                    if (await _btn.text_content() or "").strip() == "Weiter":
+                        await _btn.click(force=True); await asyncio.sleep(4); break
+                _pw = _pg.locator('input[type="password"]').first
+                if await _pw.count() > 0:
+                    await _pw.fill("ZOE.jerry2024")
+                    await asyncio.sleep(1)
+                    for _btn in await _pg.locator('button').all():
+                        if (await _btn.text_content() or "").strip() == "Login":
+                            await _btn.click(force=True); await asyncio.sleep(6); break
+        if "sid=" in _pg.url or "navigator.gmx.net" in _pg.url:
+            logger.info("✅ GMX Login erfolgreich")
+            import json as _json
+            _cookies = await _b.contexts[0].cookies()
+            _json.dump(_cookies, open("data/gmx-cookies.json", "w"), indent=2)
+        else:
+            logger.warning("⚠️ GMX Login fehlgeschlagen")
+        await _pg.close()
+        await _b.close()
 
     # ═══ Step 1: GMX Alias Rotation ═══
     logger.info("=== GMX Alias Rotation ===")

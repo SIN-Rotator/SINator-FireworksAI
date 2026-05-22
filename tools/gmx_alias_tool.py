@@ -78,23 +78,23 @@ async def cmd_status():
         result = await svc.create_alias(alias_name=None, cdp_port=9222)
         
         if result.get("status") in ("success", "partial"):
-            print(f"✅ GMX Session OK")
+            print("✅ GMX Session OK")
             if result.get("alias_email"):
                 print(f"   Current Alias: {result['alias_email']}")
         elif result.get("status") == "not_logged_in":
-            print(f"❌ GMX Session DEAD — Session Recovery nötig!")
-            print(f"   → POST /cookies/inject um Session wiederherzustellen")
+            print("❌ GMX Session DEAD — Session Recovery nötig!")
+            print("   → POST /cookies/inject um Session wiederherzustellen")
         else:
             print(f"❌ GMX Error: {result.get('error', 'unknown')}")
         
     except Exception as e:
         print(f"❌ Connection Error: {e}")
-        print(f"   Chrome läuft nicht? → POST /browser/start")
+        print("   Chrome läuft nicht? → POST /browser/start")
 
 
 async def cmd_rotate(alias_name: str = None):
     """Alias rotieren: existierenden löschen + neuen erstellen."""
-    print(f"\n=== GMX Alias Rotation ===")
+    print("\n=== GMX Alias Rotation ===")
     if alias_name:
         print(f"   Target: {alias_name}")
     else:
@@ -107,13 +107,14 @@ async def cmd_rotate(alias_name: str = None):
 
 async def cmd_create(alias_name: str = None):
     """Nur Alias erstellen (ohne Löschen)."""
-    name = alias_name or svc.generate_alias_name() if alias_name else None
-    if not alias_name:
+    if alias_name:
+        name = alias_name
+    else:
         from agent_toolbox.core.gmx_service import GmxService as GmxSvcTemp
         svc_tmp = GmxSvcTemp()
         name = svc_tmp.generate_alias_name()
     
-    print(f"\n=== GMX Alias Create ===")
+    print("\n=== GMX Alias Create ===")
     print(f"   Name: {name}")
     
     svc = GmxService()
@@ -123,7 +124,7 @@ async def cmd_create(alias_name: str = None):
 
 async def cmd_delete():
     """Alias löschen (mit Bestätigung)."""
-    print(f"\n=== GMX Alias Delete ===")
+    print("\n=== GMX Alias Delete ===")
     
     svc = GmxService()
     
@@ -168,14 +169,14 @@ async def cmd_check():
         url = result.get("current_url", "")
         
         if status == "logged_in":
-            print(f"✅ GMX Session ACTIVE")
+            print("✅ GMX Session ACTIVE")
             print(f"   URL: {url[:80]}")
             sid = result.get("sid", "")
             if sid:
                 print(f"   SID: {sid[:20]}...")
         elif status == "not_logged_in":
-            print(f"❌ GMX Session DEAD")
-            print(f"   → Session Recovery nötig!")
+            print("❌ GMX Session DEAD")
+            print("   → Session Recovery nötig!")
         else:
             print(f"⚠️  GMX Status: {status}")
             print(f"   Error: {result.get('error', 'N/A')}")

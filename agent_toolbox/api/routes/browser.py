@@ -12,10 +12,8 @@
 """
 import time
 import logging
-from typing import Dict, Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
 from agent_toolbox.core.browser_manager import get_browser_manager
 from agent_toolbox.api.schemas import (

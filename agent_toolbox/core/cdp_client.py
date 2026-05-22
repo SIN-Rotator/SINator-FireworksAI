@@ -55,7 +55,7 @@ import base64
 import logging
 import websockets
 from typing import Optional, Dict, Any, Callable, List, Tuple
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 

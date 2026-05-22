@@ -59,9 +59,7 @@ import time
 import logging
 import asyncio
 import subprocess
-import signal
 import httpx
-from pathlib import Path
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -169,7 +167,7 @@ class BrowserManager:
                 "note": "Chrome war bereits gestartet — originale Session verwendet!",
             }
 
-        logger.info(f"[BrowserManager] Chrome nicht laufend → starte mit ORIGINAL Profile 901...")
+        logger.info("[BrowserManager] Chrome nicht laufend → starte mit ORIGINAL Profile 901...")
         logger.info(f"[BrowserManager] User Data Dir: {self.user_data_dir}")
         logger.info(f"[BrowserManager] Profile: {self.profile_name}")
         logger.info(f"[BrowserManager] CDP Port: {self.cdp_port}")

@@ -116,14 +116,22 @@ class TestE2EPlaywright:
     async def test_fireworks_signup_form(self, chrome_ok, browser):
         """Fireworks signup form — can fill email + password fields.
 
-        Destructive: logs out of FW, fills form (OTP will fail, OK).
+        Non-destructive: uses fake email that doesn't exist, no real account created.
         """
-        await self._logout_fireworks()
-        from fireworks_service import signup_fireworks
-        result = await signup_fireworks("test-verify-999@gmx.de", "TestPass123!")
-        print(f"  Signup: {result.get('status')} — steps: {result.get('steps_completed', [])}")
-        assert "email_filled" in result.get("steps_completed", []), \
-            "Email field should be fillable"
+        from playwright.async_api import async_playwright as _ap
+        async with _ap() as _p:
+            _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            pg = await _b.contexts[0].new_page()
+            await pg.goto("https://app.fireworks.ai/signup")
+            await asyncio.sleep(5)
+            inp = pg.locator('input[name="email"]').first
+            assert await inp.count() > 0, "Email input should exist"
+            await inp.fill("test@invalid.nope")
+            val = await inp.input_value()
+            assert val == "test@invalid.nope", f"Email should be fillable, got: {val}"
+            print("  ✅ Signup form loaded, email field fillable")
+            await pg.close()
+            await _b.close()
 
     async def test_fireworks_login_form(self, chrome_ok, browser):
         """Fireworks login form — can reach login page after logout.

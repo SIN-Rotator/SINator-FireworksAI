@@ -1,26 +1,29 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║           SINATOR AGENT-TOOLBOX — Rotation Routes (V5 Playwright+CUA)       ║
+║           SINATOR AGENT-TOOLBOX — Rotation Routes (V6 Playwright+CUA)       ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ENDPOINT:                                                                    ║
 ║  POST /rotation/full         → Komplette Account-Rotation (GMX + Fireworks) ║
 ║                                                                              ║
-║  FLOW (V5 — 2026-05-21):                                                     ║
-║  1. GMX Session via CUA E-Mail click                                         ║
+║  FLOW (V6 — 2026-05-22):                                                     ║
+║  0. GMX Login built-in (Playwright, Step 0 in rotate.py)                     ║
+║  1. GMX Session via Playwright + 15s SID Polling + IAC Tab Cleanup           ║
 ║  2. GMX Alias Rotation via Playwright (iframe delete + create)               ║
 ║  3. Fireworks Signup via Playwright + CUA                                    ║
 ║  4. GMX OTP Email via MailCheck Extension + CDP OOPIF                        ║
-║  5. Fireworks Login + Onboarding (Playwright + CUA)                           ║
-║  6. API Key via PopUpButton + menuitem                                       ║
+║  5. Fireworks Login + Onboarding (Playwright + CUA + Playwright-Fallback)    ║
+║  6. API Key via PopUpButton + menuitem (V6: disabled-Wait + DOM-Polling)     ║
 ║  7. Save to pool                                                             ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
-import time, logging, asyncio, re
-from typing import Optional, Dict, Any
+import time
+import logging
+import asyncio
+import re
+from typing import Optional
 
-import httpx
 from fastapi import APIRouter, HTTPException
 
 from agent_toolbox.core.browser_manager import get_browser_manager
@@ -53,7 +56,8 @@ async def _gmx_rotate(alias_name: Optional[str] = None) -> str:
 async def _fireworks_login(email: str, password: str) -> bool:
     """Fireworks Login + Onboarding + API Key via Playwright+CUA.
     Returns True if login successful (account home reached)."""
-    import json, subprocess
+    import json
+    import subprocess
     from playwright.async_api import async_playwright
     
     async with async_playwright() as p:
@@ -123,7 +127,6 @@ async def _fireworks_login(email: str, password: str) -> bool:
 
 async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
     """Create Fireworks API Key via Playwright. Returns fw_ key or None."""
-    import re
     from playwright.async_api import async_playwright
     
     async with async_playwright() as p:
@@ -166,7 +169,7 @@ async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
     """
-    KOMPLETTE Account-Rotation — V5 Playwright+CUA (2026-05-21).
+    KOMPLETTE Account-Rotation — V6 Playwright+CUA (2026-05-22).
 
     Flow:
     1. GMX Alias via Playwright iframe (delete existing + create new)
@@ -175,7 +178,7 @@ async def full_rotation(request: RotationRequest):
     4. Save to pool
     """
     t0 = time.time()
-    cdp_port = _require_browser()
+    _require_browser()
     steps_completed = []
     steps_failed = []
 
@@ -234,7 +237,7 @@ async def full_rotation(request: RotationRequest):
             pool = get_pool_manager()
             pool.add_key(api_key=api_key, alias_email=gmx_alias, key_name=api_key_name)
             steps_completed.append("api_key_saved_to_pool")
-            logger.info(f"✅ Saved to pool")
+            logger.info("✅ Saved to pool")
 
         elapsed = time.time() - t0
         final_status = "success" if api_key else "partial"

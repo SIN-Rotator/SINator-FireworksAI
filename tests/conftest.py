@@ -17,7 +17,6 @@ sys.path.insert(0, _core_dir)
 import pytest
 import pytest_asyncio
 import subprocess
-import json
 import asyncio
 import logging
 

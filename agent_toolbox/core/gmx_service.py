@@ -52,10 +52,9 @@ import logging
 import re
 import asyncio
 import subprocess
-import base64
 import json
 import html as html_module
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
 import httpx
 
@@ -201,21 +200,42 @@ class GmxService:
         logger.info("%d/%d GMX-Cookies via CDP injiziert", injected, len(cookies))
         return injected
 
+    async def _close_iac_tabs(self, client: CDPClient, session_id: str):
+        """Schließt GMX IAC/restart und session-expired Tabs (Antibot)."""
+        try:
+            targets = await client.get_targets()
+            for t in targets:
+                url = t.get("url", "")
+                if "iac" in url or "session-expired" in url or "restart" in url:
+                    logger.warning(f"Schließe IAC-Tab: {url[:60]}")
+                    await client.send("Target.closeTarget", {"targetId": t["targetId"]})
+        except Exception as e:
+            logger.debug(f"IAC cleanup fehlgeschlagen: {e}")
+
     async def _ensure_mail_session(self, client: CDPClient, session_id: str) -> Dict[str, Any]:
         """Stellt sicher, dass eine GMX Mail-Session aktiv ist.
 
-        STRATEGIE (mit Cookie-Injektion):
-        1. Zuerst gespeicherte Cookies injizieren (wiederhergestellte Session)
-        2. Dann zur GMX Homepage navigieren
-        3. Wenn Cookies funktionieren: E-Mail Link führt direkt zu bap.navigator.gmx.net/mail?sid=...
+        STRATEGIE (mit IAC-Cleanup und Cookie-Injektion):
+        0. IAC/Antibot-Tabs schließen (falls GMX Antibot ausgelöst hat)
+        1. Gespeicherte Cookies injizieren (wiederhergestellte Session)
+        2. Immer zur GMX Homepage navigieren (überspringt IAC-Fallen)
+        3. E-Mail Link klicken → bap.navigator.gmx.net/mail?sid=...
         4. Wenn nicht: Session ist abgelaufen → Fehler (manueller Login nötig)
 
         Returns:
             {"success": bool, "current_url": str, "sid": str|None}
         """
-        # ── STEP 0: Gespeicherte Cookies injizieren ─────────────────────────────
+        # ── STEP 0: IAC-Tabs schließen (GMX Antibot) ───────────────────────────
+        await self._close_iac_tabs(client, session_id)
+        await asyncio.sleep(0.5)
+
+        # ── STEP 1: Gespeicherte Cookies injizieren ─────────────────────────────
         await self._inject_saved_cookies(client, session_id)
         await asyncio.sleep(1)
+
+        # ── STEP 2: Immer zur Homepage navigieren ──────────────────────────────
+        await client.navigate(session_id, "https://www.gmx.net/")
+        await asyncio.sleep(3)
 
         url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
         current_url = url_result.get("result", {}).get("value", "")
@@ -238,20 +258,7 @@ class GmxService:
                 await asyncio.sleep(5)
                 return {"success": True, "current_url": settings_url, "sid": sid}
 
-        # Navigate to GMX homepage first (unless already there)
-        # We must be on the homepage for the E-Mail nav click to lead to the
-        # logged-in mailbox (bap.navigator.gmx.net/mail?sid=...).
-        # On subpages (e.g. /magazine/...), the E-Mail link goes to a marketing
-        # page without SID.
-        is_homepage = current_url.rstrip('/') in ["https://www.gmx.net", "https://www.gmx.net/", "http://www.gmx.net", "http://www.gmx.net/"]
-        if not is_homepage:
-            logger.info("Navigiere zu GMX Homepage vor E-Mail Klick")
-            await client.navigate(session_id, "https://www.gmx.net/")
-            await asyncio.sleep(4)
-        else:
-            logger.info("Bereits auf GMX Homepage")
-        
-        # Click E-Mail nav
+        # Click E-Mail nav (we landed on homepage in STEP 2)
         click_result = await client.evaluate(session_id, '''
         (function(){
             const els = Array.from(document.querySelectorAll("a, button, [role=link], nav a"));
@@ -279,24 +286,26 @@ class GmxService:
                 """,
                 return_by_value=True,
             )
-        await asyncio.sleep(5)
 
-        # Extract SID from mail page URL
-        url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-        current_url = url_result.get("result", {}).get("value", "")
+        # Poll for SID in URL (max 15s, check alle 2s)
+        sid = None
+        for attempt in range(8):
+            await asyncio.sleep(2)
+            url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+            current_url = url_result.get("result", {}).get("value", "")
+            sid_match = re.search(r'[?&]sid=([^&]+)', current_url)
+            if sid_match and "navigator.gmx.net" in current_url:
+                sid = sid_match.group(1)
+                logger.info(f"GMX sid extrahiert (attempt {attempt+1}): {sid[:30]}...")
+                break
 
-        sid_match = re.search(r'[?&]sid=([^&]+)', current_url)
-        sid = sid_match.group(1) if sid_match else None
-
-        if sid and "navigator.gmx.net" in current_url:
-            logger.info(f"GMX sid extrahiert: {sid[:30]}...")
-            # Navigate to mail_settings with SID
+        if sid:
             settings_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
             await client.navigate(session_id, settings_url)
             await asyncio.sleep(5)
             return {"success": True, "current_url": settings_url, "sid": sid}
 
-        return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren"}
+        return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren (poll timeout)"}
 
     async def _click_element_by_text_cdp(self, client: CDPClient, session_id: str, text: str) -> bool:
         """
@@ -407,7 +416,8 @@ class GmxService:
         3. CUA click AXButton (Einstellungen für Ihr GMX Postfach) → settings
         4. Settings page shows E-Mail-Adressen section → return True
         """
-        import subprocess, json, re
+        import json
+        import re
 
         try:
             # Step 0: Find GMX page target and navigate to homepage
@@ -426,15 +436,41 @@ class GmxService:
                         break
 
             if not has_gmx_page:
-                logger.error("Keine GMX Page im Browser gefunden")
-                return False
+                logger.warning("Keine GMX Page — injiziere Cookies und navigiere zu GMX")
+                await self._inject_saved_cookies(client, session_id)
+                await client.send_to_session(session_id, "Page.navigate", {"url": "https://www.gmx.net"})
+                await asyncio.sleep(5)
+                # After navigation, re-check targets
+                targets = await client.get_targets()
+                for t in targets:
+                    url = t.get("url", "")
+                    if t.get("type") == "page" and "gmx.net" in url:
+                        has_gmx_page = True
+                        target_id = t["targetId"]
+                        if "sid=" in url:
+                            m = re.search(r'sid=([a-f0-9]{70,})', url)
+                            if m: sid = m.group(1)
+                        break
+                if not has_gmx_page:
+                    logger.error("Auch nach Cookie-Injektion keine GMX Session")
+                    return False
 
             if 'email_addresses' in current_url or 'allEmailAddresses' in current_url:
                 logger.info("Bereits auf E-Mail-Adressen Seite")
                 return True
 
-            # Navigate to GMX homepage (with or without SID)
-            gmx_url = f"https://www.gmx.net/?sid={sid}" if sid else "https://www.gmx.net"
+            # Navigate directly to mail_settings with SID (skip homepage — SPA doesn't show logged-in state via CDP)
+            if sid:
+                gmx_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+            elif current_url and "navigator.gmx.net/mail" in current_url:
+                sid_match = re.search(r'sid=([a-f0-9]{70,})', current_url)
+                if sid_match:
+                    sid = sid_match.group(1)
+                    gmx_url = f"https://bap.navigator.gmx.net/mail_settings?sid={sid}"
+                else:
+                    gmx_url = "https://www.gmx.net/"
+            else:
+                gmx_url = "https://www.gmx.net/"
             await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
             await asyncio.sleep(5)
             # Bring GMX tab to front so CUA can read its window title
@@ -672,7 +708,7 @@ class GmxService:
 
     async def _cua_click_ok_button(self, pid: int, window_id: int) -> bool:
         """Nutzt CUA um den OK-Button im Lösch-Bestätigungsdialog zu klicken."""
-        import subprocess, re
+        import re
         result = subprocess.run(
             ["cua-driver", "call", "get_window_state"],
             input=json.dumps({"pid": pid, "window_id": window_id}),
@@ -904,7 +940,8 @@ class GmxService:
         
         Returns: True bei Erfolg
         """
-        import subprocess, json, re as _re
+        import json
+        import re as _re
         try:
             from playwright.async_api import async_playwright
 
@@ -1024,7 +1061,7 @@ class GmxService:
                     # Click Hinzufügen
                     btn = frame.locator('button:has-text("Hinzufügen")').first
                     await btn.click()
-                    logger.info(f"Playwright: Hinzufügen clicked")
+                    logger.info("Playwright: Hinzufügen clicked")
                     await asyncio.sleep(5)
 
                     # Verify: input cleared = form submitted successfully
@@ -1551,7 +1588,7 @@ class GmxService:
                 await asyncio.sleep(3)
             
 # d/e) Two-step login form: Email + Weiter, then Password + Login
-            logger.info(f"[Flow 0] Step D: Fill email and click Weiter...")
+            logger.info("[Flow 0] Step D: Fill email and click Weiter...")
             
             # Step 1: Fill email and click Weiter
             email_js = """
@@ -2351,7 +2388,7 @@ class GmxService:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-    #  OTP / EMAIL READING (V5 — Extension + CDP OOPIF)
+    #  OTP / EMAIL READING (V6 — Extension + CDP OOPIF)
     # ═══════════════════════════════════════════════════════════════════════════════
 
     async def read_fireworks_verification_email(self) -> Optional[str]:
@@ -2367,7 +2404,8 @@ class GmxService:
         
         Returns: Verify-URL oder None
         """
-        import re, asyncio as _asyncio
+        import re
+        import asyncio as _asyncio
         try:
             from playwright.async_api import async_playwright as _ap
 

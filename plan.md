@@ -91,40 +91,36 @@ rtk test pytest tests/ -v
 
 ---
 
-## 🔴 PRIORITÄT 3 — 3 Fragile Punkte stabilisieren
+## ✅ PRIORITÄT 3 — 3 Fragile Punkte stabilisiert (2026-05-22)
 
-### 3a. GMX Session-Refresh
+### 3a. GMX Session-Refresh — DONE
 
-| Problem | Aktuell | Fix |
-|---------|---------|-----|
-| E-Mail click erwartet `www.gmx.net` | Navigiert zu aktueller Page | `page.goto("https://www.gmx.net")` forced vor click |
-| SID nicht in URL | `'sid=' in _pg.url` prüft nur Substring | Regex `sid=([a-f0-9]+)` + logging |
-| IAC Tab offen | Nur `page.close()` auf `iac` URLs | Auch `iac/restart` und `session-expired` schließen |
+| Änderung | File | Beschreibung |
+|----------|------|-------------|
+| IAC/Antibot-Tabs schließen | `gmx_service.py:204` | Neue `_close_iac_tabs()` — schließt `iac/restart` und `session-expired` Tabs vor Cookie-Injektion |
+| Immer zu Homepage navigieren | `gmx_service.py:229-239` | `_ensure_mail_session()` navigiert IMMER zu `www.gmx.net`, nicht conditional |
+| 15s Polling statt 5s fixed sleep | `gmx_service.py:291-301` | Pollt URL alle 2s max 8 Versuche (16s) auf SID |
+| Direkt zu mail_settings navigieren | `gmx_service.py:464-478` | Wenn SID vorhanden: direkt `bap.navigator.gmx.net/mail_settings?sid=...` statt `www.gmx.net/?sid=...` |
+| Cookie-Injektion bei fehlender GMX Page | `gmx_service.py:438-456` | `_navigate_to_all_email_addresses` injiziert Cookies + navigiert wenn keine GMX Page gefunden |
+| GMX Login in rotate.py Step 0 | `rotate.py:35-71` | Automatischer Playwright-Login bei frischem Chrome-Start |
 
-- [ ] Robust Session-Check + Recovery in `gmx_service.py`
-- [ ] Timeout: 15s max für E-Mail click (nicht 5s)
+### 3b. Use-Case Submit Redirect — DONE
 
-### 3b. Use-Case Submit Redirect
+| Änderung | File | Beschreibung |
+|----------|------|-------------|
+| Polling statt fixed 6s wait | `fireworks_service.py:211-222` | Checkt URL alle 2s max 15s auf Redirect |
+| Fallback `page.goto()` | `fireworks_service.py:219-221` | Bei Timeout: force navigate zu API Keys |
+| Playwright-Onboarding-Fallback | `fireworks_service.py:248-301` | Neue `_fireworks_playwright_onboarding()` — falls CUA nicht funktioniert, füllt Playwright die Formularfelder |
+| Erweiterter URL-Check | `fireworks_service.py:227` | `'home' or 'account' or 'settings'` statt nur `home/account` |
 
-| Problem | Aktuell | Fix |
-|---------|---------|-----|
-| Submit leitet zu `/account/home` statt `/settings` | Erwartet direkt API Keys | Navigate forced: `page.goto("/settings/users/api-keys")` nach Submit |
-| Credits Banner manchmal langsamer | 6s wait | Polling: warte auf API Keys Button (max 30s) |
+### 3c. API Key Dialog Generate — DONE
 
-- [ ] Submit → polling auf API Key URL (statt fixed wait)
-- [ ] Fallback: `page.goto("/settings/users/api-keys")` nach 10s
-
-### 3c. API Key Dialog Generate
-
-| Problem | Aktuell | Fix |
-|---------|---------|-----|
-| Generate Button disabled (Name fehlt) | `inp.fill(key_name)` + sofort Generate | Wait 1s nach fill, prüfe Button `disabled` Attribut |
-| Modal schließt zu früh | `force=True` klickt trotzdem | Wait for `aria-busy="false"` |
-| Key nicht im DOM bei schnellem Content-Read | `page.content()` nach 5s | Poll `body.innerText` alle 1s für 10s max |
-
-- [ ] Wait for disabled → enabled transition
-- [ ] Poll for API Key in DOM (nicht fixed 5s)
-- [ ] Error handling: "Missing API Key Name!" Modal → close + retry
+| Änderung | File | Beschreibung |
+|----------|------|-------------|
+| Wait nach fill | `fireworks_service.py:262` | `await asyncio.sleep(1)` vor Generate |
+| Wait for enabled | `fireworks_service.py:265-279` | Prüft `disabled` Attribut, wartet bis enabled |
+| Poll für Key im DOM | `fireworks_service.py:282-290` | `body.innerText` alle 1s max 10s |
+| Error-Handling "Missing Name" | `fireworks_service.py:296-304` | Erkennt Fehler-Modal, schließt es
 
 ---
 
@@ -151,7 +147,7 @@ rtk test pytest tests/ -v
 | 1 | Dynamische CUA Window-Erkennung | 1h | 🔴 Hoch | ✅ **DONE** |
 | 2 | E2E Regressionstests | 2h | 🟡 Mittel | ✅ **16 Tests, alle pass** |
 | 2b | GMX CUA-Tests in pytest | — | ❌ | ❌ **Nicht testbar** (CUA braucht echten Chrome) |
-| 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | ⏳ |
+| 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | ✅ **DONE** |
 | 4 | gmx-alias-tool API Konsolidierung | 1h | 🟢 Niedrig | ⏳ |
 
 ---
