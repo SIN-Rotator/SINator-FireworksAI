@@ -43,13 +43,13 @@ async def main():
         _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
         _pg = await _b.contexts[0].new_page()
         await _pg.goto("https://www.gmx.net/")
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
         # Cookie banner accept
         try:
             ck = _pg.locator('button:has-text("Accept All")').first
             if await ck.count() > 0:
-                await ck.click(force=True); await asyncio.sleep(2)
+                await ck.click(force=True); await asyncio.sleep(1)
         except: pass
 
         # Check if already logged in (session restored from Chrome profile)
@@ -63,12 +63,12 @@ async def main():
             for _btn in await _pg.locator('button').all():
                 _t = (await _btn.text_content() or "").strip().lower()
                 if _t in ('zum postfach', 'e-mail'):
-                    await _btn.click(force=True); await asyncio.sleep(5); break
+                    await _btn.click(force=True); await asyncio.sleep(3); break
         elif _has_login_btn:
             for _btn in await _pg.locator('button').all():
                 _t = (await _btn.text_content() or "").strip().lower()
                 if _t in ('login', 'anmelden', 'einloggen'):
-                    await _btn.click(force=True); await asyncio.sleep(4); break
+                    await _btn.click(force=True); await asyncio.sleep(3); break
 
             # Email field
             _email = _pg.locator('input[type="email"]').first
@@ -81,7 +81,7 @@ async def main():
                 for _btn in await _pg.locator('button').all():
                     _t = (await _btn.text_content() or "").strip().lower()
                     if _t in ('weiter', 'next', 'continue'):
-                        await _btn.click(force=True); await asyncio.sleep(4); break
+                        await _btn.click(force=True); await asyncio.sleep(2); break
 
                 _pw = _pg.locator('input[type="password"]').first
                 if await _pw.count() > 0:
@@ -90,9 +90,9 @@ async def main():
                     for _btn in await _pg.locator('button').all():
                         _t = (await _btn.text_content() or "").strip().lower()
                         if _t in ('login', 'anmelden', 'einloggen'):
-                            await _btn.click(force=True); await asyncio.sleep(6); break
+                            await _btn.click(force=True); await asyncio.sleep(4); break
 
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
         if "sid=" in _pg.url or "navigator.gmx.net" in _pg.url or "bap.navigator.gmx.net" in _pg.url:
             logger.info("✅ GMX Login erfolgreich")
             import json as _json

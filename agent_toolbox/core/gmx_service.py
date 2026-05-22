@@ -630,7 +630,7 @@ class GmxService:
             else:
                 gmx_url = "https://www.gmx.net/"
             await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
-            await asyncio.sleep(8)
+            await asyncio.sleep(5)
             # Bring GMX tab to front so CUA can read its window title
             if target_id:
                 try:
@@ -686,7 +686,7 @@ class GmxService:
                 if el and el > 0:
                     logger.info(f"CUA click Einstellungen [{el}]")
                     cua_click(el)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
                     trees2 = get_tree()
                     if 'E-Mail-Adressen' in trees2:
                         logger.info("E-Mail-Adressen Seite erreicht!")
@@ -699,7 +699,7 @@ class GmxService:
                 if el and el > 0:
                     logger.info(f"CUA click E-Mail [{el}]")
                     cua_click(el)
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
                 else:
                     logger.warning(f"'E-Mail' AXLink not found in tree")
 
@@ -960,7 +960,7 @@ class GmxService:
 
             # Step 5: CDP click on delete icon
             await self._cdp_click(client, session_id, delete_info['x'], delete_info['y'])
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
             # Step 6: CUA click OK button in dialog
             try:
@@ -971,7 +971,7 @@ class GmxService:
                 if cua_pid and cua_wid:
                     ok_clicked = await self._cua_click_ok_button(cua_pid, cua_wid)
                     if ok_clicked:
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(2)
                         logger.info(f"✅ Alias gelöscht: {alias_text}")
                         return {"status": "success", "deleted": True, "alias": alias_text}
                     else:
@@ -1261,7 +1261,7 @@ class GmxService:
                     btn = frame.locator('button:has-text("Hinzufügen")').first
                     await btn.click(force=True)
                     logger.info("Playwright: Hinzufügen clicked")
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(3)
 
                     # Verify: input cleared = form submitted successfully
                     inp_val = await inp.input_value()
