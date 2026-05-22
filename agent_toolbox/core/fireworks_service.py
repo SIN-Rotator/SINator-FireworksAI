@@ -118,7 +118,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
 async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + CUA onboarding.
     Returns: {status, steps_completed, error}"""
-    import asyncio, json, subprocess
+    import asyncio, json, subprocess, re as _re
     from playwright.async_api import async_playwright
 
     steps = []
