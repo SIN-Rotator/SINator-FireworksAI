@@ -1,5 +1,5 @@
 """
-SINATOR — Fireworks Service V8 (Playwright+CUA + Fallback, 2026-05-22)
+SINATOR — Fireworks Service V6 (Playwright+CUA + Fallback, 2026-05-22)
 
 Lightweight wrapper replacing the 3103-line CDP fireworks_service.py.
 Uses Playwright for form interaction, CUA for React checkboxes.
@@ -84,26 +84,18 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
                         break
                 steps.append("create_clicked")
             
-            # Step 2: Poll for OTP email (max ~120s)
+            # Step 2: Poll for OTP email (max 108s = 18×6s)
             logger.info("Waiting for Fireworks verification email...")
             verify_url = None
             from gmx_service import GmxService
             svc = GmxService()
             
-            for attempt in range(18):
-                await asyncio.sleep(4)
+            for attempt in range(15):
+                await asyncio.sleep(5)
                 verify_url = await svc.read_fireworks_verification_email()
                 if verify_url:
-                    logger.info(f"✅ OTP found via extension (attempt {attempt+1})")
+                    logger.info(f"✅ OTP found (attempt {attempt+1})")
                     break
-                # Fallback: extension missed it — try direct inbox API
-                if attempt >= 5 and attempt % 3 == 0:
-                    logger.info("Extension miss — trying direct inbox API...")
-                    otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=1, retry_delay=3)
-                    if otp_result.get("status") == "success" and otp_result.get("url"):
-                        verify_url = otp_result["url"]
-                        logger.info(f"✅ OTP found via inbox API (attempt {attempt+1})")
-                        break
                 logger.info(f"OTP poll {attempt+1}/18...")
             
             if not verify_url:

@@ -620,9 +620,7 @@ class GmxService:
             # login step). CDP Page.navigate would trigger IAC anti-automation.
             # Just activate the existing GMX target — no navigation needed.
             await asyncio.sleep(2)
-            # Bring GMX tab to front so CUA can read its window title.
-            # CDP Target.activateTarget alone is not enough — Playwright
-            # bring_to_front() ensures the Chrome window is macOS-foreground.
+            # Bring GMX tab to front — CDP + Playwright for macOS foreground
             if target_id:
                 try:
                     await client.send("Target.activateTarget", {"targetId": target_id})
@@ -630,22 +628,21 @@ class GmxService:
                 except Exception:
                     pass
                 try:
-                    from playwright.async_api import async_playwright
-                    async with async_playwright() as _pw:
-                        _br = await _pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                    from playwright.async_api import async_playwright as _pw
+                    async with _pw() as _pww:
+                        _br = await _pww.chromium.connect_over_cdp("http://127.0.0.1:9222")
                         for _pg in _br.contexts[0].pages:
                             if 'gmx' in _pg.url.lower() and 'sid=' in _pg.url:
                                 await _pg.bring_to_front()
                                 await asyncio.sleep(2)
                                 break
-                except Exception as _e:
-                    logger.warning(f"bring_to_front failed: {_e}")
+                except Exception:
+                    pass
 
             # Step 1: Find CUA window (Google Chrome only, avoid iTerm2)
             from cua_helper import find_cua_window
             cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
             if not cua:
-                # Retry once — CUA may need the window to be foregrounded
                 await asyncio.sleep(2)
                 cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
             cua_pid, cua_wid = cua if cua else (None, None)
