@@ -8,6 +8,7 @@
 ║  POST /pool/add          → API-Key zum Pool hinzufügen                      ║
 ║  POST /pool/use          → API-Key als verwendet markieren                  ║
 ║  GET  /pool/key          → Nächsten verfügbaren API-Key (Klartext)          ║
+║  GET  /pool/health       → Validiert alle Keys via Fireworks API            ║
 ║  DELETE /pool/{key_id}   → API-Key aus Pool löschen                         ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -121,6 +122,70 @@ async def get_api_key():
         "api_key": key.get("api_key"),
         "key_id": key.get("id"),
         "alias_email": key.get("alias_email"),
+    }
+
+
+@router.get("/health")
+async def check_pool_health():
+    """
+    Validiert ALLE Pool-Keys via Fireworks API. Markiert gesperrte Keys.
+    Dauert ~2s pro Key (parallele Checks), liest Pool-Datei direkt.
+    """
+    import httpx
+    import asyncio
+    import json
+    from pathlib import Path
+
+    pool_path = Path("data/fireworksai-pool.json")
+    if not pool_path.exists():
+        return {"status": "empty", "healthy": 0, "suspended": 0, "total": 0, "checked": []}
+
+    all_keys = json.loads(pool_path.read_text())
+    if not all_keys:
+        return {"status": "empty", "healthy": 0, "suspended": 0, "total": 0, "checked": []}
+
+    async def check_key(k: dict) -> dict:
+        key_id = k.get("id", "?")
+        api_key = k.get("api_key", "")
+        email = k.get("alias_email", "?")
+        result = {"key_id": key_id, "email": email, "status": "unknown"}
+
+        if not api_key:
+            result["status"] = "no_key"
+            return result
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                r = await client.get(
+                    "https://api.fireworks.ai/inference/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                if r.status_code == 200:
+                    result["status"] = "healthy"
+                elif r.status_code in (401, 402, 403, 412):
+                    result["status"] = "suspended"
+                    # Mark as used in pool
+                    pool_mgr = get_pool_manager()
+                    pool_mgr.mark_used(key_id)
+                    logger.warning(f"Suspended key marked: {email} ({key_id[:8]})")
+                else:
+                    result["status"] = f"error_{r.status_code}"
+        except Exception as e:
+            result["status"] = "error"
+            result["error"] = str(e)[:100]
+
+        return result
+
+    results = await asyncio.gather(*[check_key(k) for k in all_keys])
+    healthy = sum(1 for r in results if r["status"] == "healthy")
+    suspended = sum(1 for r in results if r["status"] == "suspended")
+
+    return {
+        "status": "success",
+        "total": len(results),
+        "healthy": healthy,
+        "suspended": suspended,
+        "checked": results,
     }
 
 
