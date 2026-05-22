@@ -188,9 +188,9 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                                     if m: return int(m.group(1))
                             return None
                         
-                        # Fill names
-                        for name in ["Super", "Cheetah"]:
-                            el = _find_element("Name", "AXTextField")
+                        # Fill names — "First" / "Last" NOT "Name" (avoids Company Name)
+                        for name, target in [("Super", "First"), ("Cheetah", "Last")]:
+                            el = _find_element(target, "AXTextField")
                             if el:
                                 _cua_click(el); await asyncio.sleep(0.3)
                                 _cua_type(name); await asyncio.sleep(0.3)

@@ -61,6 +61,8 @@ page.locator('input[name="password"]').first.fill("Passwort!")
 - Cookie-Banner MUSS vor Form-Suche dismissed werden
 - Onboarding-Reihenfolge: ALLE Felder zuerst → DANN Terms-CB → DANN Continue
 - `text=CREATE` matched Cookie-Banner — spezifischere Selektoren!
+- **CUA-Felder: "First"+"Last" suchen, NICHT "Name"** (matched Company Name zuerst!)
+- **_re import muss in jeder Funktion sein** (nicht nur global)
 
 ### API Key URL
 ```python
