@@ -64,7 +64,25 @@ async def main():
     logger.info("=== Fireworks Account ===")
     from fireworks_service import signup_fireworks, login_fireworks
     
-    # Try signup first (new account)
+    # First: LOGOUT from any existing Fireworks session
+    logger.info("Logout from existing Fireworks session...")
+    async with _ap() as _p2:
+        _b2 = await _p2.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        for _pg in _b2.contexts[0].pages:
+            if 'fireworks' in _pg.url.lower():
+                await _pg.close()
+        # Clear fireworks cookies
+        _cdp = await _b2.contexts[0].new_cdp_session(_b2.contexts[0].pages[0] if _b2.contexts[0].pages else await _b2.contexts[0].new_page())
+        all_cookies = await _cdp.send("Network.getAllCookies")
+        for ck in all_cookies.get('cookies', []):
+            if 'fireworks' in ck.get('domain', ''):
+                try:
+                    await _cdp.send("Network.deleteCookies", {"name": ck['name'], "domain": ck['domain']})
+                except: pass
+        await _cdp.send("Network.clearBrowserCookies")
+        logger.info("Fireworks logout + cookies cleared")
+    
+    # Try signup (new account)
     logger.info("Attempting signup...")
     signup_result = await signup_fireworks(alias, args.password)
     
