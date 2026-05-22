@@ -192,23 +192,29 @@ Latest: cosmic-raven-683 → fw_G93EigYuyQnbeCfNiSCZwy (8 Keys total, ~213s)
 
 ---
 
-## 🚧 V8 — Docs & API Reference (IM DURCHLAUF 2026-05-22)
+## ✅ V8 — Docs & API Reference (DONE 2026-05-22)
 
-### Fokus: README + API Reference aufpolieren
+| Task | Status |
+|------|:------:|
+| README.md neu strukturiert (Quick Start, API Reference, Usage Examples) | ✅ |
+| API Endpoints vollständig dokumentiert (health, browser, gmx, fireworks, cookies, pool, rotation) | ✅ |
+| curl-Beispiele für jeden Endpoint | ✅ |
+| Chrome/CUA/Pool/Env-Dokumentation konsolidiert | ✅ |
 
-| Task | Aufwand | Status |
-|------|:-------:|:------:|
-| README.md neu strukturiert (Quick Start, API Reference, Usage Examples) | 1h | ✅ **DONE** |
-| API Endpoints vollständig dokumentiert (health, browser, gmx, fireworks, cookies, pool, rotation) | - | ✅ |
-| curl-Beispiele für jeden Endpoint | - | ✅ |
-| Chrome/CUA/Pool/Env-Dokumentation konsolidiert | - | ✅ |
+---
 
-### Verbleibend (V8.1)
-| Task | Priorität |
-|------|:---------:|
-| OpenAPI Spec Review + ggf. fehlende Schemas ergänzen | 🟡 Mittel |
-| CLI-Wrapper (`sinator-cli`) bauen | 🟢 Niedrig |
-| Python SDK bauen | 🟢 Niedrig |
+## 📌 PROJECT COMPLETE — Maintenance Mode
+
+**Keine neuen Features mehr.** V7 = letzte geplante Version.  
+Ab jetzt nur noch:
+
+| Aktivität | Beschreibung |
+|-----------|-------------|
+| 🐛 Bugfixes | Wenn was im Live-Betrieb kaputt geht |
+| 🔄 Live Runs | `python tools/rotate.py` — Keys generieren |
+| 📝 AGENTS.md | Learnings aus Live-Runs dokumentieren |
+
+**Status:** Feature-Complete ✅ — 8 Keys, ~213s/Rotation, Self-Healing aktiv.
 
 ---
 
