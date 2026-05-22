@@ -20,13 +20,11 @@
 """
 import time
 import logging
-import asyncio
-from typing import Optional
+import re as _re
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
-from agent_toolbox.core.browser_manager import get_browser_manager
-from agent_toolbox.core.pool_manager import get_pool_manager
 from agent_toolbox.api.schemas import RotationRequest, RotationResponse
 
 logger = logging.getLogger(__name__)
@@ -97,96 +95,67 @@ async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
     """
-    KOMPLETTE Account-Rotation — V8 Playwright+CUA (2026-05-22).
-
-    Flow:
-    1. GMX Alias: Playwright inbox → CUA Einstellungen → JS hidden-nav → New-Tab iframe
-    2. Fireworks Login + Onboarding via fireworks_service
-    3. API Key via fireworks_service.create_api_key()
-    4. Save to pool
+    KOMPLETTE Account-Rotation via tools/rotate.py subprocess.
+    Das ist der einzige getestete und verifizierte Weg.
     """
+    import subprocess, re, json, asyncio
     t0 = time.time()
-    _require_browser()
-    steps_completed = []
-    steps_failed = []
 
-    gmx_alias = None
-    fireworks_account = None
-    api_key = None
-    api_key_name = None
+    args = ["python3", "tools/rotate.py", "--password", request.fireworks_password]
+    if request.new_alias_name:
+        args.append(request.new_alias_name)
+    if not request.save_to_pool:
+        args.append("--no-save")
+
+    logger.info(f"Starting rotation: {' '.join(args)}")
 
     try:
-        # ═══ STEP 1: GMX Alias Rotation ═══
-        logger.info("=== GMX Alias Rotation ===")
-        try:
-            gmx_alias = await _gmx_rotate(request.new_alias_name)
-            steps_completed.append("gmx_alias_rotated")
-            logger.info(f"✅ GMX Alias: {gmx_alias}")
-        except Exception as e:
-            steps_failed.append("gmx_alias_rotation_failed")
-            return RotationResponse(
-                status="failed", gmx_alias=None, fireworks_account=None,
-                api_key=None, api_key_name=None,
-                steps_completed=steps_completed, steps_failed=steps_failed,
-                execution_time=f"{time.time()-t0:.2f}s", error=str(e),
-            )
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(Path(__file__).parent.parent.parent.parent),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=360)
+        output = stdout.decode()
 
-        fireworks_account = gmx_alias
+        # Parse output for API key and alias
+        api_key_match = re.search(r'API Key:\s+(fw_\S+)', output)
+        alias_match = re.search(r'Alias:\s+(\S+@gmx\.\w+)', output)
+
+        gmx_alias = alias_match.group(1) if alias_match else None
+        api_key = api_key_match.group(1) if api_key_match else None
         api_key_name = gmx_alias.split("@")[0].split("-")[0] if gmx_alias else "key"
+        success = "ROTATION COMPLETE" in output
 
-        # ═══ STEP 2: Fireworks Login + Onboarding ═══
-        logger.info(f"=== Fireworks Login ({gmx_alias}) ===")
-        try:
-            logged_in = await _fireworks_login(gmx_alias, request.fireworks_password)
-            if logged_in:
-                steps_completed.append("fireworks_login")
-                logger.info("✅ Fireworks login OK")
-            else:
-                steps_failed.append("fireworks_login_failed")
-        except Exception as e:
-            logger.warning(f"⚠️ Fireworks login error: {e}")
-            steps_failed.append("fireworks_login_error")
-
-        # ═══ STEP 3: API Key ═══
-        logger.info("=== API Key Creation ===")
-        try:
-            api_key = await _fireworks_api_key(api_key_name)
-            if api_key:
-                steps_completed.append("api_key_created")
-                logger.info(f"✅ API Key: {api_key[:12]}...")
-            else:
-                steps_failed.append("api_key_creation_failed")
-        except Exception as e:
-            logger.warning(f"⚠️ API Key error: {e}")
-            steps_failed.append("api_key_error")
-
-        # ═══ STEP 4: Save to Pool ═══
-        if request.save_to_pool and api_key:
-            pool = get_pool_manager()
-            pool.add_key(api_key=api_key, alias_email=gmx_alias, key_name=api_key_name)
-            steps_completed.append("api_key_saved_to_pool")
-            logger.info("✅ Saved to pool")
-
-        elapsed = time.time() - t0
-        final_status = "success" if api_key else "partial"
-
+        if success and gmx_alias:
+            return RotationResponse(
+                status="success",
+                gmx_alias=gmx_alias,
+                fireworks_account=gmx_alias,
+                api_key=api_key,
+                api_key_name=api_key_name,
+                steps_completed=["rotation_complete"],
+                steps_failed=[],
+                execution_time=f"{time.time() - t0:.2f}s",
+            )
+        else:
+            error = stderr.decode()[:200] if stderr else output[-200:]
+            return RotationResponse(
+                status="failed",
+                gmx_alias=gmx_alias,
+                error=f"rotate.py failed: {error}",
+                steps_completed=[],
+                steps_failed=["rotation_failed"],
+                execution_time=f"{time.time() - t0:.2f}s",
+            )
+    except asyncio.TimeoutError:
         return RotationResponse(
-            status=final_status,
-            gmx_alias=gmx_alias,
-            fireworks_account=fireworks_account,
-            api_key=api_key,
-            api_key_name=api_key_name,
-            steps_completed=steps_completed,
-            steps_failed=steps_failed,
-            execution_time=f"{elapsed:.2f}s",
+            status="failed",
+            error="Rotation timeout (>360s)",
+            steps_completed=[], steps_failed=["timeout"],
+            execution_time=f"{time.time() - t0:.2f}s",
         )
 
-    except Exception as e:
-        elapsed = time.time() - t0
-        logger.error(f"Rotation failed: {e}")
-        return RotationResponse(
-            status="error", gmx_alias=gmx_alias, fireworks_account=fireworks_account,
-            api_key=api_key, api_key_name=api_key_name,
-            steps_completed=steps_completed, steps_failed=steps_failed,
-            execution_time=f"{elapsed:.2f}s", error=str(e),
-        )
+
+# Legacy helpers kept for compatibility
