@@ -99,17 +99,23 @@ class GmxService:
     #  CDP CONNECTION
     # ═══════════════════════════════════════════════════════════════════════════════
 
-    async def _connect_to_browser(self, cdp_port: int) -> Tuple[CDPClient, str, str]:
+    async def _connect_to_browser(self, cdp_port: int, url_filter: str = "") -> Tuple[CDPClient, str, str]:
         """Erstellt eine CDP-Verbindung zum laufenden Browser."""
         ws_url = await get_browser_ws_endpoint(cdp_port)
         client = CDPClient(ws_url)
         await client.connect()
-        target = await get_page_target(client)
+        # Prefer GMX targets so CUA can find the window
+        target = await get_page_target(client, url_filter or "gmx.net")
+        if not target:
+            target = await get_page_target(client)
         if not target:
             await client.disconnect()
             raise RuntimeError("Kein Page-Target im Browser gefunden")
         target_id = target["targetId"]
         session_id = await client.attach_to_target(target_id)
+        # Bring target tab to front so CUA/MacOS AX can see the window title
+        await client.send("Target.activateTarget", {"targetId": target_id})
+        await asyncio.sleep(1)
         await client.send_to_session(session_id, "Page.enable")
         await client.send_to_session(session_id, "Runtime.enable")
         logger.info(f"CDP Session bereit: target={target_id[:15]}...")
@@ -391,7 +397,7 @@ class GmxService:
         })
         return True
 
-    async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str) -> bool:
+    async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str, target_id: str = "") -> bool:
         """
         Navigiert zur GMX E-Mail-Adressen Seite via CUA Klicks.
 
@@ -404,31 +410,40 @@ class GmxService:
         import subprocess, json, re
 
         try:
-            # Step 0: Navigate to GMX homepage via CDP
+            # Step 0: Find GMX page target and navigate to homepage
             targets = await client.get_targets()
             current_url = ""
             sid = None
+            has_gmx_page = False
             for t in targets:
                 url = t.get("url", "")
-                if t.get("type") == "page" and "gmx.net" in url and ("sid=" in url or "jsessionid=" in url or "allEmailAddresses" in url):
-                    current_url = url
-                    m = re.search(r'(?:sid=([a-f0-9]{70,})|jsessionid=([A-F0-9]{30,}))', url)
-                    if m: sid = m.group(1) or m.group(2)
-                    break
+                if t.get("type") == "page" and "gmx.net" in url:
+                    has_gmx_page = True
+                    if "sid=" in url or "jsessionid=" in url or "allEmailAddresses" in url:
+                        current_url = url
+                        m = re.search(r'(?:sid=([a-f0-9]{70,})|jsessionid=([A-F0-9]{30,}))', url)
+                        if m: sid = m.group(1) or m.group(2)
+                        break
 
-            if not sid:
-                logger.error("Kein SID in Target-URL gefunden")
+            if not has_gmx_page:
+                logger.error("Keine GMX Page im Browser gefunden")
                 return False
 
             if 'email_addresses' in current_url or 'allEmailAddresses' in current_url:
                 logger.info("Bereits auf E-Mail-Adressen Seite")
                 return True
 
-            # If already on inbox, don't re-navigate — just CUA from here
-            if 'bap.navigator' not in current_url and 'mail_settings' not in current_url:
-                gmx_url = f"https://www.gmx.net/?sid={sid}" if sid != "jsession_ok" else "https://www.gmx.net"
-                await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
-                await asyncio.sleep(5)
+            # Navigate to GMX homepage (with or without SID)
+            gmx_url = f"https://www.gmx.net/?sid={sid}" if sid else "https://www.gmx.net"
+            await client.send_to_session(session_id, "Page.navigate", {"url": gmx_url})
+            await asyncio.sleep(5)
+            # Bring GMX tab to front so CUA can read its window title
+            if target_id:
+                try:
+                    await client.send("Target.activateTarget", {"targetId": target_id})
+                    await asyncio.sleep(1)
+                except Exception:
+                    pass
 
             # Step 1: Find CUA window (Google Chrome only, avoid iTerm2)
             from cua_helper import find_cua_window
@@ -1124,10 +1139,10 @@ class GmxService:
 
         client = None
         try:
-            client, session_id, _ = await self._connect_to_browser(cdp_port)
+            client, session_id, target_id = await self._connect_to_browser(cdp_port)
 
             # --- STEP 1: Navigate to allEmailAddresses ---
-            nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
+            nav_ok = await self._navigate_to_all_email_addresses(client, session_id, target_id)
             if not nav_ok:
                 steps_failed.append("navigation")
                 return {
