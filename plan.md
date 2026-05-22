@@ -144,25 +144,30 @@ rtk test pytest tests/ -v
 
 ---
 
-## 🎯 V6 Nächste Tasks
+## 🎯 V7 — Self-Healing & Robustheit (PLANNED)
 
 | Prio | Task | Aufwand | Impact | Status |
 |:----:|------|:-------:|:------:|:------:|
-| 1 | Dynamische CUA Window-Erkennung | 1h | 🔴 Hoch | ✅ **DONE** |
-| 2 | E2E Regressionstests | 2h | 🟡 Mittel | ✅ **16 Tests, alle pass** |
-| 2b | GMX CUA-Tests in pytest | — | ❌ | ❌ **Nicht testbar** (CUA braucht echten Chrome) |
-| 3 | 3 Fragile Punkte stabilisieren | 3h | 🔴 Hoch | ✅ **DONE** |
-| 4 | gmx-alias-tool API Konsolidierung | 1h | 🟢 Niedrig | ✅ **DONE** |
-| 5 | Rate-Limiting / Anti-Bot Schutz | 3h | 🔴 Hoch | ✅ **DONE** |
+| 1 | Rate-Limit Circuit Breaker verbessern | 2h | 🔴 Hoch | ⏳ **EXISTIERT, WIRD ERWEITERT** |
+| 2 | OTP Timeout Recovery | 2h | 🔴 Hoch | 📝 **GEPLANT** |
+| 3 | API Key "Missing Name" Auto-Retry | 1h | 🟡 Mittel | 📝 **GEPLANT** |
+
+### Current E2E Status (2026-05-22)
+```
+GMX Login (5s) → Alias Rotation (55s) → FW Signup (30s+OTP) → Login → Onboarding → API Key → Pool
+Latest: alpha-lion-808 → fw_XUNpNqcWyRcJjuvmZK3dS9 (6 Keys total, 204s)
+```
 
 ---
 
-## 🚀 V7 — Rate-Limiting / Anti-Bot Protection (DONE)
+## 🚀 V7.1 — Rate-Limiting Circuit Breaker (EXISTIERT, WIRD ERWEITERT)
+
+### Status: ⏳ Bereits implementiert in V6, aber verbesserungswürdig
 
 ### Problem
-GMX blockiert bei zu vielen Anfragen mit IAC/restart, `ERR_BLOCKED_BY_RESPONSE`, oder Session-Expired. Es gab keine Erkennung — stale Cookies wurden immer wieder injiziert, was den Fehler perpetuierte.
+GMX blockiert bei zu vielen Anfragen mit IAC/restart, `ERR_BLOCKED_BY_RESPONSE`, oder Session-Expired. Aktuell nur Text-basierte Erkennung in URL + Body.
 
-### Lösung (5 Komponenten)
+### Bereits implementiert (V6)
 
 | # | Komponente | File | Beschreibung |
 |---|-----------|------|-------------|
@@ -170,22 +175,217 @@ GMX blockiert bei zu vielen Anfragen mit IAC/restart, `ERR_BLOCKED_BY_RESPONSE`,
 | 2 | `_track_rate_limit()` | `gmx_service.py:86` | Circuit Breaker: 3 Hits in 5min → 120s Cooloff |
 | 3 | `_purge_gmx_cookies()` | `gmx_service.py:104` | Löscht stale Cookies von Disk + Chrome vor Recovery |
 | 4 | `_gmx_throttle()` | `gmx_service.py:97` | Proaktive 3s-Verzögerung + Jitter zwischen GMX-Ops |
-| 5 | `_rate_limit_safe_call()` | `gmx_service.py:117` | Retry-Wrapper: erkennt Rate-Limit, purgt, retryt (max 2x) |
+| 5 | `_rate_limit_safe_call()` | `gmx_service.py:117` | Retry-Wrapper: erkennt Rate-Limit, purgt, retryt (max 2×) |
+
+### Geplante Verbesserungen
+
+#### 1a. HTTP Status-Code Parsing (`gmx_service.py`)
+**Aktuell:** Nur Text-Scan von URL + Body (z.B. sucht nach `"429"` im Text).  
+**Ziel:** CDP `Network.responseReceived` Events abhören für echte HTTP-Status-Codes:
+```python
+# Neue Methode: _check_http_status_codes(client, session_id)
+# Parst Network.responseReceived Events aus CDP-Log
+# Erkennt 429/413/503 direkt aus HTTP-Response-Headern
+async def _check_http_status_codes(client, session_id):
+    events = await client.send_to_session(session_id, "Network.getResponseBody", ...)
+    # Prüfe responses auf 429/413/503/502
+    for response in events:
+        if response['status'] in (429, 413, 503, 502):
+            _track_rate_limit(True)
+            return True
+    return False
+```
+
+#### 1b. Exponentielles Backoff (`gmx_service.py`)
+**Aktuell:** Fester 120s Cooloff nach 3 Hits.  
+**Ziel:** Dynamisches Backoff: 30s → 60s → 120s → 300s:
+```python
+# _BACKOFF_STAGES = [30, 60, 120, 300]
+# Nach jedem Cooloff-Ablauf ohne Erfolg → nächste Stufe
+# Reset nach erfolgreicher Operation (kein Rate-Limit für >10min)
+```
+
+#### 1c. Warm-up nach Cooloff (`gmx_service.py`)
+**Aktuell:** Nach Cooloff direkt wieder volle Operation (delete+create).  
+**Ziel:** Readonly-Operation zuerst (Session-Check), dann erst delete+create:
+```python
+# Nach Cooloff:
+# 1. _ensure_mail_session() — nur readonly
+# 2. Wenn OK → _navigate_to_all_email_addresses() — readonly
+# 3. Wenn OK → delete + create
+# Bei erneutem Rate-Limit in Step 1/2 → erneuter Cooloff + höhere Stufe
+```
 
 ### Integration
+| Funktion | Neu | Beschreibung |
+|----------|-----|-------------|
+| `rotate_alias()` | HTTP-Status-Check nach jeder Navigation | Zusätzlich zu Text-basiertem Check |
+| `_ensure_mail_session()` | Exponential-Backoff-Logik | Statt fixem 120s Cooloff |
+| `rotate_alias()` | Warm-up-Phase nach Cooloff | Readonly vor Mutation |
 
-| Funktion | Integration | Verhalten |
-|----------|-----------|----------|
-| `_ensure_mail_session()` | Rate-Limit-Check nach Navigation + während SID-Polling | Bei Hit → sofort return mit `error: "rate_limited:..."` |
-| `_navigate_to_all_email_addresses()` | Rate-Limit-Check nach Cookie-Injection + Navigation | Bei Hit → purge + return False (triggert Retry) |
-| `rotate_alias()` | Cooloff-Check am Start + `_gmx_throttle(2)` vor Nav + `_gmx_throttle(4)` zwischen Delete/Create | Automatische Verlangsamung bei Wiederholungen |
-
-### Files geändert
-- `agent_toolbox/core/gmx_service.py` — Rate-Limit-Logik + Integration in 3 Schlüsselfunktionen
+### Files
+- `agent_toolbox/core/gmx_service.py` — Erweiterung der Rate-Limit-Logik
 
 ---
 
-## 🚀 Quick Start (V6)
+## 🚀 V7.2 — OTP Timeout Recovery (GEPLANT)
+
+### Status: 📝 Noch nicht implementiert
+
+### Problem
+Fireworks Verification-Email kann 2-5 Minuten brauchen. Aktuell nur 12×6s = 72s Polling — zu knapp. Bei Timeout wird `"otp_not_found"` returned, aber:
+- GMX Session könnte abgelaufen sein (SID stale)
+- MailCheck Extension-Popup könnte geschlossen/stale sein
+- CDP-Targets könnten veraltet sein
+
+### Lösung: 3-Ebenen Recovery-System
+
+```python
+async def _otp_with_recovery(svc, max_attempts=30):
+    """OTP Polling mit 3-Ebenen Recovery. Max 30×6s = 180s."""
+    for attempt in range(max_attempts):
+        url = await svc.read_fireworks_verification_email()
+        if url:
+            return url
+
+        # Recovery-Ebenen — alle 6 Versuche (36s)
+        if attempt > 0 and attempt % 6 == 0:
+            level = attempt // 6  # 1, 2, 3, 4, 5
+
+            # Level 1: GMX Session auffrischen
+            if level >= 1:
+                logger.warning(f"OTP-Level-1: Session Refresh (attempt {attempt})")
+                await svc.ensure_gmx_session(...)
+                # Navigate to inbox with fresh SID
+
+            # Level 2: Extension-Popup neu öffnen
+            if level >= 2:
+                logger.warning(f"OTP-Level-2: Extension neu öffnen (attempt {attempt})")
+                # CDP: Target.createTarget für mail-panel.html
+                # Falls schon offen: schließen + neu öffnen
+                await svc._reopen_mailcheck_extension(...)
+
+            # Level 3: CDP Reconnect
+            if level >= 3:
+                logger.warning(f"OTP-Level-3: CDP Reconnect (attempt {attempt})")
+                # CDP disconnect + reconnect
+                # Targets neu scannen
+                # Extension neu attachen
+                await svc._reconnect_cdp(...)
+
+        await asyncio.sleep(6)
+
+    # Nach 180s: letzter Recovery-Versuch
+    return None
+```
+
+### Integration
+| Funktion | Änderung | Beschreibung |
+|----------|----------|-------------|
+| `signup_fireworks()` | OTP-Poll von 12×6s → 30×6s mit Recovery-Logik | Ersetzt einfache for-Schleife |
+| `gmx_service.py` | Neue `_reopen_mailcheck_extension()` | Schließt + öffnet Extension-Popup via CDP Target |
+| `gmx_service.py` | Neue `_reconnect_cdp()` | CDP disconnect/reconnect + Target-Rescan |
+| `gmx_service.py` | `_ensure_gmx_session()` | Wiederverwendbar für Level-1 Recovery |
+
+### Files
+- `agent_toolbox/core/fireworks_service.py` — OTP-Polling mit Recovery
+- `agent_toolbox/core/gmx_service.py` — Neue Helper für Extension/CDP-Recovery
+
+---
+
+## 🚀 V7.3 — API Key "Missing Name" Auto-Retry (GEPLANT)
+
+### Status: 📝 Teilweise implementiert (erkennt Modal, schließt es, gibt aber auf)
+
+### Problem
+Aktueller Code (`fireworks_service.py:401-409`):
+```python
+# Erkennt "Missing Name" Modal, schließt es, gibt dann auf:
+if 'Missing' in body and 'Name' in body:
+    for btn in await pg.locator('button').all():
+        if (await btn.text_content() or '').strip() in ['Close', 'Cancel', 'OK', '×']:
+            await btn.click(force=True); await asyncio.sleep(1)
+            break
+return {"status": "error", ...}  # ← gibt einfach auf!
+```
+
+### Lösung: Vollständiger Retry-Zyklus
+
+```python
+async def _create_api_key_with_retry(pg, key_name, max_retries=3):
+    """Create API Key mit Modal-Erkennung + Auto-Retry."""
+    
+    for retry in range(max_retries):
+        # 1. Generate klicken
+        for btn in await pg.locator('button').all():
+            if 'Generate' == (await btn.text_content() or '').strip():
+                if not await btn.is_disabled():
+                    await btn.click(force=True)
+                    break
+
+        # 2. Key pollen (10s)
+        for _ in range(10):
+            await asyncio.sleep(1)
+            text = await pg.evaluate("() => document.body.innerText")
+            keys = re.findall(r'fw_[a-zA-Z0-9]{20,}', text)
+            if keys:
+                return {"status": "success", "api_key": keys[0]}
+
+        # 3. "Missing Name" Modal erkennen + schließen
+        body = await pg.evaluate("() => document.body.innerText")
+        if 'Missing' in body and 'Name' in body:
+            logger.warning(f"Missing Name Modal — schließen (retry {retry+1})")
+            for btn in await pg.locator('button').all():
+                txt = (await btn.text_content() or '').strip()
+                if txt in ['Close', 'Cancel', 'OK', '×']:
+                    await btn.click(force=True)
+                    await asyncio.sleep(1)
+                    break
+
+            # 4. Input neu füllen (mit Suffix für Eindeutigkeit)
+            suffix = f"-{retry}" if retry > 0 else ""
+            for inp in await pg.locator('input').all():
+                if 'name' in (await inp.get_attribute('name') or '').lower():
+                    await inp.fill(key_name + suffix)
+                    await asyncio.sleep(1)
+                    break
+
+            # 5. Warten bis Generate enabled ist
+            for _ in range(5):
+                generate_btn = None
+                for btn in await pg.locator('button').all():
+                    if 'Generate' == (await btn.text_content() or '').strip():
+                        generate_btn = btn
+                        break
+                if generate_btn and not await generate_btn.is_disabled():
+                    break
+                await asyncio.sleep(1)
+        else:
+            # Anderer Fehler — abbrechen
+            break
+
+    return {"status": "error", "error": "API Key not found after retry"}
+```
+
+### Retry-Strategie
+| Retry | Key-Name | Aktion |
+|:-----:|----------|--------|
+| 0 | `sinator-key` | Normaler Generate-Versuch |
+| 1 | `sinator-key-1` | Modal Close → Input neu füllen → Generate |
+| 2 | `sinator-key-2` | Nochmal mit anderem Suffix |
+
+### Integration
+| Funktion | Änderung |
+|----------|----------|
+| `create_api_key()` | Ersetzt einfaches Polling durch `_create_api_key_with_retry()` |
+| `create_api_key()` | Modal-Handling + Input-Retry inkludiert |
+
+### Files
+- `agent_toolbox/core/fireworks_service.py` — `_create_api_key_with_retry()` + `create_api_key()` Refactor
+
+---
+
+## 🚀 Quick Start (V7)
 
 ```bash
 # Chrome mit Profile 901 (OHNE accessibility!)
