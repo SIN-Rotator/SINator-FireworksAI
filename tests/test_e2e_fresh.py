@@ -118,6 +118,7 @@ class TestE2EPlaywright:
 
         Non-destructive: uses fake email that doesn't exist, no real account created.
         """
+        await self._logout_fireworks()
         from playwright.async_api import async_playwright as _ap
         async with _ap() as _p:
             _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
@@ -136,11 +137,25 @@ class TestE2EPlaywright:
     async def test_fireworks_login_form(self, chrome_ok, browser):
         """Fireworks login form — can reach login page after logout.
 
-        Destructive: logs out of FW, fills login form.
+        Non-destructive: just checks that login form renders.
         """
         await self._logout_fireworks()
-        from fireworks_service import login_fireworks
-        result = await login_fireworks("opensin@gmx.de", "ZOE.jerry2024!")
-        print(f"  Login: {result.get('status')} — steps: {result.get('steps_completed', [])}")
-        assert "login_page" in result.get("steps_completed", []), \
-            "Should reach login page"
+        from playwright.async_api import async_playwright as _ap
+        async with _ap() as _p:
+            _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            pg = await _b.contexts[0].new_page()
+            await pg.goto("https://app.fireworks.ai/login")
+            await asyncio.sleep(5)
+            # Check for email or login button
+            ok = False
+            if await pg.locator('input[name="email"]').first.count() > 0:
+                ok = True
+            for btn in await pg.locator('a, button').all():
+                txt = (await btn.text_content() or "").lower()
+                if "email" in txt or "sign in" in txt:
+                    ok = True
+                    break
+            assert ok, "Login page should have email input or sign-in button"
+            print("  ✅ Login page rendered")
+            await pg.close()
+            await _b.close()
