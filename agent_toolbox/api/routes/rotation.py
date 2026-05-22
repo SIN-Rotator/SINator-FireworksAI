@@ -62,6 +62,8 @@ async def _gmx_rotate_fallback(alias_name: Optional[str] = None) -> str:
     """Fallback: direkt via GmxService (Playwright iframe)."""
     from agent_toolbox.core.gmx_service import GmxService
     svc = GmxService()
+    # Ensure GMX session before rotation (API route skips rotate.py login)
+    await svc.ensure_gmx_session()
     result = await svc.rotate_alias(new_alias_name=alias_name, cdp_port=9222)
     if result.get('status') == 'success':
         return result.get('created_alias')
