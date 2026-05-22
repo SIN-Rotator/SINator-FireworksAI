@@ -1,35 +1,37 @@
-# BUILDING PLAN — SINator Fireworks AI V5 ✅ / V6 🚧 (2026-05-22)
+# BUILDING PLAN — SINator Fireworks AI V8 ✅ (2026-05-22)
 
-## ✅ V5 Status: COMPLETE FLOW VERIFIED
+## ✅ V8 Status: COMPLETE
 
 ```
-GMX Login → Rotation (19.8s) → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key → Pool
-Latest: omega-condor-654 → fw_GEB2TRxTFzcFNweZwMuq5b
+GMX Login → Rotation (~63s) → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key → Pool
+Latest: pulse-jaguar-899 → fw_6rWU4KGUPts6zVnaRreu6R (30 Keys, ~209s avg)
 ```
 
 | Flow | Name | Status | Tool |
 |------|------|:---:|------|
-| #0 | GMX Session | ✅ | Playwright "E-Mail" click → SID |
-| #1 | GMX Alias Delete | ✅ | Playwright iframe hover+click + CUA OK |
-| #1 | GMX Alias Create | ✅ | Playwright iframe fill+click, verify empty |
+| #0 | GMX Session | ✅ | Playwright "Zum Postfach" click → SID |
+| #1 | GMX Alias Delete | ✅ | New-Tab allEmailAddresses URL → hover+click+OK |
+| #1 | GMX Alias Create | ✅ | New-Tab allEmailAddresses URL → fill+click, verify empty |
 | #2 | Fireworks Signup | ✅ | Playwright + CUA: email→pw→Create→OTP→Verify |
 | #3 | Fireworks Login | ✅ | Playwright form `a:has-text("Email Login")` + CUA onboarding |
 | #4 | Onboarding | ✅ | CUA: "First"+"Last" type_text + Terms AXPress |
 | #5 | Use-Case + $5 | ✅ | CUA dynamic scan text-based checkboxes |
 | #6 | API Key | ✅ | PopUpButton force-click + menuitem + Generate |
-| #7 | Pool | ✅ | Auto-save (5 keys total, 4 available) |
+| #7 | Pool | ✅ | Auto-save (30 keys total, 29 available) |
 
-## ✅ V5 Completed Milestones
+## ✅ V5-V8 Completed Milestones
 
 | # | Task | Ergebnis |
 |---|------|----------|
-| 1 | Full-Flow Automation | `rotation.py` V5 — Playwright+CUA hybrid |
-| 2 | API-Key Pool | 5 Keys (4 available), auto-save |
+| 1 | Full-Flow Automation | `rotation.py` V8 — Playwright+CUA+CDP hybrid |
+| 2 | API-Key Pool | 30 Keys (29 available), auto-save |
 | 3 | fireworks_service.py | 3103→114 Zeilen (-96%), V5 Playwright+CUA |
 | 4 | Cleanup | Obsolete files gelöscht (preflight.py, command_registry.json, etc.) |
 | 5 | Single Command | `python tools/rotate.py` — E2E in einem Befehl |
 | 6 | Dynamic CUA Scanning | Text-based `_find_element()` — keine Hardcoded-Indizes |
 | 7 | Chrome Config | NON-accessibility mode: `--profile-directory="Profile 901"`, Port 9222 |
+| 8 | V7 Self-Healing | Rate-Limit Backoff, OOPIF Polling, API Key Retry |
+| 9 | V8 GMX Nav Fix | Playwright inbox goto + CUA Einstellungen + JS hidden-nav + New-Tab iframe |
 
 ---
 
@@ -154,8 +156,8 @@ rtk test pytest tests/ -v
 
 ### Current E2E Status (2026-05-22)
 ```
-GMX Login (built-in) → Alias Rotation (~50s) → FW Signup → OTP → Login → Onboarding → API Key → Pool
-Latest: cosmic-raven-683 → fw_G93EigYuyQnbeCfNiSCZwy (8 Keys total, ~213s)
+GMX Login (built-in) → Alias Rotation (~63s) → FW Signup → OTP → Login → Onboarding → API Key → Pool
+Latest: pulse-jaguar-899 → fw_6rWU4KGUPts6zVnaRreu6R (30 Keys total, ~209s avg)
 ```
 
 ### V7.1 — Rate-Limit Circuit Breaker (DONE)
@@ -190,6 +192,24 @@ Latest: cosmic-raven-683 → fw_G93EigYuyQnbeCfNiSCZwy (8 Keys total, ~213s)
 - Input-Selector fallback Chain: `name="localPart"` → `placeholder="ihr-name"` → `input[type="text"]`
 - `Hinzufügen` Button: `force=True` für gecoverte Elemente (Form-Submit in Wicket-Iframe)
 
+### V7.4 — GMX Nav Fix: New-Tab Iframe-Approach (DONE 2026-05-22)
+
+**Problem:** GMX routete direkte `/email_addresses?sid=...` Navigation nach `/mail_settings/mail` um. CDP `Page.navigate` triggerte IAC. allEmailAddresses iframe lag außerhalb des Viewports (`rect=(-2400, -1742)`) — Playwright konnte nicht mit vertrauenswürdigen Events interagieren.
+
+**Lösung:**
+1. Playwright `goto("/mail?sid=...")` zum Posteingang (vermeidet CDP-IAC)
+2. CUA klickt "Einstellungen" AXButton (nur auf `/mail` sichtbar, nicht auf `/mail_settings/mail`)
+3. JS evaluate klickt versteckten nav-menu Button ("Wunsch-Mail / Persönliche Mail-Adressen")
+4. `_get_iframe_url()` extrahiert die allEmailAddresses iframe-URL mit 6×3s Retry
+5. Neue Playwright-Tab mit iframe-URL als Top-Level-Dokument — normales `fill()`/`click()` funktioniert
+
+**Betroffene Files:**
+- `_navigate_to_all_email_addresses`: CDP nav entfernt → Playwright goto + CUA + JS nav-click + Polling
+- `_get_iframe_url`: Neue Helper-Methode
+- `_delete_alias_via_playwright`: Iframe-Operation → New-Tab-Operation
+- `_create_alias_via_playwright`: Gleiche New-Tab-Strategie
+- `rotate_alias` inline delete: Nutzt `_get_iframe_url` + new-tab
+
 ---
 
 ## ✅ V8 — Docs & API Reference (DONE 2026-05-22)
@@ -214,11 +234,11 @@ Ab jetzt nur noch:
 | 🔄 Live Runs | `python tools/rotate.py` — Keys generieren |
 | 📝 AGENTS.md | Learnings aus Live-Runs dokumentieren |
 
-**Status:** Feature-Complete ✅ — 8 Keys, ~213s/Rotation, Self-Healing aktiv.
+**Status:** Feature-Complete ✅ — 30 Keys, ~209s/Rotation, Self-Healing aktiv.
 
 ---
 
-## 🚀 Quick Start (V7)
+## 🚀 Quick Start (V8)
 
 ```bash
 # Chrome mit Profile 901 (OHNE accessibility!)

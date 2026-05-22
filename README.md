@@ -41,10 +41,9 @@ Step 2:  Fireworks Signup (Playwright + CDP)            → Account created
 Step 3:  OTP Polling (GMX MailCheck Extension + CDP)    → Verify URL extracted
 Step 4:  Verify + Login + Onboarding (CUA+Playwright)   → Dashboard reached
 Step 5:  API Key Creation (Playwright PopUpButton)      → fw_G93EigYuyQnbeCfNiSCZwy
-Step 6:  Save to Pool                                   → 8 keys total
-```
+Step 6:  Save to Pool                                   → 30 keys total
 
-**Pool:** 8 API Keys (7 available, 1 used)  
+**Pool:** 30 API Keys (29 available, 1 used)
 **Latest Key:** `cosmic-raven-683` → `fw_G93EigYuyQnbeCfNiSCZwy`
 
 ---
@@ -328,4 +327,4 @@ CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-
 
 ---
 
-*V7 — 2026-05-22 | 8 API Keys | ~213s per rotation*
+*V8 — 2026-05-22 | 30 API Keys | ~209s per rotation*
