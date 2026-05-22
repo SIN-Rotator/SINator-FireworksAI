@@ -1,220 +1,212 @@
-# SINator-FireworksAI — Agent Toolbox
+# SINator — Fireworks AI Account Rotator
 
-**Purpose:** Automated GMX email alias rotation → Fireworks AI account registration → API key pool management.
+Automated GMX email alias rotation → Fireworks AI account registration → API key pool management.
 
-**Architektur:** CUA Driver (Navigation + Dialog + React-CB) + Playwright (Form Interaction) + CDP (Session/Cookies/OTP Email).
+**Stack:** Playwright + CUA Driver (macOS AX) + CDP Websocket  
+**Architecture:** CUA for navigation & React checkboxes, Playwright for form interaction, CDP for session/cookies/OTP
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
+---
 
-**Full automated flow in ONE command:**
+## Quick Start
+
 ```bash
+# 1. Chrome starten (Profile 901, OHNE --force-renderer-accessibility!)
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 901" \
+  --remote-debugging-port=9222 \
+  --no-first-run --no-default-browser-check \
+  > /tmp/chrome_sinator.log 2>&1 &
+sleep 6
+
+# 2. CUA Daemon starten (--no-relaunch!)
+cua-driver serve --no-relaunch &
+
+# 3. Full Rotation (Single Command)
 python tools/rotate.py
-# → GMX Alias Rotation (~28s) → Fireworks Signup → OTP → Verify
-# → Login → Onboarding → Use-Cases → $5 Credits → API Key → Pool
-```
 
-**API Key Pool (4 keys, 3 available):**
-| Key | Alias | Status |
-|-----|-------|--------|
-| `fw_MdM6tGucgWuuc7zQyJGeTK` | crystal-beetle-676 | ✅ Available |
-| `fw_13zisuhmRLAtfZknN7EJ8v` | super-cheetah-687 | ✅ Available |
-| `fw_8d1PLFjvQMdgJFzjDZSTRx` | super-cheetah-687 | ✅ Available |
-| `fw_4SyZoeCFsyn5L4hpT63LGV` | blaze-scorpion-746 | ❌ Used |
-
-### Alias löschen (Playwright im Iframe + CUA OK)
-```python
-frame.locator('.table_field:has-text("alias@gmx.de")').first.hover(force=True)
-frame.locator('[title*="löschen"]').first.click(force=True)
-# CUA OK: cua-driver call click '{"pid":P,"wid":W,"element_index":OK}'
-```
-
-### Alias erstellen (Playwright im Iframe)
-```python
-frame.locator('input[type="text"]').first.fill("name-123")
-frame.locator('button:has-text("Hinzufügen")').first.click()
-# Verify: await inp.input_value() → '' = success
-```
-
-### Fireworks Login (Playwright)
-```python
-page.locator('a:has-text("Email Login")').first.click()       # /login OAuth-Seite
-page.locator('input[name="email"]').first.fill("email@gmx.de")  # KEIN type-Attribut!
-page.locator('input[name="password"]').first.fill("Passwort!")
-# Next: button[type="submit"] mit Text "Next"
-```
-
-### Fireworks Onboarding (CUA)
-```bash
-# ALLE Felder zuerst, DANN Terms-CB, DANN Continue
-cua-driver call type_text '{"pid":P,"text":"Vorname"}'     # First/Last Name
-cua-driver call click '{"pid":P,"wid":W,"element_index":129}'  # Terms CB
-cua-driver call click '{"pid":P,"wid":W,"element_index":137}'  # Continue
-# Use-Case: Checkboxen [112][115][145][151] + Submit [160]
-```
-
-### API Key (Playwright)
-```python
-await page.goto("https://app.fireworks.ai/settings/users/api-keys")  # NICHT workspace!
-# "Create API Key" = PopUpButton → force-click → [role="menuitem"] "API Key"
-for btn in page.locator('button').all():
-    if 'Create API Key' == (await btn.text_content() or '').strip():
-        await btn.click(force=True); break
-await page.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
-# Name + Generate
-```
-
-# 2. Delete Icon klicken (force=True weil nur nach hover sichtbar)
-frame.locator('[title*="löschen"]').first.click()
-
-# 3. CUA click OK im Bestätigungsdialog
-#    Vorher: cua-driver call get_window_state um OK element_index zu finden
-cua-driver call click '{"pid": 12465, "window_id": 244, "element_index": 1033}'
-```
-
-### Alias erstellen (Playwright im Iframe)
-```python
-# 1. Input füllen (iframe => mail_settings -> allEmailAddresses)
-frame.locator('input[type="text"]').first.fill("neon-hawk-042")
-
-# 2. Hinzufügen Button klicken (force=True für Wicket)
-frame.locator('button:has-text("Hinzufügen")').first.click(force=True)
-
-# 3. Verify: Input muss LEER sein nach Submit (= Erfolg)
-await inp.input_value()  # → '' = erfolgreich erstellt!
-```
-
-### Session auffrischen (nur bei Session-Expiry nötig)
-```python
-# Klick auf "E-Mail" Link auf www.gmx.net → leitet zu Inbox mit frischem SID
-gmx_page.get_by_role("link", name="E-Mail", exact=True).first.click()
-
-# Oder via CUA:
-cua-driver call click '{"pid": 12465, "window_id": 244, "element_index": 29}'
+# 4. Oder: API Server starten
+python agent_toolbox/start_toolbox.py
+# → http://localhost:8000/docs (Swagger UI)
 ```
 
 ---
+
+## E2E Flow (V7 — ~213s)
+
+```
+Step 0:  GMX Login via Playwright                      → frische Cookies
+Step 1:  GMX Alias Rotation (CUA+Playwright)            → cosmic-raven-683@gmx.de
+Step 2:  Fireworks Signup (Playwright + CDP)            → Account created
+Step 3:  OTP Polling (GMX MailCheck Extension + CDP)    → Verify URL extracted
+Step 4:  Verify + Login + Onboarding (CUA+Playwright)   → Dashboard reached
+Step 5:  API Key Creation (Playwright PopUpButton)      → fw_G93EigYuyQnbeCfNiSCZwy
+Step 6:  Save to Pool                                   → 8 keys total
+```
+
+**Pool:** 8 API Keys (7 available, 1 used)  
+**Latest Key:** `cosmic-raven-683` → `fw_G93EigYuyQnbeCfNiSCZwy`
+
+---
+
+## API Reference
+
+All endpoints are prefixed with `/api/v1` unless noted.
+
+### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | Service info + version |
+| GET | `/health` | Detailed health check (browser, gmx-alias-tool) |
 
 ```bash
-cd agent_toolbox
-pip install -r requirements.txt
-python3 start_toolbox.py
+curl http://localhost:8000/health
 ```
-
-Server starts on `http://localhost:8000` — Swagger UI at `/docs`.
-
----
-
-## ⚠️ WICHTIG: CUA Driver primär, CDP nur als Fallback
-
-**CUA kann ALLES anklicken. Du musst nur fähig genug sein!**
-
-```
-✅ CUA click     → Buttons, Links, Checkboxes, MenuItems, PopUpButtons
-✅ CUA type_text → Normale Inputs (NICHT React controlled!)
-✅ CUA set_value → PopUpButton Menus nach click
-✅ CUA get_window_state → AX-Tree scannen für Elemente
-```
-
-**CDP NUR für:**
-- React controlled inputs (CUA type_text funktioniert NICHT!)
-- Target management (neue Tabs)
-- GMX Extension Email-Zugriff
-
----
-
-## API Endpoints
 
 ### Browser Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/browser/start` | Start Chrome with Profile 901 |
-| POST | `/browser/stop` | Stop Chrome (SIGTERM) |
-| GET | `/browser/status` | Get browser status |
+| POST | `/api/v1/browser/start` | Start Chrome with Profile 901 |
+| POST | `/api/v1/browser/stop` | Stop Chrome (SIGTERM) |
+| GET | `/api/v1/browser/status` | Browser status + page count |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/browser/start \
+  -H 'Content-Type: application/json' \
+  -d '{"profile_name":"Profile 901","cdp_port":9222}'
+
+curl -X POST http://localhost:8000/api/v1/browser/stop
+
+curl http://localhost:8000/api/v1/browser/status
+```
 
 ### GMX Services
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/gmx/session/check` | Check GMX session active |
-| POST | `/gmx/session/ensure` | **Flow 0** — Login or recover GMX session |
-| POST | `/gmx/email-addresses` | Navigate to alias settings page |
-| POST | `/gmx/alias/delete` | Delete existing alias |
-| POST | `/gmx/alias/create` | Create new alias |
-| POST | `/gmx/alias/rotate` | **ATOMIC** — delete + create in one call |
-| POST | `/gmx/inbox/open` | Open GMX inbox |
+| POST | `/api/v1/gmx/session/check` | Check if GMX session is active |
+| POST | `/api/v1/gmx/session/ensure` | **Flow 0** — Login or recover session |
+| POST | `/api/v1/gmx/email-addresses` | Navigate to alias settings page |
+| POST | `/api/v1/gmx/alias/delete` | Delete existing alias |
+| POST | `/api/v1/gmx/alias/rotate` | **ATOMIC** — delete + create |
+| POST | `/api/v1/gmx/alias/create` | Create new alias |
+| POST | `/api/v1/gmx/inbox/open` | Open GMX inbox |
+| POST | `/api/v1/gmx/otp/read` | Poll OTP email from GMX inbox |
+
+```bash
+# Session prüfen
+curl -X POST http://localhost:8000/api/v1/gmx/session/check
+
+# Session wiederherstellen
+curl -X POST http://localhost:8000/api/v1/gmx/session/ensure \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"opensin@gmx.de","password":"ZOE.jerry2024"}'
+
+# Alias rotieren (API delegiert an gmx-alias-tool auf Port 8001)
+curl -X POST http://localhost:8000/api/v1/gmx/alias/rotate \
+  -H 'Content-Type: application/json' \
+  -d '{"new_alias_name":"swift-fox"}'
+
+# OTP aus Inbox lesen
+curl -X POST http://localhost:8000/api/v1/gmx/otp/read \
+  -H 'Content-Type: application/json' \
+  -d '{"sender_filter":"fireworks","max_retries":18}'
+```
 
 ### Fireworks AI
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/fireworks/register` | Register new Fireworks account |
-| POST | `/fireworks/confirm` | Confirm account via OTP URL |
-| POST | `/fireworks/apikey` | Create API key |
-
-### Pool Management
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/pool/stats` | Get pool statistics |
-| GET | `/pool/key` | Get available API key |
-| POST | `/pool/key/use` | Mark key as used |
-| POST | `/pool/add` | Add key to pool |
-
-### Rotation (HAUPT)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/rotation/full` | Complete rotation: GMX Alias → Fireworks → API Key |
-
----
-
-## Core Endpoints Detail
-
-### `POST /rotation/full` — Complete Account Rotation
-
-**Atomically rotates GMX alias → Fireworks registration → API key extraction.**
+| POST | `/api/v1/fireworks/login` | Login + CUA onboarding |
+| POST | `/api/v1/fireworks/apikey` | Create API key (PopUpButton) |
 
 ```bash
-curl -X POST http://localhost:8000/rotation/full \
-  -H "Content-Type: application/json" \
-  -d '{"fireworks_password": "YourPassword123!"}'
+# Login
+curl -X POST http://localhost:8000/api/v1/fireworks/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"swift-fox-123@gmx.de","password":"ZOE.jerry2024!"}'
+
+# API Key erstellen
+curl -X POST http://localhost:8000/api/v1/fireworks/apikey \
+  -H 'Content-Type: application/json' \
+  -d '{"key_name":"swift-key"}'
 ```
 
-**Flow 0 (Session):** GMX Session prüfen → Login via Shadow DOM wenn nötig
+### Cookie Management
 
-**Flow 1 (GMX Alias):** Delete existing alias → Create new alias (`{adj}-{noun}-{3digits}@gmx.de`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/cookies/extract` | Extract cookies from browser |
+| POST | `/api/v1/cookies/inject` | Inject cookies into browser |
 
-**Flow 2 (Fireworks):** Navigate to /signup → Cookie Banner dismiss (CUA) → Email (CDP nativeInputValueSetter) → Password (CDP) → Create Account (CUA)
+```bash
+# GMX Cookies extrahieren
+curl -X POST http://localhost:8000/api/v1/cookies/extract \
+  -H 'Content-Type: application/json' \
+  -d '{"domain_filter":"gmx","save_to_file":true}'
 
-**Flow 3 (OTP):** GMX Extension öffnen → Email finden → OTP URL klicken
+# Cookies injizieren
+curl -X POST http://localhost:8000/api/v1/cookies/inject \
+  -H 'Content-Type: application/json' \
+  -d '{"filename":"gmx-cookies.json","verify_session":true}'
+```
 
-**Flow 4 (Setup):** FirstName/LastName (CUA) → Terms checkbox (CUA) → Continue → 2x Checkboxes (CUA) → Submit for $5 Credits
+### API Key Pool
 
-**Flow 5 (API Key):** Settings → Users & Access → API Keys → Create API Key → Name eingeben (CDP) → Generate Key (CUA)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/pool/stats` | Pool statistics |
+| POST | `/api/v1/pool/add` | Add key to pool |
+| POST | `/api/v1/pool/use` | Mark key as used |
+| DELETE | `/api/v1/pool/{key_id}` | Remove key from pool |
+
+```bash
+# Pool-Status
+curl http://localhost:8000/api/v1/pool/stats
+
+# Key hinzufügen
+curl -X POST http://localhost:8000/api/v1/pool/add \
+  -H 'Content-Type: application/json' \
+  -d '{"api_key":"fw_xxx","alias_email":"swift-fox@gmx.de","key_name":"swift"}'
+
+# Key als verwendet markieren
+curl -X POST http://localhost:8000/api/v1/pool/use?key_id=sf-20260522-001
+
+# Key löschen
+curl -X DELETE http://localhost:8000/api/v1/pool/sf-20260522-001
+```
+
+### Rotation (Haupt-Endpoint)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/rotation/full` | Complete rotation: GMX → Fireworks → API Key |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/rotation/full \
+  -H 'Content-Type: application/json' \
+  -d '{"new_alias_name":"swift-hawk","fireworks_password":"ZOE.jerry2024!","save_to_pool":true}'
+```
 
 **Response:**
 ```json
 {
   "status": "success",
-  "gmx_alias": "blaze-scorpion-746@gmx.de",
-  "fireworks_account": "blaze-scorpion-746@gmx.de",
+  "gmx_alias": "swift-hawk-842@gmx.de",
+  "fireworks_account": "swift-hawk-842@gmx.de",
   "api_key": "fw_4SyZoeCFsyn5L4hpT63LGV",
-  "api_key_name": "blaze-scorpion-746",
-  "steps_completed": ["session_active", "gmx_alias_rotated", "fw_registered", "fw_otp_received", "fw_setup_complete", "api_key_created"],
+  "api_key_name": "swift",
+  "steps_completed": [
+    "gmx_alias_rotated",
+    "fireworks_login",
+    "api_key_created",
+    "api_key_saved_to_pool"
+  ],
   "steps_failed": [],
-  "execution_time": "~300s"
+  "execution_time": "~213s"
 }
-```
-
-### `POST /gmx/alias/rotate`
-
-**Atomically rotates GMX alias — delete existing + create new in one call.**
-
-```bash
-curl -X POST http://localhost:8000/gmx/alias/rotate \
-  -H "Content-Type: application/json" \
-  -d '{"new_alias_name": "turbo-mantis"}'
 ```
 
 ---
@@ -228,82 +220,53 @@ Profile:           Profile 901
 CDP Port:          9222
 ```
 
-**Chrome Start:**
-```bash
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 &
-sleep 6 && curl -s http://127.0.0.1:9222/json/version
-```
+**⚠️ NIEMALS `--force-renderer-accessibility` verwenden!**  
+MIT Flag → GMX zeigt "Barrierefreies Postfach" (Email-Rows nicht klickbar).  
+OHNE Flag → GMX funktioniert normal + CUA AX-Tree funktioniert trotzdem.
 
-**⚠️ NIEMALS `--force-renderer-accessibility` verwenden!**
-- MIT Flag: GMX zeigt "Barrierefreies Postfach" (Email-Rows NICHT klickbar!)
-- OHNE Flag: GMX funktioniert normal + CUA-Driver AX-Tree funktioniert trotzdem
-
-**⚠️ NIEMALS `pkill -9 -f "Google Chrome"`!** Killt User-Chrome → Session tot. Nur SIGTERM via `kill`!
-
----
-
-## GMX Extension für Email (EINZIG ERLAUBTER WEG)
-
-```
-Extension ID: camnampocfohlcgbajligmemmabnljcm
-Popup: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
-Email IDs: 18 Ziffern (z.B. 1778454231729833464)
-```
-
-**VERBOTEN:**
-```
-❌ lightmailer-bs.gmx.net URLs (HTTP 500 errors!)
-❌ webmailer.gmx.net direkt navigieren
-```
+**⚠️ NIEMALS `pkill -9 -f "Google Chrome"`!** Killt User-Chrome → Session tot.  
+Nur SIGTERM: `kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)`
 
 ---
 
 ## CUA Driver Usage
 
-### Window finden:
 ```bash
+# Window finden
 cua-driver call list_windows '{"query": "Chrome"}'
-```
 
-### AX-Tree scannen:
-```bash
+# AX-Tree scannen
 echo '{"pid": 12345, "window_id": 67890}' | cua-driver call get_window_state
-```
 
-### Element klicken:
-```bash
+# Element klicken
 echo '{"pid": 12345, "window_id": 67890, "element_index": 42}' | cua-driver call click
+
+# Text eingeben (NICHT für React controlled inputs!)
+echo '{"pid": 12345, "window_id": 67890}' | cua-driver call type_text '{"text": "mein-text"}'
+
+# PopUpButton (z.B. "Create API Key")
+# 1. Click auf PopUpButton → Menu erscheint
+# 2. SCAN → MenuItems finden
+# 3. MenuItem klicken
 ```
 
-### PopUpButton Menü:
-```bash
-# Nach "This is a popup/select button" Warning:
-echo '{"pid": 12345, "window_id": 67890, "element_index": 74, "value": "Create API Key"}' | cua-driver call set_value
-```
-
-### Text eingeben (NICHT React!):
-```bash
-echo '{"pid": 12345, "window_id": 67890, "element_index": 42}' | cua-driver call type_text '{"text": "mein-text"}'
-```
+**Wichtig:** CUA kann alles anklicken (Buttons, Checkboxes, MenuItems, PopUpButtons).  
+CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-Formular).
 
 ---
 
 ## API Key Pool
 
-**Pool Format:** Plain list (JSON array)
+**Format:** Plain JSON array in `data/fireworksai-pool.json`
+
 ```json
 [
   {
-    "id": "bs746-20260511001",
-    "api_key": "fw_4SyZoeCFsyn5L4hpT63LGV",
-    "alias_email": "blaze-scorpion-746@gmx.de",
-    "key_name": "blaze-scorpion-746",
-    "created_at": "2026-05-11T00:00:00Z",
+    "id": "cr683-20260522-001",
+    "api_key": "fw_G93EigYuyQnbeCfNiSCZwy",
+    "alias_email": "cosmic-raven-683@gmx.de",
+    "key_name": "cosmic",
+    "created_at": "2026-05-22T00:00:00Z",
     "used": false,
     "used_at": null
   }
@@ -311,39 +274,58 @@ echo '{"pid": 12345, "window_id": 67890, "element_index": 42}' | cua-driver call
 ```
 
 **PoolManager API:**
-- `add_key(api_key, alias_email, key_name)` → {status, key_id}
-- `get_available_key()` → {api_key, alias_email, ...} oder None
+- `add_key(api_key, alias_email, key_name)` → `{status, key_id}`
+- `get_available_key()` → key dict or None
 - `mark_used(key_id)` → True/False
-- `get_stats()` → {total, used, available, keys: [...]}
-
----
-
-## Status
-
-- ✅ Chrome startup with Profile 901 (Original, keine Kopie!)
-- ✅ CUA Driver für alle interaktiven Elemente
-- ✅ **Flow 0:** GMX session ensure / login recovery via Shadow DOM
-- ✅ GMX email-addresses page navigation
-- ✅ GMX alias deletion
-- ✅ GMX alias creation
-- ✅ GMX alias rotation (atomic delete+create)
-- ✅ GMX Extension für Email-Zugriff
-- ✅ Fireworks AI registration + OTP
-- ✅ API key pool management
-- ✅ Fireworks API Key Erstellung (CDP für React Inputs!)
-- ✅ Full pipeline: `POST /rotation/full`
+- `get_stats()` → `{total, used, available, keys}`
+- `delete_key(key_id)` → True/False
 
 ---
 
 ## Environment Variables
 
-```bash
-GMX_EMAIL=opensin@gmx.de
-GMX_PASSWORD=ZOE.jerry2024
-FIREWORKS_PASSWORD=YourPassword123!
-CDP_PORT=9222
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GMX_EMAIL` | `opensin@gmx.de` | GMX login email |
+| `GMX_PASSWORD` | `ZOE.jerry2024` | GMX login password |
+| `FIREWORKS_PASSWORD` | `ZOE.jerry2024!` | Password for new FW accounts |
+| `CDP_PORT` | `9222` | Chrome remote debugging port |
+| `TOOLBOX_PORT` | `8000` | API server port |
+| `TOOLBOX_HOST` | `0.0.0.0` | API server bind address |
+| `TOOLBOX_RELOAD` | `false` | Auto-reload on file changes |
 
 ---
 
-*Letzte Aktualisierung: 2026-05-22*
+## Tools
+
+| Script | Description |
+|--------|-------------|
+| `python tools/rotate.py` | Full E2E rotation in one command |
+| `python tools/gmx_alias_tool.py status` | Check GMX session status |
+| `python tools/gmx_alias_tool.py rotate` | Standalone GMX alias rotation |
+
+---
+
+## Status
+
+| Feature | Status |
+|---------|:------:|
+| Chrome startup with Profile 901 | ✅ |
+| CUA Driver for navigation & dialogs | ✅ |
+| GMX session ensure / login recovery | ✅ |
+| GMX alias deletion (iframe Playwright + CUA) | ✅ |
+| GMX alias creation (Playwright iframe) | ✅ |
+| GMX alias rotation (atomic delete+create) | ✅ |
+| GMX MailCheck Extension for OTP emails | ✅ |
+| Fireworks AI signup + verify (Playwright+CDP) | ✅ |
+| Fireworks AI login + onboarding (CUA+Playwright) | ✅ |
+| API key creation (PopUpButton + DOM polling) | ✅ |
+| API key pool management | ✅ |
+| Full pipeline: `POST /rotation/full` | ✅ |
+| Rate-limit circuit breaker (exponential backoff) | ✅ |
+| OOPIF polling (zuverlässiges OTP-Finden) | ✅ |
+| API Key "Missing Name" auto-retry | ✅ |
+
+---
+
+*V7 — 2026-05-22 | 8 API Keys | ~213s per rotation*

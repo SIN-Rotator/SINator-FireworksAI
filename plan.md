@@ -192,20 +192,23 @@ Latest: cosmic-raven-683 → fw_G93EigYuyQnbeCfNiSCZwy (8 Keys total, ~213s)
 
 ---
 
-## 🚀 V8 — Nächste Iteration (GEPLANT 2026-05-22)
+## 🚧 V8 — Docs & API Reference (IM DURCHLAUF 2026-05-22)
 
-### Status: 📝 Planung
+### Fokus: README + API Reference aufpolieren
 
-### Mögliche Schwerpunkte
+| Task | Aufwand | Status |
+|------|:-------:|:------:|
+| README.md neu strukturiert (Quick Start, API Reference, Usage Examples) | 1h | ✅ **DONE** |
+| API Endpoints vollständig dokumentiert (health, browser, gmx, fireworks, cookies, pool, rotation) | - | ✅ |
+| curl-Beispiele für jeden Endpoint | - | ✅ |
+| Chrome/CUA/Pool/Env-Dokumentation konsolidiert | - | ✅ |
 
-| Prio | Task | Aufwand | Impact | Status |
-|:----:|------|:-------:|:------:|:------:|
-| 1 | Dockerisierung (Container-Build + Deployment) | 4h | 🟢 Niedrig | 📝 |
-| 2 | Monitoring/Alerting (Execution-Tracking, Fehler-Raten) | 3h | 🟡 Mittel | 📝 |
-| 3 | Parallel-Rotation (mehrere Keys in einem Batch) | 5h | 🟢 Niedrig | 📝 |
-| 4 | Key-Health-Checks (täglich prüfen ob Keys noch gültig) | 2h | 🟡 Mittel | 📝 |
-| 5 | CI/CD Pipeline (Tests bei Push, automatische Deploys) | 3h | 🟡 Mittel | 📝 |
-| 6 | Docs & API-Client SDK | 2h | 🟢 Niedrig | 📝 |
+### Verbleibend (V8.1)
+| Task | Priorität |
+|------|:---------:|
+| OpenAPI Spec Review + ggf. fehlende Schemas ergänzen | 🟡 Mittel |
+| CLI-Wrapper (`sinator-cli`) bauen | 🟢 Niedrig |
+| Python SDK bauen | 🟢 Niedrig |
 
 ---
 
