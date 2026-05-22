@@ -1,10 +1,11 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — FastAPI App Entrypoint                  ║
+║              SINATOR AGENT-TOOLBOX — FastAPI App (V8, 2026-05-22)           ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ZWECK:                                                                      ║
 ║  Startet die FastAPI-App mit Uvicorn und registriert alle Routen.            ║
+║  Pool: 30 API Keys — ~209s/Rotation                                         ║
 ║                                                                              ║
 ║  USAGE:                                                                       ║
 ║  python start_toolbox.py                                                     ║
@@ -83,7 +84,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="SINator Agent Toolbox",
     description="FastAPI-basierte Automatisierungs-Toolbox für GMX Alias-Erstellung und Fireworks AI Account-Rotation",
-    version="1.0.0",
+    version="8.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",

@@ -103,7 +103,7 @@ curl -X POST http://localhost:8000/api/v1/gmx/session/ensure \
   -H 'Content-Type: application/json' \
   -d '{"email":"opensin@gmx.de","password":"ZOE.jerry2024"}'
 
-# Alias rotieren (API delegiert an gmx-alias-tool auf Port 8001)
+# Alias rotieren (V8: Playwright inbox + CUA + new-tab iframe)
 curl -X POST http://localhost:8000/api/v1/gmx/alias/rotate \
   -H 'Content-Type: application/json' \
   -d '{"new_alias_name":"swift-fox"}'
@@ -204,7 +204,7 @@ curl -X POST http://localhost:8000/api/v1/rotation/full \
     "api_key_saved_to_pool"
   ],
   "steps_failed": [],
-  "execution_time": "~213s"
+  "execution_time": "~209s"
 }
 ```
 
@@ -261,11 +261,11 @@ CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-
 ```json
 [
   {
-    "id": "cr683-20260522-001",
-    "api_key": "fw_G93EigYuyQnbeCfNiSCZwy",
-    "alias_email": "cosmic-raven-683@gmx.de",
-    "key_name": "cosmic",
-    "created_at": "2026-05-22T00:00:00Z",
+    "id": "3d4eeb2e",
+    "api_key": "fw_6rWU4KGUPts6zVnaRreu6R",
+    "alias_email": "pulse-jaguar-899@gmx.de",
+    "key_name": "pulse",
+    "created_at": "2026-05-22T17:00:00Z",
     "used": false,
     "used_at": null
   }
@@ -324,6 +324,7 @@ CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-
 | Rate-limit circuit breaker (exponential backoff) | ✅ |
 | OOPIF polling (zuverlässiges OTP-Finden) | ✅ |
 | API Key "Missing Name" auto-retry | ✅ |
+| V8 GMX Nav Fix: Playwright inbox + CUA + JS hidden-nav + New-Tab iframe | ✅ |
 
 ---
 

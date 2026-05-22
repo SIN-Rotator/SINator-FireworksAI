@@ -1,18 +1,19 @@
 """
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║           SINATOR AGENT-TOOLBOX — Rotation Routes (V6 Playwright+CUA)       ║
+║           SINATOR AGENT-TOOLBOX — Rotation Routes (V8 Playwright+CUA)       ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  ENDPOINT:                                                                    ║
 ║  POST /rotation/full         → Komplette Account-Rotation (GMX + Fireworks) ║
 ║                                                                              ║
-║  FLOW (V6 — 2026-05-22):                                                     ║
+║  FLOW (V8 — 2026-05-22):                                                     ║
 ║  0. GMX Login built-in (Playwright, Step 0 in rotate.py)                     ║
-║  1. GMX Alias via gmx-alias-tool API (localhost:8001) + Fallback             ║
+║  1. GMX Alias: Playwright inbox → CUA Einstellungen → JS hidden-nav          ║
+║     → New-Tab allEmailAddresses iframe → delete + create                     ║
 ║  2. Fireworks Signup via Playwright + CUA                                    ║
 ║  3. GMX OTP Email via MailCheck Extension + CDP OOPIF                        ║
 ║  4. Fireworks Login + Onboarding via fireworks_service (CUA+Playwright)      ║
-║  5. API Key via fireworks_service.create_api_key() (V6: disabled-Wait)       ║
+║  5. API Key via fireworks_service.create_api_key() (V8: PopUpButton + DOM)   ║
 ║  6. Save to pool                                                             ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -85,7 +86,7 @@ async def _fireworks_login(email: str, password: str) -> bool:
 
 
 async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
-    """Create API Key via fireworks_service (V6: disabled-wait + DOM-polling)."""
+    """Create API Key via fireworks_service (V8: PopUpButton + DOM-polling)."""
     from agent_toolbox.core.fireworks_service import create_api_key
     result = await create_api_key(key_name)
     return result.get('api_key')
@@ -94,10 +95,10 @@ async def _fireworks_api_key(key_name: str = "sinator-key") -> Optional[str]:
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
     """
-    KOMPLETTE Account-Rotation — V6 Playwright+CUA (2026-05-22).
+    KOMPLETTE Account-Rotation — V8 Playwright+CUA (2026-05-22).
 
     Flow:
-    1. GMX Alias via gmx-alias-tool API (localhost:8001) + Fallback
+    1. GMX Alias: Playwright inbox → CUA Einstellungen → JS hidden-nav → New-Tab iframe
     2. Fireworks Login + Onboarding via fireworks_service
     3. API Key via fireworks_service.create_api_key()
     4. Save to pool
