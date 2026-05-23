@@ -56,7 +56,6 @@ import json
 import html as html_module
 from typing import Optional, Dict, Any, Tuple
 from pathlib import Path
-import httpx
 
 from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, get_page_target
 
