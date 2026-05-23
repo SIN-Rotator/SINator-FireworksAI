@@ -552,7 +552,7 @@ class GmxService:
             if el and el > 0:
                 logger.info(f"CUA click Einstellungen [{el}]")
                 cua_click(el)
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)
             else:
                 logger.warning("Einstellungen not found in AX tree — trying Playwright nav")
                 try:
@@ -582,7 +582,7 @@ class GmxService:
                                         return True
                 except Exception:
                     pass
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
             logger.warning("allEmailAddresses iframe not found after Einstellungen click")
             return False
 
@@ -855,7 +855,7 @@ class GmxService:
                                 if 'allEmailAddresses' in _f.url:
                                     return _f.url
                 if _retry < 5:
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(1.5)
             return None
         except Exception as _e:
             logger.error(f"get_iframe_url failed: {_e}")
@@ -876,7 +876,7 @@ class GmxService:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
                 _pg = await _b.contexts[0].new_page()
                 await _pg.goto(iframe_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
                 row = _pg.locator(f'.table_field:has-text("{alias_email}")').first
                 if await row.count() == 0:
@@ -894,12 +894,12 @@ class GmxService:
                     return False
 
                 await del_icon.click(force=True, timeout=5000)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
                 ok_btn = _pg.locator('button:has-text("OK")').first
                 if await ok_btn.count() > 0:
                     await ok_btn.click(force=True, timeout=5000)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
 
                 content = await _pg.evaluate("document.body.innerText")
                 await _pg.close()
@@ -931,7 +931,7 @@ class GmxService:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
                 _pg = await _b.contexts[0].new_page()
                 await _pg.goto(iframe_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
                 for attempt in range(3):
                     current_alias = alias_name if attempt == 0 else self.generate_alias_name()
@@ -959,7 +959,7 @@ class GmxService:
                         return None
 
                     await btn.click(force=True, timeout=5000)
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
 
                     inp_val = await inp.input_value()
                     content = await _pg.evaluate("document.body.innerText")
