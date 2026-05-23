@@ -41,54 +41,46 @@ python tools/rotate.py
 | OTP email | CDP | MailCheck Extension → click email → mailbody-ui.de OOPIF → extract URL |
 | Cookie management | CDP | `Network.deleteCookies` + `clearBrowserCookies` für Fireworks |
 
-### 🔧 V8 GMX NAVIGATION FIX (2026-05-22)
+### 🔧 V8 GMX NAVIGATION FIX (2026-05-22 → 2026-05-23)
 
-**Problem:** GMX geändert — Direkte Navigation zu `/mail_settings/email_addresses?sid=...` redirected immer zu `/mail_settings/mail`. CDP `Page.navigate` triggert IAC Anti-Automation → "Einstellungen" AXButton nicht im AX-Tree. allEmailAddresses iframe off-screen (`rect=(-2400, -1742)`) → Playwright kann nicht interagieren (Trusted-Events + Viewport).
+**Problem (Original):** GMX geändert — Direkte Navigation zu `/mail_settings/email_addresses?sid=...` redirected immer zu `/mail_settings/mail`. CDP `Page.navigate` triggert IAC Anti-Automation → "Einstellungen" AXButton nicht im AX-Tree. allEmailAddresses iframe off-screen (`rect=(-2400, -1742)`) → Playwright kann nicht interagieren (Trusted-Events + Viewport).
 
-**Lösung — 4-Schritt Flow:**
+**Problem (2026-05-23, gefixt):** Nach Chrome-Neustart + GMX Login wurde die `allEmailAddresses`-Iframe nie geladen. Der JS `.click()` auf versteckte Nav-Buttons (`#nav-menu`) wurde von GMX React/Wicket ignoriert (prüft `isTrusted`). Zusätzlich: CDP `Input.dispatchMouseEvent` erzeugt zwar trusted Events, aber die Nav-Buttons sind via CSS `display:none` ausgeblendet → keine Koordinaten.
+
+**Lösung — 3-Schritt Flow (replaces the broken JS nav-click):**
 
 ```python
-# STEP 1: Playwright navigate to inbox (NOT CDP — avoids IAC)
-# CDP `Page.navigate` detected as bot → IAC restart
-# Playwright connect_over_cdp + goto("/mail?sid=...") works
-
-# STEP 2: CUA click "Einstellungen" AXButton from inbox
-# ONLY visible on full inbox page (/mail?sid=...), NOT on /mail_settings/mail
+# STEP 1: CUA click "Einstellungen" AXButton from inbox → navigiert 
+# zu mail_settings/mail_settings (dies öffnet einen NEUEN Tab!)
 cua_click(find_element("Einstellungen", "AXButton"))  # element [148]
-await asyncio.sleep(5)  # → URL changes to /mail_settings?sid=...
 
-# STEP 3: JS evaluate click hidden nav-menu button
-# GMX hides settings sidebar via CSS (offsetParent === null)
-# CUA can't see it, but JS click loads the allEmailAddresses iframe
-await client.evaluate(session_id, """
-    const nav = document.querySelector('#nav-menu');
-    if (nav) {
-        for (const el of nav.querySelectorAll('button, a')) {
-            if (el.innerText?.includes('Mail-Adressen') || 
-                el.innerText?.includes('Wunsch-Mail')) {
-                el.click(); break;
-            }
-        }
-    }
-""")
-# → URL changes to /produkte_ha?sid=... with embedded iframe
+# STEP 2: Playwright Frame-Scanning — die mail_settings/mail_settings Seite 
+# lädt die allEmailAddresses Iframe AUTOMATISCH (kein JS nav-click nötig!)
+# URL: https://3c.gmx.net/mail/client/settings/allEmailAddresses;jsessionid=...
+for _poll in range(8):
+    for __pg in pages:
+        for __f in __pg.frames:
+            if 'allEmailAddresses' in __f.url:
+                return __f.url
 
-# STEP 4: Open allEmailAddresses iframe URL in new Playwright tab
-# The 3c-bap.gmx.net iframe is off-screen AND in cross-origin context
-# JS dispatchEvent clicks fail (isTrusted === false for Wicket framework)
-# Solution: extract iframe URL → goto() in new tab → top-level document
-iframe_url = "https://3c-bap.gmx.net/mail/client/settings/allEmailAddresses;jsessionid=..."
+# STEP 3: Open URL in new Playwright tab (3c.gmx.net, NICHT 3c-bap!)
+# Direct goto funktioniert, behält Session
 new_page = await browser.new_page()
 await new_page.goto(iframe_url)
-# Now Playwright fill() + click() work normally (element IS on-screen)
 ```
 
-**Code-Änderungen in `gmx_service.py`:**
-- `_navigate_to_all_email_addresses`: CDP `Page.navigate` entfernt → Playwright goto inbox + CUA Einstellungen + JS nav-click + Polling bis iframe geladen
-- `_get_iframe_url`: Neue Helper-Methode mit 6×3s Retry-Loop
-- `_delete_alias_via_playwright`: Iframe-Operation → New-Tab-Operation (öffnet iframe URL, hover/click/OK ohne off-screen issues)
-- `_create_alias_via_playwright`: Gleiche New-Tab-Strategie, `fill()` statt evaluate nativeInputValueSetter
-- `rotate_alias` inline delete: Nutzt `_get_iframe_url` + new-tab statt iframe-content
+**Wichtige Erkenntnisse:**
+- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation, `3c-bap.gmx.net` nicht
+- Die JSESSIONID aus der allEmailAddresses Iframe-URL ist gültig für direkten Zugriff
+- Die GMX Nav-Buttons (`#nav-menu`) sind tot — React/Wicket ignoriert alle programmatischen Klicks
+- CUA Klick auf "Einstellungen" (AXButton [148]) öffnet `mail_settings/mail_settings?sid=...`
+- Der Einstellungen-Button ist NUR im Postfach sichtbar, nicht auf der GMX-Startseite
+
+**Code-Änderungen in `gmx_service.py` (2026-05-23):**
+- `_navigate_to_all_email_addresses`: JS nav-menu click ENTFERNT. Stattdessen: CUA Einstellungen klicken → mail_settings/mail_settings → Playwright Polling bis allEmailAddresses Iframe gefunden (8×3s). Fallback: direkte Playwright-Navigation zu `mail_settings/mail_settings?sid=...`
+- `_get_iframe_url`: Unverändert (scan bereits alle Pages/Frames via Playwright)
+- `cua_helper`-Import: Von `from cua_helper import ...` auf `from agent_toolbox.core.cua_helper import ...` geändert (PYTHONPATH Bugfix)
+- `_delete_alias_via_playwright`: Unverändert — funktioniert sobald die iframe URL gefunden wird
 
 **Anti-Pattern (NIEMALS):**
 ```python
@@ -272,6 +264,9 @@ kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 | `page.goto()` zu iframe-URL | Triggert IAC restart, Session expired |
 | CUA Submit-Klick bei Onboarding | Triggert keinen Redirect → Playwright-Fallback nötig |
 | `ERR_BLOCKED_BY_RESPONSE` ignorieren | GMX Rate-Limiting → Cookies löschen + Chrome restart |
+| JS `.click()` auf `#nav-menu` Buttons (Wunsch-Mail) | GMX React/Wicket ignoriert programmatische Klicks (isTrusted=false) — ersetzt durch CUA Einstellungen → `mail_settings/mail_settings` |
+| CDP `Input.dispatchMouseEvent` auf versteckte Nav-Buttons | Button hat CSS `display:none` auf grandparent → Koordinaten (0,0) — auch nach force-CSS funktioniert GMX SPA nicht |
+| Direkte Navigation zu `3c-bap.gmx.net` | Session expired — `3c.gmx.net` (ohne -bap) funktioniert stattdessen |
 
 ---
 
@@ -1849,6 +1844,36 @@ GMX uses TWO URL formats for mail navigation:
 **Lösung:** Navigate directly to `navigator.gmx.net/mail?sid=<SID>` using the SID from `ensure_gmx_session()` return value.
 
 **Files:** `agent_toolbox/core/fireworks_service.py` (OTP polling navigation fix)
+
+### 2026-05-23: Nav-Menu JS Click Broken (GEFIXT)
+
+**Was passiert ist:**
+Nach Chrome-Neustart + Flow 0 Login wurde die allEmailAddresses Iframe nie geladen.
+Der Grund: `_navigate_to_all_email_addresses` klickte via JS `.click()` auf versteckte
+Nav-Buttons (`#nav-menu button:contains("Wunsch-Mail")`). GMX React/Wicket ignoriert
+programmatische Klicks (prüft `isTrusted`). Selbst CDP `Input.dispatchMouseEvent`
+funktionierte nicht, weil die Buttons via CSS `display:none` auf grandparent versteckt
+waren → Koordinaten (0,0).
+
+**Diagnose:**
+- `get_window_state` → Nav-Buttons haben `display:none` auf grandparent
+- `getBoundingClientRect()` → (0,0) position
+- Auch mit `scrollIntoView()` + force-CSS ignoriert GMX die Klicks
+- Der einzige Weg zur Settings-Seite: CUA Klick auf "Einstellungen" AXButton [148]
+
+**Lösung (3-Schritt):**
+1. CUA click AXButton (Einstellungen für Ihr GMX Postfach) → navigiert zu `mail_settings/mail_settings`
+2. Die allEmailAddresses Iframe wird automatisch in der neuen Page geladen
+3. Playwright Frame-Scanning findet die Iframe-URL (8×3s Polling)
+
+**Files:**
+- `agent_toolbox/core/gmx_service.py` — `_navigate_to_all_email_addresses` komplett überarbeitet
+
+**Wichtige Erkenntnisse:**
+- `3c.gmx.net` (ohne -bap) funktioniert für direkte Playwright-Navigation
+- `mail_settings/mail_settings` ist der richtige Weg (nicht `produkte_ha` + nav-menu)
+- CUA kann AXButton (Einstellungen) klicken, auch ohne AXPress in actions-Liste
+- `from agent_toolbox.core.cua_helper import ...` statt `from cua_helper import ...` (PYTHONPATH)
 
 *Letzte Aktualisierung: 2026-05-11 (GMX URL Discovery: SPA hash vs navigator direct URL)*
 

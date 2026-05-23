@@ -640,7 +640,7 @@ class GmxService:
                     pass
 
             # Step 1: Find CUA window (Google Chrome only, avoid iTerm2)
-            from cua_helper import find_cua_window
+            from agent_toolbox.core.cua_helper import find_cua_window
             cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
             if not cua:
                 await asyncio.sleep(2)
@@ -682,18 +682,12 @@ class GmxService:
                 logger.info("E-Mail-Adressen already in tree")
                 return True
 
-            # Click Einstellungen via CUA to reach settings page
-            if 'Barrierefreies Postfach' in trees or 'GMX FreeMail' in trees:
-                el = find_element('Einstellungen', 'AXButton')
-                if el and el > 0:
-                    logger.info(f"CUA click Einstellungen [{el}]")
-                    cua_click(el)
-                    await asyncio.sleep(3)
-                else:
-                    logger.warning("Einstellungen not found in AX tree")
-            else:
-                # Not on inbox — use Playwright to navigate (avoids CDP IAC)
-                logger.info("Not on GMX inbox, navigating via Playwright...")
+            # Click Einstellungen via CUA to reach settings page.
+            # This navigates to mail_settings/mail_settings which has the
+            # allEmailAddresses iframe loaded automatically (no JS nav-click needed).
+            # First, ensure we're on the inbox (not the GMX homepage after restart).
+            if 'Einstellungen' not in trees and 'E-Mail schreiben' not in trees:
+                logger.info("Not on GMX inbox — navigating via Playwright first")
                 try:
                     from playwright.async_api import async_playwright
                     async with async_playwright() as __p:
@@ -711,55 +705,56 @@ class GmxService:
                                     await asyncio.sleep(3)
                                     break
                         logger.info(f"Playwright nav done: {__pg.url[:80]}")
-                        # Update SID from new URL
                         __sid_m = re.search(r'sid=([^&\s]+)', __pg.url)
                         if __sid_m:
                             sid = __sid_m.group(1)
                 except Exception as __e:
                     logger.warning(f"Playwright navigation fallback failed: {__e}")
-
-                # Reconnect CDP to the new GMX page
-                logger.info("Reconnecting CDP to fresh GMX page...")
                 try:
                     await client.disconnect()
                 except Exception:
                     pass
                 client, session_id, target_id = await self._connect_to_browser(9222)
-                await asyncio.sleep(1)
+                await asyncio.sleep(2)
 
-            # The settings page has a hidden nav-menu with items including
-            # "Wunsch-Mail / Persönliche Mail-Adressen". GMX hides the nav
-            # sidebar via CSS, making it invisible to CUA. Use CDP evaluate
-            # to click the hidden button, which loads the allEmailAddresses
-            # iframe even though the top-level URL changes to /produkte_ha.
-            try:
-                click_js = """
-                    const nav = document.querySelector('#nav-menu');
-                    if (nav) {
-                        for (const el of nav.querySelectorAll('button, a')) {
-                            const t = el.innerText || '';
-                            if (t.includes('Mail-Adressen') || t.includes('Wunsch-Mail')) {
-                                el.click(); break;
-                            }
-                        }
-                    }
-                """
-                await client.evaluate(session_id, click_js)
-                await asyncio.sleep(7)
-                # Check if allEmailAddresses iframe is now loaded (polling)
-                for _poll in range(6):
-                    targets_after = await client.get_targets()
-                    for t in targets_after:
-                        if 'allEmailAddresses' in t.get('url', ''):
-                            logger.info("allEmailAddresses iframe loaded!")
-                            return True
-                    await asyncio.sleep(2)
-                # Fallback: the top URL changed to /produkte_ha, iframe should load soon
-                logger.info("Settings page loaded, allEmailAddresses should be in frames")
-                return True
-            except Exception as e:
-                logger.warning(f"JS click on nav-menu failed: {e}")
-                return False
+            # Now click Einstellungen via CUA (we should be on inbox now)
+            el = find_element('Einstellungen', 'AXButton')
+            if el and el > 0:
+                logger.info(f"CUA click Einstellungen [{el}]")
+                cua_click(el)
+                await asyncio.sleep(5)
+            else:
+                logger.warning("Einstellungen not found in AX tree — trying Playwright nav")
+                try:
+                    from playwright.async_api import async_playwright
+                    async with async_playwright() as __p:
+                        __b = await __p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                        __pg = await __b.contexts[0].new_page()
+                        if sid:
+                            await __pg.goto(f"https://navigator.gmx.net/mail_settings/mail_settings?sid={sid}", wait_until="domcontentloaded", timeout=15000)
+                            logger.info(f"Direct settings nav: {__pg.url[:80]}")
+                            await asyncio.sleep(5)
+                except Exception as __e:
+                    logger.warning(f"Direct settings nav failed: {__e}")
+
+            # Poll for allEmailAddresses iframe via Playwright frame scanning.
+            # The mail_settings/mail_settings page loads it automatically.
+            for _poll in range(8):
+                try:
+                    from playwright.async_api import async_playwright as _pw
+                    async with _pw() as __pw:
+                        __br = await __pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+                        for __pg in __br.contexts[0].pages:
+                            if 'gmx' in __pg.url.lower() or 'produkte' in __pg.url:
+                                for __f in __pg.frames:
+                                    if 'allEmailAddresses' in __f.url:
+                                        logger.info(f"allEmailAddresses iframe loaded: {__f.url[:100]}")
+                                        return True
+                except Exception:
+                    pass
+                await asyncio.sleep(3)
+            logger.warning("allEmailAddresses iframe not found after Einstellungen click")
+            return False
 
         except Exception as e:
             logger.error(f"CUA navigation failed: {e}")
@@ -1004,7 +999,7 @@ class GmxService:
 
             # Step 6: CUA click OK button in dialog
             try:
-                from cua_helper import find_cua_window
+                from agent_toolbox.core.cua_helper import find_cua_window
                 cua = find_cua_window(title_keywords=["GMX", "E-Mail", "Einstell"])
                 cua_pid, cua_wid = cua if cua else (None, None)
 
