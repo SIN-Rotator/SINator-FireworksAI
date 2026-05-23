@@ -83,34 +83,6 @@ def _is_rate_limited(url: str = "", body_text: str = "") -> bool:
     return any(s in combined for s in signals)
 
 
-async def _check_http_status_via_cdp(client, session_id: str) -> bool:
-    """Prüft CDP Network.responseReceived Events auf HTTP 429/413/503."""
-    if not client or not session_id:
-        return False
-    try:
-        # Enable Network domain + get recent responses
-        await client.send_to_session(session_id, "Network.enable")
-        responses = await client.send_to_session(session_id, "Network.getResponseBodyForInterception", {})
-        # Fallback: evaluate via JS for recent XHR/fetch status
-        js = """
-        (function() {
-            var entries = performance.getEntriesByType('resource') || [];
-            var bad = entries.filter(e => e.responseStatus >= 400 && e.responseStatus < 600);
-            return bad.map(e => ({url: e.name, status: e.responseStatus}));
-        })()
-        """
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        bad_reqs = (result.get('result') or {}).get('value', [])
-        for req in bad_reqs:
-            if req.get('status') in (429, 413, 502, 503):
-                logger.warning(f"HTTP {req['status']} erkannt: {req.get('url','')[:60]}")
-                return True
-        return False
-    except Exception as e:
-        logger.debug(f"HTTP Status-Check fehlgeschlagen: {e}")
-        return False
-
-
 def _track_rate_limit(detected: bool) -> bool:
     """Circuit Breaker: trackt Rate-Limit-Hits, löst exponentielles Backoff aus."""
     now = time.time()
@@ -171,37 +143,6 @@ async def _purge_gmx_cookies(client: Optional["CDPClient"] = None, session_id: s
             logger.debug(f"Cookie-Purge fehlgeschlagen: {e}")
 
 
-async def _rate_limit_safe_call(fn, *args, max_retries: int = _RATE_LIMIT_RETRIES, client=None, session_id="", **kwargs):
-    """Wrapper: führt fn aus, erkennt Rate-Limiting (Text + HTTP-Status), retryt mit Purge."""
-    for attempt in range(max_retries + 1):
-        if _in_cooloff():
-            wait = _get_cooloff_remaining()
-            logger.info(f"⏳ Cooloff: noch {wait}s warten...")
-            await asyncio.sleep(wait + 1)
-
-        result = await fn(*args, **kwargs)
-        if isinstance(result, dict):
-            url = result.get("current_url", "")
-            error = result.get("error", "")
-            rate_limited = _is_rate_limited(url, error)
-
-            # Auch HTTP-Status-Codes prüfen
-            if not rate_limited and client and session_id:
-                rate_limited = await _check_http_status_via_cdp(client, session_id)
-
-            if rate_limited:
-                _track_rate_limit(True)
-                logger.warning(f"⚠️ Rate-Limit erkannt (attempt {attempt+1}/{max_retries+1})")
-                if attempt < max_retries:
-                    await _purge_gmx_cookies(client, session_id)
-                    await asyncio.sleep(3)
-                    continue
-            else:
-                _track_rate_limit(False)
-        return result
-    return result
-
-
 class GmxService:
     """
     Verwaltet GMX-Operationen via RAW CDP WEBSOCKET im Main Frame Default Context.
@@ -256,17 +197,6 @@ class GmxService:
         await client.send_to_session(session_id, "Runtime.enable")
         logger.info(f"CDP Session bereit: target={target_id[:15]}...")
         return client, session_id, target_id
-
-    async def _screenshot(self, client: CDPClient, session_id: str, label: str) -> str:
-        """Macht einen Screenshot und speichert ihn unter /tmp."""
-        ts = int(time.time())
-        path = f"/tmp/gmx_{label}_{ts}.png"
-        try:
-            await client.screenshot(session_id, path=path)
-            return path
-        except Exception as e:
-            logger.warning(f"Screenshot fehlgeschlagen für {label}: {e}")
-            return ""
 
     # ═══════════════════════════════════════════════════════════════════════════════
     #  NAVIGATION
@@ -455,105 +385,6 @@ class GmxService:
             return {"success": True, "current_url": settings_url, "sid": sid}
 
         return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren (poll timeout)"}
-
-    async def _click_element_by_text_cdp(self, client: CDPClient, session_id: str, text: str) -> bool:
-        """
-        ════════════════════════════════════════════════════════════════════════════════
-        CDP MOUSE CLICK BY TEXT CONTENT — WICKET EVENT BYPASS
-        ════════════════════════════════════════════════════════════════════════════════
-
-        ZWECK:
-        Findet ein DOM-Element anhand seines `textContent.trim()` und führt einen
-        echten Maus-Click via Chrome DevTools Protocol `Input.dispatchMouseEvent`
-        aus. Das ist der EINZIGE zuverlässige Weg, Wicket-basierte SPAs wie GMX
-        zu bedienen.
-
-        WARUM KEIN JS .click()?
-        ────────────────────────────────────────────────────────────────────────────────
-        GMX's Wicket Framework reagiert NICHT auf synthetische JS-Events wie
-        `element.click()`, `dispatchEvent(new MouseEvent(...))`, oder
-        `dispatchEvent(new PointerEvent(...))`. Wicket verlangt echte
-        Chrome-Compositor Mouse-Events die über CDP `Input.dispatchMouseEvent`
-        mit den korrekten Sequenzen (`mouseMoved` → `mousePressed` →
-        `mouseReleased`) gesendet werden.
-
-        ERKENNTNIS (2026-05-08):
-        JS .click() auf "E-Mail-Adressen" Link auf der 3c-bap Signature Seite
-        ändert die URL NICHT. CDP Input.dispatchMouseEvent auf die exakten
-        Koordinaten des <A> Tags ändert die URL innerhalb von 3 Sekunden zu
-        `allEmailAddresses`.
-
-        DOM-SELEKTIONSSTRATEGIE:
-        ────────────────────────────────────────────────────────────────────────────────
-        Wir suchen in einem breiten Selektor-Pool:
-          "a, button, [role=link], [role=button], li, span, div"
-        Das erste Element dessen `textContent.trim() === text` ist wird
-        selektiert. Wir bevorzugen damit interaktive Elemente (A, BUTTON)
-        gegenüber generischen Container-DIVs.
-
-        KOORDINATENBERECHNUNG:
-        ────────────────────────────────────────────────────────────────────────────────
-        Wir berechnen den Mittelpunkt des Elements via `getBoundingClientRect()`:
-          x = rect.x + rect.width / 2
-          y = rect.y + rect.height / 2
-        Das Element MUSS `rect.width > 0 && rect.height > 0` haben,
-        sonst ist es nicht gerendert (z.B. display:none).
-
-        CDP EVENT SEQUENZ:
-        ────────────────────────────────────────────────────────────────────────────────
-        1. mouseMoved   → positioniert den virtuellen Mauszeiger
-        2. sleep(0.3s)  → gibt Chrome Zeit für Hover-Effekte / event bubbling
-        3. mousePressed → linke Maustaste drücken (clickCount=1)
-        4. mouseReleased→ linke Maustaste loslassen (clickCount=1)
-
-        Args:
-            client: CDPClient Instanz (bereits verbunden)
-            session_id: CDP Session ID des Tabs
-            text: Exakter textContent.trim() des zu klickenden Elements
-
-        Returns:
-            True wenn das Element gefunden und geklickt wurde, False sonst
-        ════════════════════════════════════════════════════════════════════════════════
-        """
-        safe_text = text.replace('"', '\\"')
-        # JS-Funktion die durch alle interaktiven Elemente iteriert und
-        # das erste mit matching textContent zurückgibt.
-        js = f'''(function(){{
-            const all = document.querySelectorAll("a, button, [role=link], [role=button], li, span, div");
-            for (const el of all) {{
-                if (el.textContent.trim() === "{safe_text}") {{
-                    const rect = el.getBoundingClientRect();
-                    if (rect.width > 0 && rect.height > 0) {{
-                        return {{
-                            found: true,
-                            x: rect.x + rect.width / 2,
-                            y: rect.y + rect.height / 2,
-                            tag: el.tagName,
-                        }};
-                    }}
-                }}
-            }}
-            return {{found: false}};
-        }})()'''
-        result = await client.evaluate(session_id, js, return_by_value=True)
-        val = result.get("result", {}).get("value", {})
-        if not val.get("found"):
-            logger.warning(f"Element mit Text '{text}' nicht gefunden oder hat zero rect")
-            return False
-        x, y = val["x"], val["y"]
-        logger.info(f"CDP click '{text}' ({val.get('tag')}) at ({x:.1f}, {y:.1f})")
-        # CDP Mouse Event Sequenz (kritisch für Wicket):
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": x, "y": y,
-        })
-        await asyncio.sleep(0.3)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1,
-        })
-        return True
 
     async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str, target_id: str = "") -> bool:
         """
@@ -768,21 +599,6 @@ class GmxService:
     #       Runtime.evaluate returns EMPTY on accessible GMX pages
     #       Use DOM.performSearch + Input.dispatchMouseEvent instead
     # ═══════════════════════════════════════════════════════════════════════════════
-
-    async def _get_gmx_iframe_frame_id(self, client: CDPClient, session_id: str) -> Optional[str]:
-        """Findet die frameId des 3c.gmx.net Iframes im Haupt-Dokument."""
-        doc = await client.send_to_session(session_id, "DOM.getDocument", {"depth": 2})
-        result = await client.send_to_session(session_id, "DOM.querySelectorAll", {
-            "nodeId": doc['root']['nodeId'],
-            "selector": "iframe[src*='3c.gmx.net']"
-        })
-        if not result.get('nodeIds'):
-            logger.warning("3c.gmx.net iframe nicht gefunden")
-            return None
-        info = await client.send_to_session(session_id, "DOM.describeNode", {
-            "nodeId": result['nodeIds'][0], "depth": 1
-        })
-        return info['node'].get('frameId')
 
     async def _find_alias_coords_in_iframe(
         self, client: CDPClient, session_id: str
@@ -1026,112 +842,6 @@ class GmxService:
         finally:
             if client:
                 await client.disconnect()
-
-    # ═══════════════════════════════════════════════════════════════════════════════
-    #  ALIAS CREATION (VERIFIED 2026-05-11 via CDP DOM + Input)
-    # ═══════════════════════════════════════════════════════════════════════════════
-
-    async def _find_alias_input_coords(self, client: CDPClient, session_id: str) -> Optional[Dict[str, Any]]:
-        """Findet das erste Alias-Input-Feld via DOM.performSearch (nicht Runtime.evaluate)."""
-        search = await client.send_to_session(session_id, "DOM.performSearch", {
-            "query": "localPart", "includeUserAgentShadowDOM": True
-        })
-        if search['resultCount'] == 0:
-            return None
-
-        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
-            "searchId": search['searchId'], "fromIndex": 0, "toIndex": 1
-        })
-        for nid in nodes['nodeIds']:
-            try:
-                box = await client.send_to_session(session_id, "DOM.getBoxModel", {"nodeId": nid})
-                c = box['model']['content']
-                return {"x": c[0] + (c[2]-c[0])/2, "y": c[1] + (c[7]-c[1])/2}
-            except Exception:
-                continue
-        return None
-
-    async def _find_hinzufuegen_button_coords(
-        self, client: CDPClient, session_id: str, input_y: float
-    ) -> Optional[Dict[str, Any]]:
-        """Findet den Hinzufügen-Button nahe dem Input via DOM.performSearch."""
-        search = await client.send_to_session(session_id, "DOM.performSearch", {
-            "query": "Hinzufügen", "includeUserAgentShadowDOM": True
-        })
-        if search['resultCount'] == 0:
-            return None
-
-        nodes = await client.send_to_session(session_id, "DOM.getSearchResults", {
-            "searchId": search['searchId'], "fromIndex": 0,
-            "toIndex": search['resultCount']
-        })
-        for nid in nodes['nodeIds']:
-            try:
-                info = await client.send_to_session(session_id, "DOM.describeNode", {
-                    "nodeId": nid, "depth": 1
-                })
-                node = info['node']
-                if node.get('nodeType') != 3:
-                    continue
-                val = node.get('nodeValue', '') or ''
-                if 'Hinzufügen' not in val:
-                    continue
-                pid = node.get('parentId')
-                if not pid:
-                    continue
-                box = await client.send_to_session(session_id, "DOM.getBoxModel", {"nodeId": pid})
-                c = box['model']['content']
-                btn_y = c[1] + (c[7]-c[1])/2
-                # Take the button closest to the input
-                if abs(btn_y - input_y) < 150:
-                    return {"x": c[0] + (c[2]-c[0])/2, "y": btn_y}
-            except Exception:
-                continue
-        return None
-
-    async def _fill_alias_input_via_cdp(
-        self, client: CDPClient, session_id: str, alias_name: str,
-        input_coords: Dict[str, Any]
-    ) -> bool:
-        """Füllt das Alias-Input via CDP Input.dispatchKeyEvent (funktioniert ohne Runtime.evaluate)."""
-        ix, iy = input_coords['x'], input_coords['y']
-        logger.info(f"Click input at ({ix:.0f},{iy:.0f})")
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": ix, "y": iy
-        })
-        await asyncio.sleep(0.2)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": ix, "y": iy, "button": "left", "clickCount": 1
-        })
-        await asyncio.sleep(0.1)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": ix, "y": iy, "button": "left", "clickCount": 1
-        })
-        await asyncio.sleep(0.8)
-
-        for char in alias_name:
-            await client.send_to_session(session_id, "Input.dispatchKeyEvent", {
-                "type": "char", "text": char, "key": char
-            })
-            await asyncio.sleep(0.02)
-        await asyncio.sleep(0.5)
-        return True
-
-    async def _click_button_via_cdp(self, client: CDPClient, session_id: str, btn_info: Dict[str, Any]) -> None:
-        """Klickt einen Button via CDP Input.dispatchMouseEvent."""
-        btn_x = btn_info["x"]
-        btn_y = btn_info["y"]
-        logger.info(f"CDP Mouse click bei ({btn_x:.1f}, {btn_y:.1f})")
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseMoved", "x": btn_x, "y": btn_y, "button": "left",
-        })
-        await asyncio.sleep(0.3)
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mousePressed", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1,
-        })
-        await client.send_to_session(session_id, "Input.dispatchMouseEvent", {
-            "type": "mouseReleased", "x": btn_x, "y": btn_y, "button": "left", "clickCount": 1,
-        })
 
     async def _get_iframe_url(self, cdp_port: int = 9222) -> Optional[str]:
         """Findet die allEmailAddresses iframe URL aus bestehenden Seiten (mit Retry)."""
@@ -1989,150 +1699,6 @@ class GmxService:
             return {"status": "success", "current_url": url_result.get("result", {}).get("value", "")}
         except Exception as e:
             return {"status": "error", "error": str(e)}
-        finally:
-            if client:
-                await client.disconnect()
-
-    async def get_latest_email(
-        self, sender_filter: str = "fireworks", cdp_port: int = 9222
-    ) -> Dict[str, Any]:
-        """
-        Öffnet GMX Inbox, findet neueste Email mit sender_filter, gibt confirm URL zurück.
-        """
-        start_time = time.time()
-        client = None
-        try:
-            client, session_id, _ = await self._connect_to_browser(cdp_port)
-
-            # Navigate to GMX bap URL if not already there
-            url_check = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-            current_url = url_check.get("result", {}).get("value", "")
-            if "bap.navigator.gmx.net" not in current_url and "navigator.gmx.net" not in current_url:
-                await client.navigate(session_id, "https://bap.navigator.gmx.net/mail")
-
-            # Get mail iframe URL
-            iframe_result = await client.evaluate(session_id, '''
-            (function() {
-                const iframe = document.querySelector("#thirdPartyFrame_mail");
-                return iframe ? iframe.src : null;
-            })()
-            ''', return_by_value=True)
-            iframe_src = iframe_result.get("result", {}).get("value", "")
-            if not iframe_src:
-                return {"status": "error", "error": "thirdPartyFrame_mail nicht gefunden", "confirm_url": None}
-
-            # Navigate to webmailer
-            await client.navigate(session_id, iframe_src)
-
-            # Find email with sender_filter in the rendered list
-            email_js = f'''
-            (function() {{
-                const filter = "{sender_filter}".toLowerCase();
-                function walkAll(node, depth) {{
-                    if (depth > 15) return "";
-                    let txt = "";
-                    if (node.nodeType === 3) {{
-                        const v = node.nodeValue.trim();
-                        if (v.length > 0) txt += v + " ";
-                    }}
-                    const children = node.childNodes;
-                    for (let i = 0; i < children.length; i++) {{
-                        txt += walkAll(children[i], depth + 1);
-                    }}
-                    return txt;
-                }}
-                const allText = walkAll(document.body, 0);
-                const hasFilter = allText.toLowerCase().includes(filter);
-                if (!hasFilter) return JSON.stringify({{found: false, reason: "no filter match"}});
-
-                const allEls = document.querySelectorAll("*");
-                const clickable = Array.from(allEls).filter(el => {{
-                    const text = (el.textContent||"").toLowerCase();
-                    return text.includes(filter) && el.offsetParent !== null && (el.click || el.tagName === "A");
-                }});
-
-                if (clickable.length > 0) {{
-                    const el = clickable[0];
-                    el.scrollIntoView();
-                    if (el.click) el.click();
-                    else if (el.dispatchEvent) el.dispatchEvent(new MouseEvent("click", {{bubbles: true}}));
-                    return JSON.stringify({{
-                        found: true,
-                        clicked: el.textContent.trim().slice(0, 100),
-                        url: window.location.href
-                    }});
-                }}
-                return JSON.stringify({{found: false, reason: "no clickable element"}});
-            }})()
-            '''
-            email_result = await client.evaluate(session_id, email_js, return_by_value=True, timeout=15.0)
-            email_data_str = email_result.get("result", {}).get("value", "{}")
-            try:
-                email_data = json.loads(email_data_str)
-            except:
-                email_data = {"found": False, "reason": "parse error"}
-
-            if not email_data.get("found"):
-                return {
-                    "status": "not_found",
-                    "confirm_url": None,
-                    "iframe_src": iframe_src,
-                    "execution_time": f"{time.time()-start_time:.2f}s",
-                    "error": email_data.get("reason", "email nicht gefunden"),
-                }
-
-            logger.info(f"Email geklickt: {email_data.get('clicked')}")
-
-            # Now extract confirm URL from opened email
-            await asyncio.sleep(2)
-
-            confirm_js = '''
-            (function() {
-                function walkAll(node, depth) {
-                    if (depth > 15) return "";
-                    let txt = "";
-                    if (node.nodeType === 3) {
-                        const v = node.nodeValue.trim();
-                        if (v.length > 0) txt += v + " ";
-                    }
-                    const children = node.childNodes;
-                    for (let i = 0; i < children.length; i++) {
-                        txt += walkAll(children[i], depth + 1);
-                    }
-                    return txt;
-                }
-                const allText = walkAll(document.body, 0).toLowerCase();
-                const match = allText.match(/https:\\/\\/app\\.fireworks\\.ai[^\\s'"<>]+(?:confirm|verify|token|email_verification)[^\\s'"<>]*/);
-                return match ? match[0] : null;
-            })()
-            '''
-            confirm_result = await client.evaluate(session_id, confirm_js, return_by_value=True, timeout=15.0)
-            confirm_url = confirm_result.get("result", {}).get("value", "")
-
-            elapsed = time.time() - start_time
-            if confirm_url:
-                logger.info(f"Confirm URL gefunden: {confirm_url[:60]}...")
-                return {
-                    "status": "success",
-                    "confirm_url": confirm_url,
-                    "execution_time": f"{elapsed:.2f}s",
-                }
-            else:
-                return {
-                    "status": "found_no_url",
-                    "confirm_url": None,
-                    "email_clicked": email_data.get("clicked"),
-                    "execution_time": f"{elapsed:.2f}s",
-                    "error": "Email geöffnet aber keine confirm URL gefunden",
-                }
-
-        except Exception as e:
-            return {
-                "status": "error",
-                "confirm_url": None,
-                "execution_time": f"{time.time()-start_time:.2f}s",
-                "error": str(e),
-            }
         finally:
             if client:
                 await client.disconnect()
