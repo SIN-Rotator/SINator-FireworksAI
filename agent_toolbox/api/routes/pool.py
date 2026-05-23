@@ -15,6 +15,7 @@
 """
 import time
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
@@ -123,6 +124,48 @@ async def get_api_key():
         "key_id": key.get("id"),
         "alias_email": key.get("alias_email"),
     }
+
+
+@router.post("/report")
+async def report_bad_key(request: dict):
+    """
+    Key als verbraucht melden (Rate-Limit/Suspended).
+    Markiert den Key als used und liefert einen neuen.
+    
+    Body: {"key_id": "xxx"} oder {"api_key": "fw_xxx"}
+    """
+    pool_mgr = get_pool_manager()
+    key_id = request.get("key_id") or request.get("id")
+    api_key = request.get("api_key") or request.get("key")
+    
+    if key_id:
+        pool_mgr.mark_used(key_id)
+    elif api_key:
+        # Find key by api_key value
+        for k in pool_mgr.get_stats()["keys"]:
+            if k.get("api_key") == api_key:
+                pool_mgr.mark_used(k["id"])
+                break
+        else:
+            # Try direct file lookup
+            import json
+            pool_data = json.loads(Path("data/fireworksai-pool.json").read_text())
+            for k in pool_data:
+                if k.get("api_key") == api_key:
+                    pool_mgr.mark_used(k["id"])
+                    break
+    
+    # Return fresh key
+    new_key = pool_mgr.get_available_key()
+    if new_key:
+        return {
+            "status": "success",
+            "swapped": True,
+            "new_key": new_key.get("api_key"),
+            "new_key_id": new_key.get("id"),
+            "new_alias": new_key.get("alias_email"),
+        }
+    return {"status": "no_keys_available", "swapped": False}
 
 
 @router.get("/health")
