@@ -122,12 +122,15 @@ def _gmx_throttle(delay: float = 3.0):
 
 
 async def _purge_gmx_cookies(client: Optional["CDPClient"] = None, session_id: str = ""):
-    """Löscht stale GMX-Cookies von Disk + Chrome (vor Recovery)."""
+    """Löscht stale GMX-Cookies von Disk + Chrome (vor Recovery).
+    
+    Entfernt NICHT den Master-Backup (backup/session/gmx-cookies-master.json)!
+    """
     from pathlib import Path
-    for p in [Path("./data/gmx-cookies.json"), Path("./backup/session/gmx-cookies-master.json")]:
-        if p.exists():
-            p.unlink()
-            logger.info(f"🧹 Gelöscht: {p}")
+    p = Path("./data/gmx-cookies.json")
+    if p.exists():
+        p.unlink()
+        logger.info(f"🧹 Gelöscht: {p}")
     if client and session_id:
         try:
             cookies = await client.send_to_session(session_id, "Network.getAllCookies")
