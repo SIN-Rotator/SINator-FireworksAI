@@ -4,6 +4,20 @@
 
 ---
 
+## 🛑 BANNED: Health Check Side-Effects (2026-05-23)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| `GET /pool/health` ruft `mark_used()` auf | Destruktiver Side-Effect! 7 Keys zerstört am 2026-05-23 |
+| Dashboard `loadDashboard()` ruft `/pool/health` | Überschreibt stats-Anzeige mit health-Daten |
+| `PoolManager` ohne `reload()` | Singleton hat stale State, sieht keine externen Änderungen |
+| `_purge_gmx_cookies()` löscht Master-Backup | Überschreibt `backup/session/gmx-cookies-master.json` |
+| `update_credits()` hat NULL Callers | Credits werden nie gezogen — alle Keys zeigen `credits_remaining=6.0` |
+
+**✅ Korrektur:** Health-Endpoint ist read-only. PoolManager ruft `reload()` vor jeder public Methode.
+
+---
+
 ## 🛑 BANNED: E2E Flow (2026-05-22)
 
 | ❌ Verboten | Grund |

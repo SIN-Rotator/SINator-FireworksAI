@@ -1,10 +1,10 @@
-# BUILDING PLAN — SINator Fireworks AI V8 ✅ (2026-05-22)
+# BUILDING PLAN — SINator Fireworks AI V9 ✅ (2026-05-23)
 
-## ✅ V8 Status: COMPLETE
+## ✅ V9 Status: COMPLETE
 
 ```
-GMX Login → Rotation (~63s) → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key → Pool
-Latest: pulse-jaguar-899 → fw_6rWU4KGUPts6zVnaRreu6R (30 Keys, ~209s avg)
+GMX Login → Rotation (~48s) → Fireworks Signup → OTP → Verify → Login → Onboarding → API Key → Pool
+Pool: 45 Keys, ~173s avg (nach sleep-Reduktion 209s→173s)
 ```
 
 | Flow | Name | Status | Tool |
@@ -17,21 +17,23 @@ Latest: pulse-jaguar-899 → fw_6rWU4KGUPts6zVnaRreu6R (30 Keys, ~209s avg)
 | #4 | Onboarding | ✅ | CUA: "First"+"Last" type_text + Terms AXPress |
 | #5 | Use-Case + $5 | ✅ | CUA dynamic scan text-based checkboxes |
 | #6 | API Key | ✅ | PopUpButton force-click + menuitem + Generate |
-| #7 | Pool | ✅ | Auto-save (30 keys total, 29 available) |
+| #7 | Pool | ✅ | Auto-save (45 keys total, 45 available) |
 
 ## ✅ V5-V8 Completed Milestones
 
 | # | Task | Ergebnis |
 |---|------|----------|
-| 1 | Full-Flow Automation | `rotation.py` V8 — Playwright+CUA+CDP hybrid |
-| 2 | API-Key Pool | 30 Keys (29 available), auto-save |
+| 1 | Full-Flow Automation | `rotation.py` V9 — Playwright+CUA+CDP hybrid |
+| 2 | API-Key Pool | 45 Keys (45 available), auto-save |
 | 3 | fireworks_service.py | 3103→114 Zeilen (-96%), V5 Playwright+CUA |
-| 4 | Cleanup | Obsolete files gelöscht (preflight.py, command_registry.json, etc.) |
+| 4 | V5 Cleanup | Obsolete files gelöscht (preflight.py, command_registry.json, etc.) |
 | 5 | Single Command | `python tools/rotate.py` — E2E in einem Befehl |
 | 6 | Dynamic CUA Scanning | Text-based `_find_element()` — keine Hardcoded-Indizes |
 | 7 | Chrome Config | NON-accessibility mode: `--profile-directory="Profile 901"`, Port 9222 |
 | 8 | V7 Self-Healing | Rate-Limit Backoff, OOPIF Polling, API Key Retry |
 | 9 | V8 GMX Nav Fix | Playwright inbox goto + CUA Einstellungen + JS hidden-nav + New-Tab iframe |
+| 10 | V9 Sleep-Reduktion | 5s→2s, 3s→1.5s, iframe-Cache → 209s→173s |
+| 11 | V9 Bugfixes | Health-Check mark_used(), Dashboard override, purge master backup, PoolManager reload |
 
 ---
 
@@ -154,10 +156,10 @@ rtk test pytest tests/ -v
 | 2 | OOPIF Polling Fix (statt Timeout-Recovery) | 2h | 🔴 Hoch | ✅ **DONE** |
 | 3 | API Key "Missing Name" Auto-Retry | 1h | 🟡 Mittel | ✅ **DONE** |
 
-### Current E2E Status (2026-05-22)
+### Current E2E Status (2026-05-23)
 ```
-GMX Login (built-in) → Alias Rotation (~63s) → FW Signup → OTP → Login → Onboarding → API Key → Pool
-Latest: pulse-jaguar-899 → fw_6rWU4KGUPts6zVnaRreu6R (30 Keys total, ~209s avg)
+GMX Login (built-in) → Alias Rotation (~48s) → FW Signup → OTP → Login → Onboarding → API Key → Pool
+Pool: 45 Keys total, ~173s avg
 ```
 
 ### V7.1 — Rate-Limit Circuit Breaker (DONE)
@@ -234,11 +236,22 @@ Ab jetzt nur noch:
 | 🔄 Live Runs | `python tools/rotate.py` — Keys generieren |
 | 📝 AGENTS.md | Learnings aus Live-Runs dokumentieren |
 
-**Status:** Feature-Complete ✅ — 30 Keys, ~209s/Rotation, Self-Healing aktiv.
+**Status:** Feature-Complete ✅ — 45 Keys, ~173s/Rotation, Self-Healing aktiv.
 
 ---
 
-## 🚀 Quick Start (V8)
+## 📌 V9 Known Issue: Account Suspension
+
+Fireworks suspendiert Accounts bei Spending Limit ($5 Credits aufgebraucht):
+```
+Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
+spending limit or failure to pay past invoices.
+```
+**Workaround:** Key via `POST /pool/report` als used markieren → neuen Key aus Pool holen.
+
+---
+
+## 🚀 Quick Start (V9)
 
 ```bash
 # Chrome mit Profile 901 (OHNE accessibility!)

@@ -59,6 +59,67 @@ async def _call_alias_api(method: str, path: str, data: Optional[Dict[str, Any]]
         return r.json()
 
 
+async def _gmx_create_via_api(alias_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """GMX Alias Create via gmx-alias-tool API (localhost:8001)."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("http://localhost:8001/alias/create", json={"alias_name": alias_name})
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "success":
+                    return data
+    except Exception as e:
+        logger.warning(f"gmx-alias-tool create API error: {e}")
+    return None
+
+
+async def _gmx_create_fallback(alias_name: Optional[str] = None) -> Dict[str, Any]:
+    """Fallback: GMX Alias Create direkt via GmxService."""
+    from agent_toolbox.core.gmx_service import GmxService
+    svc = GmxService()
+    await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    result = await svc.create_alias(alias_name=alias_name, cdp_port=9222)
+    if result.get("status") == "success":
+        return result
+    raise RuntimeError(f"GMX create fallback failed: {result.get('error', 'unknown')}")
+
+
+async def _gmx_rotate_via_api_noauth(alias_name: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """GMX Alias Rotate via gmx-alias-tool API (localhost:8001) — kein Auth nötig."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("http://localhost:8001/alias/rotate", json={"alias_name": alias_name or ""})
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") == "success":
+                    return data
+    except Exception as e:
+        logger.warning(f"gmx-alias-tool rotate API error: {e}")
+    return None
+
+
+async def _gmx_delete_via_api() -> Optional[Dict[str, Any]]:
+    """GMX Alias Delete via gmx-alias-tool API (localhost:8001)."""
+    try:
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post("http://localhost:8001/alias/delete")
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("status") in ("success", "no_alias"):
+                    return data
+    except Exception as e:
+        logger.warning(f"gmx-alias-tool delete API error: {e}")
+    return None
+
+
+async def _gmx_delete_fallback() -> Dict[str, Any]:
+    """Fallback: GMX Alias Delete direkt via GmxService."""
+    from agent_toolbox.core.gmx_service import GmxService
+    svc = GmxService()
+    await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    return await svc.delete_existing_alias(cdp_port=9222)
+
+
 def _require_browser():
     """
     Prüft ob der Browser läuft und gibt den CDP-Port zurück.
@@ -188,7 +249,8 @@ async def delete_alias():
     """
     Löscht einen existierenden GMX Alias.
 
-    Delegiert an die standalone gmx-alias-tool API auf port 8001.
+    Versucht zuerst die standalone gmx-alias-tool API auf port 8001,
+    fallback auf direkte GmxService-Operation.
 
     Returns:
         status: "success" | "no_alias" | "not_logged_in" | "error"
@@ -198,9 +260,19 @@ async def delete_alias():
     t0 = time.time()
 
     try:
-        result = await _call_alias_api("POST", "/alias/delete")
+        result = await _gmx_delete_via_api()
+        if result:
+            return GmxAliasDeleteResponse(
+                status=result["status"],
+                deleted=result.get("deleted", False),
+                alias=result.get("alias"),
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=result.get("error"),
+            )
+        logger.info("gmx-alias-tool API offline, using direct fallback")
+        result = await _gmx_delete_fallback()
         return GmxAliasDeleteResponse(
-            status=result["status"],
+            status=result.get("status", "error"),
             deleted=result.get("deleted", False),
             alias=result.get("alias"),
             execution_time=f"{time.time()-t0:.2f}s",
@@ -234,16 +306,32 @@ async def rotate_alias(request: GmxAliasRotateRequest = None):
     new_alias_name = request.new_alias_name if request else None
 
     try:
-        result = await _call_alias_api("POST", "/alias/rotate", {"alias_name": new_alias_name})
+        result = await _gmx_rotate_via_api_noauth(new_alias_name)
+        if result:
+            return GmxAliasRotateResponse(
+                status=result.get("status", "success"),
+                deleted_alias=result.get("deleted_alias"),
+                created_alias=result.get("alias_email"),
+                created_alias_name=result.get("created_alias_name"),
+                steps_completed=result.get("steps_completed", []),
+                steps_failed=result.get("steps_failed", []),
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=result.get("error"),
+            )
+        logger.info("gmx-alias-tool API offline, using direct fallback")
+        from agent_toolbox.core.gmx_service import GmxService
+        svc = GmxService()
+        await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+        fb_result = await svc.rotate_alias(new_alias_name=new_alias_name, cdp_port=9222)
         return GmxAliasRotateResponse(
-            status=result["status"],
-            deleted_alias=result.get("deleted_alias"),
-            created_alias=result.get("alias_email"),
-            created_alias_name=result.get("created_alias_name"),
-            steps_completed=result.get("steps_completed", []),
-            steps_failed=result.get("steps_failed", []),
+            status=fb_result.get("status", "error"),
+            deleted_alias=fb_result.get("deleted_alias"),
+            created_alias=fb_result.get("created_alias"),
+            created_alias_name=fb_result.get("created_alias_name"),
+            steps_completed=fb_result.get("steps_completed", []),
+            steps_failed=fb_result.get("steps_failed", []),
             execution_time=f"{time.time()-t0:.2f}s",
-            error=result.get("error"),
+            error=fb_result.get("error"),
         )
     except Exception as e:
         logger.error(f"Alias-Rotate endpoint fehlgeschlagen: {e}")
@@ -255,7 +343,8 @@ async def create_alias(alias_name: str = None):
     """
     Erstellt einen neuen GMX Alias.
 
-    Delegiert an die standalone gmx-alias-tool API auf port 8001.
+    Versucht zuerst die standalone gmx-alias-tool API auf port 8001,
+    fallback auf direkte GmxService-Operation.
 
     Args:
         alias_name: Optionaler Alias-Name (ohne @gmx.de). Wenn None, wird generiert.
@@ -269,18 +358,34 @@ async def create_alias(alias_name: str = None):
     t0 = time.time()
 
     try:
-        result = await _call_alias_api("POST", "/alias/create", {"alias_name": alias_name})
+        result = await _gmx_create_via_api(alias_name)
+        if result:
+            return GmxAliasResponse(
+                status=result["status"],
+                alias_email=result.get("alias_email"),
+                alias_name=result.get("alias_name"),
+                steps_completed=result.get("steps_completed", []),
+                execution_time=f"{time.time()-t0:.2f}s",
+                error=result.get("error"),
+            )
+        logger.info("gmx-alias-tool API offline, using direct fallback")
+        result = await _gmx_create_fallback(alias_name)
         return GmxAliasResponse(
-            status=result["status"],
+            status="success",
             alias_email=result.get("alias_email"),
             alias_name=result.get("alias_name"),
-            steps_completed=result.get("steps_completed", []),
+            steps_completed=["alias_created"],
             execution_time=f"{time.time()-t0:.2f}s",
-            error=result.get("error"),
         )
     except Exception as e:
         logger.error(f"Alias-Create endpoint fehlgeschlagen: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return GmxAliasResponse(
+            status="error",
+            alias_email=None,
+            alias_name=alias_name,
+            execution_time=f"{time.time()-t0:.2f}s",
+            error=str(e),
+        )
 
 
 @router.post("/inbox/open", response_model=GmxInboxOpenResponse)

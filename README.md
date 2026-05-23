@@ -32,7 +32,7 @@ python agent_toolbox/start_toolbox.py
 
 ---
 
-## E2E Flow (V7 — ~213s)
+## E2E Flow (V9 — ~173s)
 
 ```
 Step 0:  GMX Login via Playwright                      → frische Cookies
@@ -43,8 +43,8 @@ Step 4:  Verify + Login + Onboarding (CUA+Playwright)   → Dashboard reached
 Step 5:  API Key Creation (Playwright PopUpButton)      → fw_G93EigYuyQnbeCfNiSCZwy
 Step 6:  Save to Pool                                   → 30 keys total
 
-**Pool:** 30 API Keys (29 available, 1 used)
-**Latest Key:** `cosmic-raven-683` → `fw_G93EigYuyQnbeCfNiSCZwy`
+**Pool:** 45 API Keys (45 available, 0 used)
+**Cycle Time:** ~173s (nach V9 sleep-Reduktion)
 
 ---
 
@@ -204,7 +204,7 @@ curl -X POST http://localhost:8000/api/v1/rotation/full \
     "api_key_saved_to_pool"
   ],
   "steps_failed": [],
-  "execution_time": "~209s"
+  "execution_time": "~173s"
 }
 ```
 
@@ -262,8 +262,8 @@ CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-
 [
   {
     "id": "3d4eeb2e",
-    "api_key": "fw_6rWU4KGUPts6zVnaRreu6R",
-    "alias_email": "pulse-jaguar-899@gmx.de",
+    "api_key": "fw_xxxx...",
+    "alias_email": "alias-123@gmx.de",
     "key_name": "pulse",
     "created_at": "2026-05-22T17:00:00Z",
     "used": false,
@@ -325,7 +325,12 @@ CDP `NativeInputValueSetter` NUR für React controlled inputs (Fireworks Signup-
 | OOPIF polling (zuverlässiges OTP-Finden) | ✅ |
 | API Key "Missing Name" auto-retry | ✅ |
 | V8 GMX Nav Fix: Playwright inbox + CUA + JS hidden-nav + New-Tab iframe | ✅ |
+| V9 Cleanup: 10 dead methods removed, sleep-Reduktion 209s→173s | ✅ |
+| V9 Bugfix: Health-Check mark_used() removed (zerstörte 7 Keys) | ✅ |
+| V9 Bugfix: Dashboard /pool/health override entfernt | ✅ |
+| V9 Bugfix: purge_gmx_cookies löscht nicht mehr Master-Backup | ✅ |
+| V9 Bugfix: PoolManager reload() vor jeder public Methode | ✅ |
 
 ---
 
-*V8 — 2026-05-22 | 30 API Keys | ~209s per rotation*
+*V9 — 2026-05-23 | 45 API Keys | ~173s per rotation*

@@ -388,210 +388,163 @@ class GmxService:
 
         return {"success": False, "current_url": current_url, "error": "Konnte keine GMX Session aktivieren (poll timeout)"}
 
-    async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str, target_id: str = "") -> bool:
-        """
-        Navigiert zur GMX E-Mail-Adressen Seite via CUA Klicks.
+    async def _navigate_to_inbox_for_cua(self, client: CDPClient, session_id: str) -> Optional[str]:
+        """Navigiert zur GMX Inbox via CDP JS (vermeidet IAC) und gibt SID zurück.
 
-        FLOW:
-        1. Page.navigate www.gmx.net → GMX homepage
-        2. CUA click AXLink (E-Mail) → accessible inbox (Barrierefreies Postfach)
-        3. CUA click AXButton (Einstellungen für Ihr GMX Postfach) → settings
-        4. Settings page shows E-Mail-Adressen section → return True
+        Verwendet CDP JS click auf "E-Mail" Link von der Homepage, statt CDP Page.navigate.
+        Der JS-click auf "E-Mail" funktioniert und liefert eine gültige SID.
+        Nach dieser Methode ist der Browser-Tab auf der INBOX (nicht auf mail_settings).
         """
-        import json
-        import re
+        import re as _re
+        # Check current URL
+        url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+        current_url = url_result.get("result", {}).get("value", "")
 
+        # If already on inbox with SID, return it
+        if 'navigator.gmx.net/mail?sid=' in current_url or 'bap.navigator.gmx.net/mail?sid=' in current_url:
+            _m = _re.search(r'[?&]sid=([^&]+)', current_url)
+            if _m:
+                return _m.group(1)
+
+        # Navigate to GMX homepage
+        await client.navigate(session_id, "https://www.gmx.net/")
+        await asyncio.sleep(3)
+
+        # Click "E-Mail" via CDP JS (known working pattern)
+        await client.evaluate(session_id, """
+            (function(){
+                var links = document.querySelectorAll('a');
+                for(var i=0;i<links.length;i++){
+                    var t = links[i].textContent.trim().toLowerCase();
+                    if(t === 'e-mail'){ links[i].click(); return true; }
+                }
+                return false;
+            })()
+        """, return_by_value=True)
+        await asyncio.sleep(5)
+
+        # Get SID from redirect URL
+        url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)
+        current_url = url_result.get("result", {}).get("value", "")
+        _m = _re.search(r'[?&]sid=([^&]+)', current_url)
+        if _m:
+            logger.info(f"Navigated to inbox, SID obtained")
+            return _m.group(1)
+
+        logger.warning("Could not navigate to inbox")
+        return None
+
+    async def _navigate_to_all_email_addresses(self, client: CDPClient, session_id: str, target_id: str = "") -> Optional[str]:
+        """Navigiert zur allEmailAddresses Seite.
+
+        V8/9 Fix (2026-05-24):
+        1. Navigiere zur Inbox via CDP JS click "E-Mail" (kein Page.navigate → kein IAC)
+        2. CUA click "Einstellungen" AXButton vom Postfach → öffnet mail_settings/mail_settings
+        3. Playwright Frame-Scanning: allEmailAddresses Iframe wird AUTOMATISCH geladen
+        4. Fallback: CDP JS click auf "E-Mail-Adressen" Link in settings iframe
+
+        Returns: allEmailAddresses iframe URL (für Logging) oder None.
+        """
+        import re as _re
         try:
-            # Step 0: Find GMX page target and navigate to homepage
-            targets = await client.get_targets()
-            current_url = ""
-            sid = None
-            has_gmx_page = False
-            for t in targets:
-                url = t.get("url", "")
-                if t.get("type") == "page" and "gmx.net" in url:
-                    has_gmx_page = True
-                    if "sid=" in url or "jsessionid=" in url or "allEmailAddresses" in url:
-                        current_url = url
-                        m = re.search(r'(?:sid=([a-f0-9]{70,})|jsessionid=([A-F0-9]{30,}))', url)
-                        if m: sid = m.group(1) or m.group(2)
-                        break
+            # Step 1: Ensure we're on the inbox page with a valid SID
+            _sid = await self._navigate_to_inbox_for_cua(client, session_id)
+            if not _sid:
+                # Fallback to old ensure_mail_session
+                sess = await self._ensure_mail_session(client, session_id)
+                if not sess["success"]:
+                    return None
+                _sid = sess.get("sid")
 
-            if not has_gmx_page:
-                logger.warning("Keine GMX Page — purge + injiziere Cookies und navigiere zu GMX")
-                await _purge_gmx_cookies(client, session_id)
-                await self._inject_saved_cookies(client, session_id)
-                await client.send_to_session(session_id, "Page.navigate", {"url": "https://www.gmx.net"})
-                await asyncio.sleep(3)
-                # Rate-Limit Check nach Navigation
-                rl_url = await client.evaluate(session_id, "window.location.href", return_by_value=True)
-                rl_url_val = rl_url.get("result", {}).get("value", "")
-                if _is_rate_limited(rl_url_val):
-                    _track_rate_limit(True)
-                    logger.warning(f"⚠️ Rate-Limit in Navigation: {rl_url_val[:60]}")
-                    return False
-                # After navigation, re-check targets
-                targets = await client.get_targets()
-                for t in targets:
-                    url = t.get("url", "")
-                    if t.get("type") == "page" and "gmx.net" in url:
-                        has_gmx_page = True
-                        target_id = t["targetId"]
-                        if "sid=" in url:
-                            m = re.search(r'sid=([a-f0-9]{70,})', url)
-                            if m: sid = m.group(1)
-                        break
-                if not has_gmx_page:
-                    logger.error("Auch nach Cookie-Injektion keine GMX Session")
-                    return False
-
-            if 'email_addresses' in current_url or 'allEmailAddresses' in current_url:
-                logger.info("Bereits auf E-Mail-Adressen Seite")
-                return True
-
-            # The GMX page should already be at the inbox (from rotate.py Playwright
-            # login step). CDP Page.navigate would trigger IAC anti-automation.
-            # Just activate the existing GMX target — no navigation needed.
-            await asyncio.sleep(2)
-            # Bring GMX tab to front — CDP + Playwright for macOS foreground
-            if target_id:
-                try:
-                    await client.send("Target.activateTarget", {"targetId": target_id})
-                    await asyncio.sleep(1)
-                except Exception:
-                    pass
-                try:
-                    from playwright.async_api import async_playwright as _pw
-                    async with _pw() as _pww:
-                        _br = await _pww.chromium.connect_over_cdp("http://127.0.0.1:9222")
-                        for _pg in _br.contexts[0].pages:
-                            if 'gmx' in _pg.url.lower() and 'sid=' in _pg.url:
-                                await _pg.bring_to_front()
-                                await asyncio.sleep(2)
-                                break
-                except Exception:
-                    pass
-
-            # Step 1: Find CUA window (Google Chrome only, avoid iTerm2)
-            from agent_toolbox.core.cua_helper import find_cua_window
-            cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
-            if not cua:
-                await asyncio.sleep(2)
-                cua = find_cua_window(title_keywords=["GMX", "gmx", "freemail", "E-Mail"])
-            cua_pid, cua_wid = cua if cua else (None, None)
-
-            if not cua_pid:
-                logger.warning("GMX window nicht via CUA gefunden")
-                return False
-
-            def get_tree():
-                r = subprocess.run(
-                    ["cua-driver", "call", "get_window_state"],
-                    capture_output=True, text=True, timeout=15,
-                    input=json.dumps({"pid": cua_pid, "window_id": cua_wid})
-                )
-                return json.loads(r.stdout).get('tree_markdown', '')
-
-            def cua_click(el):
-                subprocess.run(
-                    ["cua-driver", "call", "click"],
-                    capture_output=True, text=True, timeout=10,
-                    input=json.dumps({"pid": cua_pid, "window_id": cua_wid, "element_index": el})
-                )
-
-            def find_element(text, el_type=""):
-                for line in get_tree().split('\n'):
-                    s = line.strip()
-                    if text in s and (not el_type or el_type in s):
-                        m = re.search(r'\]?\s*-\s*\[(\d+)\]', s)
-                        if m: return int(m.group(1))
+            if not _sid:
+                logger.warning("Could not get GMX SID")
                 return None
 
-            # Already on settings page?
-            trees = get_tree()
-            # Debug: log first 200 chars of AX tree
-            logger.debug(f"AX tree (first 300): {trees[:300].replace(chr(10), ' | ')}")
-            if 'E-Mail-Adressen' in trees:
-                logger.info("E-Mail-Adressen already in tree")
-                return True
+            # Step 2: CUA click "Einstellungen" from inbox + Playwright scan
+            from playwright.async_api import async_playwright
 
-            # Click Einstellungen via CUA to reach settings page.
-            # This navigates to mail_settings/mail_settings which has the
-            # allEmailAddresses iframe loaded automatically (no JS nav-click needed).
-            # First, ensure we're on the inbox (not the GMX homepage after restart).
-            if 'Einstellungen' not in trees and 'E-Mail schreiben' not in trees:
-                logger.info("Not on GMX inbox — navigating via Playwright first")
+            async with async_playwright() as _pw:
+                _b = await _pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+
+                # Try CUA click "Einstellungen" — only visible on inbox/mail page
+                _cua_success = False
                 try:
-                    from playwright.async_api import async_playwright
-                    async with async_playwright() as __p:
-                        __b = await __p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-                        __pg = await __b.contexts[0].new_page()
-                        if sid:
-                            await __pg.goto(f"https://bap.navigator.gmx.net/mail?sid={sid}", wait_until="domcontentloaded", timeout=15000)
-                        else:
-                            await __pg.goto("https://www.gmx.net/", wait_until="domcontentloaded", timeout=15000)
-                            await asyncio.sleep(2)
-                            for __btn in await __pg.locator('button').all():
-                                __t = (await __btn.text_content() or '').strip().lower()
-                                if __t in ('zum postfach', 'e-mail'):
-                                    await __btn.click(force=True)
-                                    await asyncio.sleep(3)
+                    from agent_toolbox.core.cua_helper import find_cua_window, cua_click, cua_get_window_state
+                    _cua = find_cua_window(title_keywords=["GMX", "FreeMail", "E-Mail", "Postfach"])
+                    if _cua:
+                        _cua_pid, _cua_wid = _cua
+                        _tree = cua_get_window_state(_cua_pid, _cua_wid)
+                        _einst_idx = None
+                        for _line in _tree.split('\n'):
+                            _s = _line.strip()
+                            if 'Einstellungen' in _s and 'AXButton' in _s:
+                                _m2 = _re.search(r'\]?\s*-\s*\[(\d+)\]', _s)
+                                if _m2:
+                                    _einst_idx = int(_m2.group(1))
                                     break
-                        logger.info(f"Playwright nav done: {__pg.url[:80]}")
-                        __sid_m = re.search(r'sid=([^&\s]+)', __pg.url)
-                        if __sid_m:
-                            sid = __sid_m.group(1)
-                except Exception as __e:
-                    logger.warning(f"Playwright navigation fallback failed: {__e}")
-                try:
-                    await client.disconnect()
-                except Exception:
-                    pass
-                client, session_id, target_id = await self._connect_to_browser(9222)
-                await asyncio.sleep(2)
 
-            # Now click Einstellungen via CUA (we should be on inbox now)
-            el = find_element('Einstellungen', 'AXButton')
-            if el and el > 0:
-                logger.info(f"CUA click Einstellungen [{el}]")
-                cua_click(el)
-                await asyncio.sleep(2)
-            else:
-                logger.warning("Einstellungen not found in AX tree — trying Playwright nav")
-                try:
-                    from playwright.async_api import async_playwright
-                    async with async_playwright() as __p:
-                        __b = await __p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-                        __pg = await __b.contexts[0].new_page()
-                        if sid:
-                            await __pg.goto(f"https://navigator.gmx.net/mail_settings/mail_settings?sid={sid}", wait_until="domcontentloaded", timeout=15000)
-                            logger.info(f"Direct settings nav: {__pg.url[:80]}")
-                            await asyncio.sleep(5)
-                except Exception as __e:
-                    logger.warning(f"Direct settings nav failed: {__e}")
+                        if _einst_idx:
+                            logger.info(f"CUA click Einstellungen (element [{_einst_idx}])")
+                            cua_click(_cua_pid, _cua_wid, _einst_idx)
+                            await asyncio.sleep(4)
+                            _cua_success = True
+                except Exception as _e:
+                    logger.warning(f"CUA Einstellungen failed: {_e}")
 
-            # Poll for allEmailAddresses iframe via Playwright frame scanning.
-            # The mail_settings/mail_settings page loads it automatically.
-            for _poll in range(8):
-                try:
-                    from playwright.async_api import async_playwright as _pw
-                    async with _pw() as __pw:
-                        __br = await __pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
-                        for __pg in __br.contexts[0].pages:
-                            if 'gmx' in __pg.url.lower() or 'produkte' in __pg.url:
-                                for __f in __pg.frames:
-                                    if 'allEmailAddresses' in __f.url:
-                                        logger.info(f"allEmailAddresses iframe loaded: {__f.url[:100]}")
-                                        return True
-                except Exception:
-                    pass
-                await asyncio.sleep(2)
-            logger.warning("allEmailAddresses iframe not found after Einstellungen click")
-            return False
+                # Poll for allEmailAddresses in all Playwright pages/frames
+                for _poll in range(24):
+                    _all_pages = []
+                    for _ctx in _b.contexts:
+                        _all_pages.extend(_ctx.pages)
+                    for _pg in _all_pages:
+                        try:
+                            for _f in _pg.frames:
+                                if 'allEmailAddresses' in _f.url:
+                                    logger.info(f"allEmailAddresses iframe: {_f.url[:100]}")
+                                    return _f.url
+                        except Exception:
+                            pass
+                    await asyncio.sleep(1)
+
+                # Step 3: Fallback — new Playwright tab to loaded settings iframe
+                # Check if settings page opened but allEmailAddresses not yet loaded
+                if _cua_success:
+                    logger.info("CUA clicked but allEmailAddresses not found yet — trying CDP click on E-Mail-Adressen")
+                    # Find the new settings tab that CUA opened
+                    for _pg in _all_pages:
+                        try:
+                            if 'mail_settings' in _pg.url or 'navigator.gmx.net' in _pg.url:
+                                for _f in _pg.frames:
+                                    if '3c-bap' in _f.url and 'settings' in _f.url:
+                                        try:
+                                            _f.evaluate("""
+                                                document.querySelector('a:has-text(\"E-Mail-Adressen\")')?.click()
+                                            """)
+                                            await asyncio.sleep(3)
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+
+                # Step 4: Try finding existing allEmailAddresses iframe (from prior sessions)
+                for _poll in range(12):
+                    for _ctx in _b.contexts:
+                        for _pg in _ctx.pages:
+                            try:
+                                for _f in _pg.frames:
+                                    if 'allEmailAddresses' in _f.url:
+                                        logger.info(f"allEmailAddresses (delayed): {_f.url[:100]}")
+                                        return _f.url
+                            except Exception:
+                                pass
+                    await asyncio.sleep(1)
+
+                logger.warning("allEmailAddresses iframe not found in any page")
+                return None
 
         except Exception as e:
-            logger.error(f"CUA navigation failed: {e}")
-            return False
+            logger.error(f"_navigate_to_all_email_addresses failed: {e}")
+            return None
 
     # ═══════════════════════════════════════════════════════════════════════════════
     #  ALIAS DELETION (VERIFIED 2026-05-11)
@@ -782,8 +735,8 @@ class GmxService:
             await asyncio.sleep(0.5)
 
             # Step 1: Ensure we're on E-Mail-Adressen page
-            nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
-            if not nav_ok:
+            nav_iframe_url = await self._navigate_to_all_email_addresses(client, session_id)
+            if not nav_iframe_url:
                 return {"status": "not_logged_in", "deleted": False,
                         "error": "Konnte nicht zu allEmailAddresses navigieren"}
 
@@ -865,48 +818,55 @@ class GmxService:
             return None
 
     async def _delete_alias_via_playwright(self, alias_email: str, cdp_port: int = 9222, iframe_url: Optional[str] = None) -> bool:
-        """Löscht via Playwright: öffnet allEmailAddresses URL in neuem Tab."""
+        """Löscht via Playwright: interagiert mit allEmailAddresses iframe in bestehender Seite.
+
+        Wichtig: Öffnet KEINE neue Seite mit iframe-URL (die 3c.gmx.net Session gilt
+        nur im Kontext des Parent-Frames). Stattdessen wird das bereits geladene
+        iframe in der mail_settings Seite direkt angesprochen.
+        """
         import re as _re
         try:
             from playwright.async_api import async_playwright
 
-            if not iframe_url:
-                iframe_url = await self._get_iframe_url(cdp_port)
-            if not iframe_url:
-                logger.warning("allEmailAddresses iframe URL nicht gefunden")
-                return False
-
             async with async_playwright() as _p:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
-                _pg = await _b.contexts[0].new_page()
-                await _pg.goto(iframe_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(2)
 
-                row = _pg.locator(f'.table_field:has-text("{alias_email}")').first
+                # Find existing allEmailAddresses iframe in loaded pages
+                _target_frame = None
+                for _pg in _b.contexts[0].pages:
+                    for _f in _pg.frames:
+                        if 'allEmailAddresses' in _f.url:
+                            _target_frame = _f
+                            break
+                    if _target_frame:
+                        break
+
+                if not _target_frame:
+                    logger.warning("allEmailAddresses iframe not found in existing pages")
+                    return False
+
+                row = _target_frame.locator(f'.table_field:has-text("{alias_email}")').first
                 if await row.count() == 0:
                     logger.warning(f"Alias row not found: {alias_email}")
-                    await _pg.close()
                     return False
 
                 await row.hover()
                 await asyncio.sleep(1)
 
-                del_icon = _pg.locator('[title*="löschen"], [title*="entfernen"], a[title*="Lösch"]').first
+                del_icon = _target_frame.locator('[title*="löschen"], [title*="entfernen"], a[title*="Lösch"]').first
                 if await del_icon.count() == 0:
                     logger.warning("Delete icon not found")
-                    await _pg.close()
                     return False
 
                 await del_icon.click(force=True, timeout=5000)
                 await asyncio.sleep(2)
 
-                ok_btn = _pg.locator('button:has-text("OK")').first
+                ok_btn = _target_frame.locator('button:has-text("OK")').first
                 if await ok_btn.count() > 0:
                     await ok_btn.click(force=True, timeout=5000)
                     await asyncio.sleep(2)
 
-                content = await _pg.evaluate("document.body.innerText")
-                await _pg.close()
+                content = await _target_frame.evaluate("document.body.innerText")
                 if alias_email not in content:
                     logger.info(f"Playwright: ✅ {alias_email} gelöscht")
                     return True
@@ -919,59 +879,65 @@ class GmxService:
             return False
 
     async def _create_alias_via_playwright(self, alias_name: str, cdp_port: int = 9222, iframe_url: Optional[str] = None) -> Optional[str]:
-        """Erstellt Alias via Playwright: öffnet allEmailAddresses URL in neuem Tab.
+        """Erstellt Alias via Playwright: interagiert mit allEmailAddresses iframe in bestehender Seite.
+
+        Wichtig: Öffnet KEINE neue Seite mit iframe-URL (die 3c.gmx.net Session gilt
+        nur im Kontext des Parent-Frames). Stattdessen wird das bereits geladene
+        iframe in der mail_settings Seite direkt angesprochen.
 
         Returns: alias_email bei Erfolg, None bei Fehler.
         """
         try:
             from playwright.async_api import async_playwright
 
-            if not iframe_url:
-                iframe_url = await self._get_iframe_url(cdp_port)
-            if not iframe_url:
-                logger.warning("allEmailAddresses iframe URL nicht gefunden")
-                return None
-
             async with async_playwright() as _p:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
-                _pg = await _b.contexts[0].new_page()
-                await _pg.goto(iframe_url, wait_until="domcontentloaded", timeout=15000)
-                await asyncio.sleep(2)
+
+                # Find existing allEmailAddresses iframe in loaded pages
+                _target_frame = None
+                for _pg in _b.contexts[0].pages:
+                    for _f in _pg.frames:
+                        if 'allEmailAddresses' in _f.url:
+                            _target_frame = _f
+                            break
+                    if _target_frame:
+                        break
+
+                if not _target_frame:
+                    logger.warning("allEmailAddresses iframe not found in existing pages")
+                    return None
 
                 for attempt in range(3):
                     current_alias = alias_name if attempt == 0 else self.generate_alias_name()
                     current_email = f"{current_alias}@gmx.de"
                     logger.info(f"Playwright attempt {attempt+1}/3: {current_email}")
 
-                    inp = _pg.locator('input[name*="localPart"]').first
+                    inp = _target_frame.locator('input[name*="localPart"]').first
                     if await inp.count() == 0:
-                        inp = _pg.locator('input[placeholder*="ihr-name"]').first
+                        inp = _target_frame.locator('input[placeholder*="ihr-name"]').first
                     if await inp.count() == 0:
-                        inp = _pg.locator('input[type="text"]').first
+                        inp = _target_frame.locator('input[type="text"]').first
 
                     if await inp.count() == 0:
-                        logger.warning("No input found in allEmailAddresses tab")
-                        await _pg.close()
-                        return None
+                        logger.warning("No input found in allEmailAddresses iframe")
+                        continue
 
                     await inp.fill(current_alias)
                     await asyncio.sleep(1)
 
-                    btn = _pg.locator('button:has-text("Hinzufügen")').first
+                    btn = _target_frame.locator('button:has-text("Hinzufügen")').first
                     if await btn.count() == 0:
-                        logger.warning("Hinzufügen button not found")
-                        await _pg.close()
-                        return None
+                        logger.warning("Hinzufügen button not found in iframe")
+                        continue
 
                     await btn.click(force=True, timeout=5000)
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(3)
 
-                    inp_val = await inp.input_value()
-                    content = await _pg.evaluate("document.body.innerText")
+                    content = await _target_frame.evaluate("document.body.innerText")
+                    inp_val = await _target_frame.evaluate("document.querySelector('input') ? document.querySelector('input').value : ''")
 
                     if not inp_val or current_email in content:
                         logger.info(f"Playwright: ✅ {current_email} created")
-                        await _pg.close()
                         return current_email
 
                     if 'bereits vergeben' in content or 'nicht verfügbar' in content:
@@ -981,7 +947,6 @@ class GmxService:
                     logger.warning(f"Playwright: {current_email} not created, retrying...")
                     await asyncio.sleep(1)
 
-                await _pg.close()
                 return None
 
         except Exception as e:
@@ -1014,14 +979,14 @@ class GmxService:
             await asyncio.sleep(0.3)
             
             # Navigate to E-Mail-Adressen
-            nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
-            if not nav_ok:
+            iframe_url = await self._navigate_to_all_email_addresses(client, session_id)
+            if not iframe_url:
                 return {"status": "not_logged_in", "alias_email": None, "error": "Navigation failed"}
             steps.append("navigated_to_addresses")
             await client.disconnect()
             client = None  # avoid double-disconnect in finally
             
-            # Use Playwright for form interaction on allEmailAddresses tab
+            # Use Playwright for form interaction on allEmailAddresses iframe
             alias_email = await self._create_alias_via_playwright(alias_name, cdp_port)
             if alias_email:
                 steps.append("input_found")
@@ -1113,8 +1078,8 @@ class GmxService:
             _gmx_throttle(2)
 
             # --- STEP 1: Navigate to allEmailAddresses ---
-            nav_ok = await self._navigate_to_all_email_addresses(client, session_id, target_id)
-            if not nav_ok:
+            nav_iframe_url = await self._navigate_to_all_email_addresses(client, session_id, target_id)
+            if not nav_iframe_url:
                 steps_failed.append("navigation")
                 return {
                     "status": "failed",
@@ -1127,51 +1092,145 @@ class GmxService:
                 }
             steps_completed.append("navigated_to_addresses")
 
-            # --- STEP 2: Delete existing alias (Playwright + CUA) ---
-            # CUA navigation has loaded allEmailAddresses in mail_settings iframe
-            # Check page for existing aliases via Playwright
+            # --- STEP 2+3: Delete + Create in einer Playwright-Connection ---
+            # Einzelne Connection vermeidet disconnected-frame Probleme
+            # nach dem Delete (Iframe-State ändert sich)
             from playwright.async_api import async_playwright as _ap
             _deleted = False
-            _iframe_url = None
+            _created_alias_email = None
+
+            if not new_alias_name:
+                new_alias_name = self.generate_alias_name()
+
             async with _ap() as _p:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
-                _pg = await _b.contexts[0].new_page()
-                _iframe_url = await self._get_iframe_url(cdp_port)
-                if _iframe_url:
-                    await _pg.goto(_iframe_url, wait_until="domcontentloaded", timeout=15000)
-                    await asyncio.sleep(3)
-                    _content = await _pg.evaluate("document.body.innerText")
-                    import re
-                    _emails = re.findall(r'[\w-]+@gmx\.d[et]', _content)
+
+                # Finde den allEmailAddresses Iframe
+                _target_frame = None
+                for _pg_scan in _b.contexts[0].pages:
+                    for _f in _pg_scan.frames:
+                        if 'allEmailAddresses' in _f.url:
+                            _target_frame = _f
+                            break
+                    if _target_frame:
+                        break
+
+                if not _target_frame:
+                    logger.warning("allEmailAddresses iframe not found for delete/create")
+
+                if _target_frame:
+                    # Delete existing alias
+                    _content = await _target_frame.evaluate("document.body.innerText")
+                    import re as _re
+                    _emails = _re.findall(r'[\w-]+@gmx\.d[et]', _content)
                     for _e in _emails:
                         if _e != 'opensin@gmx.de':
                             alias_to_delete = _e
                             logger.info(f"Delete Alias: {alias_to_delete}")
-                            await _pg.close()
-                            _deleted = await self._delete_alias_via_playwright(alias_to_delete, cdp_port, iframe_url=_iframe_url)
+                            _deleted = await self._delete_alias_via_playwright(alias_to_delete, cdp_port, str(_target_frame.url))
                             if _deleted:
                                 deleted_alias = alias_to_delete
                                 steps_completed.append("alias_deleted")
                             await asyncio.sleep(2)
                             break
-                await _pg.close() if not _deleted else None
-                _ = await _b.close() if hasattr(_b, 'close') else None
-            
-            if not _deleted:
-                steps_completed.append("no_existing_alias")
-                deleted_alias = None
 
-            # Proaktive Verzögerung zwischen Delete und Create
-            _gmx_throttle(4)
+                    if not _deleted:
+                        steps_completed.append("no_existing_alias")
 
-            # --- STEP 3: Create new alias via Playwright ---
-            if not new_alias_name:
-                new_alias_name = self.generate_alias_name()
+                    # Refresh: zur mail_settings zurück + erneut E-Mail-Adressen klicken
+                    # (delete ändert Iframe-DOM → Formular verschwindet)
+                    _sid = None
+                    for _p_scan in _b.contexts[0].pages:
+                        _m_sid = _re.search(r'sid=([^&\s]+)', _p_scan.url)
+                        if _m_sid:
+                            _sid = _m_sid.group(1)
+                            break
 
-            await client.disconnect()
-            client = None
+                    if _sid:
+                        _pg_new = await _b.contexts[0].new_page()
+                        await _pg_new.goto(
+                            f"https://bap.navigator.gmx.net/mail_settings?sid={_sid}",
+                            wait_until="domcontentloaded", timeout=20000
+                        )
+                        await asyncio.sleep(3)
 
-            created_alias = await self._create_alias_via_playwright(new_alias_name, cdp_port, iframe_url=_iframe_url)
+                        # 3c-bap iframe + E-Mail-Adressen klicken
+                        _iframe2 = None
+                        for _rt in range(12):
+                            for _f in _pg_new.frames:
+                                if '3c-bap.gmx.net/mail/client/settings' in _f.url and 'blank' not in _f.url:
+                                    _iframe2 = _f; break
+                            if _iframe2: break
+                            await asyncio.sleep(1)
+
+                        if _iframe2:
+                            await asyncio.sleep(2)
+                            await _iframe2.evaluate("""
+                                (function(){
+                                    var a = document.querySelectorAll('a');
+                                    for(var i=0;i<a.length;i++){
+                                        var t=(a[i].textContent||'').trim().toLowerCase();
+                                        if(t.indexOf('adress')!==-1){a[i].click();return true;}
+                                    }
+                                    return false;
+                                })()
+                            """)
+                            await asyncio.sleep(3)
+
+                            # AllEmailAddresses Iframe im neuen Page finden
+                            _target_frame = None
+                            for _rt2 in range(10):
+                                for _f in _pg_new.frames:
+                                    if 'allEmailAddresses' in _f.url:
+                                        _target_frame = _f; break
+                                if _target_frame: break
+                                await asyncio.sleep(1)
+
+                            # Create in refreshed iframe
+                            for _attempt in range(3):
+                                _c_alias = new_alias_name if _attempt == 0 else self.generate_alias_name()
+                                _c_email = f"{_c_alias}@gmx.de"
+                                logger.info(f"Create attempt {_attempt+1}/3: {_c_email}")
+
+                                _inp = _target_frame.locator('input[name*="localPart"]').first
+                                if await _inp.count() == 0:
+                                    _inp = _target_frame.locator('input[placeholder*="ihr-name"]').first
+                                if await _inp.count() == 0:
+                                    _inp = _target_frame.locator('input[type="text"]').first
+
+                                if await _inp.count() == 0:
+                                    logger.warning("No input found in allEmailAddresses iframe")
+                                    continue
+
+                                await _inp.fill(_c_alias)
+                                await asyncio.sleep(1)
+
+                                _btn = _target_frame.locator('button:has-text("Hinzufügen")').first
+                                if await _btn.count() == 0:
+                                    logger.warning("Hinzufügen button not found")
+                                    continue
+
+                                await _btn.click(force=True, timeout=5000)
+                                await asyncio.sleep(3)
+
+                                _c_content = await _target_frame.evaluate("document.body.innerText")
+                                _c_inp_val = await _target_frame.evaluate("document.querySelector('input') ? document.querySelector('input').value : ''")
+
+                                if not _c_inp_val or _c_email in _c_content:
+                                    logger.info(f"✅ {_c_email} created")
+                                    _created_alias_email = _c_email
+                                    break
+
+                                if 'bereits vergeben' in _c_content or 'nicht verfügbar' in _c_content:
+                                    logger.warning(f"Alias '{_c_alias}' not available — generating new")
+                                    continue
+
+                                logger.warning(f"{_c_email} not created, retrying...")
+                                await asyncio.sleep(1)
+                else:
+                    steps_completed.append("no_existing_alias")
+
+            created_alias = _created_alias_email
             if created_alias:
                 created_alias_name = new_alias_name
                 steps_completed.append("input_found")
@@ -1670,8 +1729,8 @@ class GmxService:
         client = None
         try:
             client, session_id, _ = await self._connect_to_browser(cdp_port)
-            nav_ok = await self._navigate_to_all_email_addresses(client, session_id)
-            if not nav_ok:
+            nav_iframe_url = await self._navigate_to_all_email_addresses(client, session_id)
+            if not nav_iframe_url:
                 return {"status": "error", "error": "Konnte nicht zu allEmailAddresses navigieren"}
             
             url_result = await client.evaluate(session_id, "window.location.href", return_by_value=True)

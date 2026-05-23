@@ -1,6 +1,6 @@
-# AGENTS.md — SINator Fireworks AI Rotator V8 (2026-05-22)
+# AGENTS.md — SINator Fireworks AI Rotator V9 (2026-05-23)
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-22
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-23
 
 **Full automated flow in ONE command:**
 ```bash
@@ -9,9 +9,20 @@ python tools/rotate.py
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Latest API Key:** `fw_6rWU4KGUPts6zVnaRreu6R` (pulse-jaguar-899@gmx.de)
-**Pool:** 30 Keys (30 total, 29 available)
-**Cycle Time:** ~209s average (Strecke: 204-224s)
+**Pool:** 45 Keys (45 total, 45 available)
+**Cycle Time:** ~173s average (Strecke: 158-188s) — nach V9 sleep-Reduktion
+
+## 🐛 BEKANNTE PROBLEME (2026-05-23)
+
+### Fireworks Account Suspension (Spending Limit)
+Accounts werden gesperrt wenn das monatliche Spending Limit erreicht ist:
+```
+Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
+spending limit or failure to pay past invoices.
+```
+- Jeder FW Account hat $5 Credits — sobald aufgebraucht = Suspension
+- Betroffene Keys müssen als `used` markiert werden
+- Workaround: `POST /pool/report` oder `POST /pool/use` für suspended Keys
 
 ### E2E Steps (proven working, ~204s total)
 0. **GMX Login (built-in)**: `rotate.py` Step 0 — Playwright-Login `opensin@gmx.de`, speichert frische Cookies
@@ -247,7 +258,17 @@ kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
 
 **⚠️ NIEMALS `pkill -9 -f "Google Chrome"`!** Killt User-Chrome → Session tot.
 
-### 🚫 BANNED METHODS (alle getestet, alle failed)
+### 🚫 BANNED METHODS (V9 — 2026-05-23)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| `GET /pool/health` ruft `mark_used()` auf | Destruktiver Side-Effect! 7 Keys auf einmal killed am 2026-05-23 — **FIXED: health ist jetzt read-only** |
+| `Dashboard.html` ruft `/pool/health` in `loadDashboard()` | Überschreibt pool/stats Anzeige mit health-Daten als used-count — **FIXED: entfernt** |
+| `PoolManager` ohne `reload()` vor public Methoden | Singleton hält stale State — liest nie von Disk. **FIXED: `reload()` in allen public Methoden** |
+| `_purge_gmx_cookies()` löscht Master-Backup | Löscht `backup/session/gmx-cookies-master.json` — **FIXED** |
+| `update_credits()` hat NULL Callers | Credits werden nie gezogen — alle Keys zeigen `credits_remaining=6.0` egal ob used oder nicht |
+
+### 🚫 BANNED METHODS (V8 — legacy)
 | ❌ Verboten | Grund |
 |------------|-------|
 | CDP `DOM.performSearch` + `getBoxModel` | Node-IDs stale (0) in 3c.gmx.net Cross-Origin-Iframes |

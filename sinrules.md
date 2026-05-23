@@ -1,14 +1,14 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-22 (V8 — 30 Keys, ~209s avg)
+> Letzte Aktualisierung: 2026-05-23 (V9 — 45 Keys, ~173s avg)
 
 ---
 
-## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-22)
+## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-23)
 
-**Latest API Key:** `fw_6rWU4KGUPts6zVnaRreu6R` (pulse-jaguar-899@gmx.de)
-**Pool:** 30 Keys (29 available, 1 used)
+**Pool:** 45 Keys (45 available, 0 used — alle recovered nach Health-Check-Bugfix)
+**Cycle Time:** ~173s (V9 sleep-Reduktion)
 **E2E Single Command:** `python tools/rotate.py`
 
 ### WAS IMMER VERWENDET WERDEN MUSS
@@ -232,6 +232,18 @@ rtk git push
 Jede Datei 100% lesen bevor weitermachen!
 Jedes Learning SOFORT dokumentieren!
 Keine Learnings nur im Chat lassen!
+
+---
+
+## 🚨 REGEL 11: Bekanntes Problem — Account Suspension
+
+Fireworks suspendiert Accounts bei Spending Limit ($5 Credits aufgebraucht):
+```
+Account XXX is suspended, possibly due to reaching the monthly
+spending limit or failure to pay past invoices.
+```
+**Workaround:** Key via `POST /pool/report` als used markieren → neuen Key holen.
+Account ist tot, kein Recovery möglich.
 
 ---
 

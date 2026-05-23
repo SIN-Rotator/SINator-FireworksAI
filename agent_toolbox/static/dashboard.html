@@ -29,7 +29,10 @@
     .status-healthy { color: #22c55e; }
     .status-suspended { color: #ef4444; }
     .status-used { color: #f59e0b; }
-    .key-trunc { font-family: monospace; font-size: 11px; color: #94a3b8; }
+    .key-cell { display: flex; align-items: center; gap: 6px; }
+    .key-text { font-family: monospace; font-size: 11px; color: #94a3b8; background: #0f172a; padding: 2px 6px; border-radius: 4px; }
+    .btn-copy { background: #334155; border: none; color: #e2e8f0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .btn-copy:hover { background: #475569; }
     .log-box { background: #0f172a; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
     .log-box div { padding: 2px 0; }
     .log-box .info { color: #94a3b8; }
@@ -73,6 +76,8 @@
     </button>
     <button class="btn" onclick="runHealthCheck()">Health Check</button>
     <button class="btn" onclick="startRotation()">Key holen</button>
+    <button class="btn btn-sm" onclick="createGmxAlias()">GMX Alias</button>
+    <button class="btn btn-sm" onclick="deleteGmxAlias()">Alias löschen</button>
   </div>
 
   <div class="card">
@@ -151,21 +156,48 @@ async function loadDashboard() {
   }
 }
 
+function copyKey(apiKey) {
+  if (!apiKey) {
+    log('Kein Key zum Kopieren', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(apiKey).then(() => {
+    log('Key kopiert!', 'success');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = apiKey;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    log('Key kopiert!', 'success');
+  });
+}
+
 function renderKeys(keys) {
   const tbody = document.getElementById('key-table');
   if (!keys.length) {
     tbody.innerHTML = '<tr><td colspan="4" style="color:#64748b;text-align:center;padding:20px;">Keine Keys</td></tr>';
     return;
   }
-  tbody.innerHTML = keys.map(k => {
+  tbody.innerHTML = keys.map((k, idx) => {
     const status = k.status || (k.used ? 'used' : 'unknown');
     const cls = status === 'healthy' ? 'status-healthy' : status === 'suspended' ? 'status-suspended' : 'status-used';
     const credits = k.credits_remaining != null ? '$' + k.credits_remaining.toFixed(1) : '—';
     return '<tr><td>' + (k.alias_email || k.email || '?').split('@')[0] + '</td>' +
       '<td class="' + cls + '">' + status + '</td>' +
       '<td>' + credits + '</td>' +
-      '<td class="key-trunc">' + (k.api_key || '').slice(0, 24) + '...</td></tr>';
+      '<td class="key-cell"><code class="key-text">' + (k.api_key || '').slice(0, 30) + '...</code>' +
+      ' <button class="btn-copy" data-idx="' + idx + '" title="Key kopieren">📋</button></td></tr>';
   }).join('');
+
+  // Attach click handlers via closure over keys array (robust, no HTML escaping issues)
+  tbody.querySelectorAll('.btn-copy').forEach(btn => {
+    const idx = parseInt(btn.dataset.idx, 10);
+    btn.addEventListener('click', () => copyKey(keys[idx].api_key || ''));
+  });
 }
 
 async function runHealthCheck() {
@@ -189,6 +221,38 @@ async function startRotation() {
     if (r.api_key) log('Key: ' + r.api_key);
     if (r.execution_time) log('Dauer: ' + r.execution_time);
     loadDashboard();
+  } catch (e) {
+    log('Fehler: ' + e.message, 'error');
+  }
+}
+
+async function createGmxAlias() {
+  log('Erstelle GMX Alias...', 'info');
+  try {
+    const r = await api('POST', '/gmx/alias/create');
+    if (r.status === 'success') {
+      log('✅ GMX Alias erstellt: ' + r.alias_email, 'success');
+    } else {
+      log('❌ Fehler: ' + (r.error || r.status), 'error');
+    }
+    if (r.execution_time) log('Dauer: ' + r.execution_time);
+  } catch (e) {
+    log('Fehler: ' + e.message, 'error');
+  }
+}
+
+async function deleteGmxAlias() {
+  log('Lösche GMX Alias...', 'info');
+  try {
+    const r = await api('POST', '/gmx/alias/delete');
+    if (r.status === 'success') {
+      log('✅ Alias gelöscht: ' + (r.alias || 'keiner vorhanden'), 'success');
+    } else if (r.status === 'no_alias') {
+      log('ℹ️ Kein Alias vorhanden', 'info');
+    } else {
+      log('❌ Fehler: ' + (r.error || r.status), 'error');
+    }
+    if (r.execution_time) log('Dauer: ' + r.execution_time);
   } catch (e) {
     log('Fehler: ' + e.message, 'error');
   }

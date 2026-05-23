@@ -169,6 +169,7 @@ class PoolManager:
                 "id": k["id"],
                 "alias_email": k["alias_email"],
                 "key_name": k["key_name"],
+                "api_key": k.get("api_key", ""),
                 "created_at": k["created_at"],
                 "used": k.get("used", False),
                 "used_at": k.get("used_at"),
