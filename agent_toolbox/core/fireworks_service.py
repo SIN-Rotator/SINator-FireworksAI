@@ -36,7 +36,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
             
             # Step 1: Signup form
             await page.goto("https://app.fireworks.ai/signup")
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             
             # Cookie
             try:
@@ -91,7 +91,7 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
             svc = GmxService()
             
             for attempt in range(15):
-                await asyncio.sleep(5)
+                await asyncio.sleep(4)
                 verify_url = await svc.read_fireworks_verification_email()
                 if verify_url:
                     logger.info(f"✅ OTP found via extension (attempt {attempt+1})")
@@ -146,7 +146,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
             page = await browser.contexts[0].new_page()
 
             await page.goto("https://app.fireworks.ai/login")
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
             # Cookie accept
             try:
@@ -163,7 +163,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                     else:
                         # Try direct /login with email param
                         await page.goto("https://app.fireworks.ai/login?useEmail=true")
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                     if await page.locator('input[name="email"]').first.count() > 0:
                         break
                     logger.warning(f"Login form not visible (attempt {attempt+1})")
@@ -256,7 +256,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                                 try:
                                     fresh = await browser.contexts[0].new_page()
                                     await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
-                                    await asyncio.sleep(3)
+                                    await asyncio.sleep(2)
                                     if any(x in fresh.url for x in ['home', 'account', 'settings', 'api-keys']):
                                         redirected = True
                                         await fresh.close()
@@ -306,7 +306,7 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
                 try:
                     fresh = await browser.contexts[0].new_page()
                     await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                     fresh_url = fresh.url
                     if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
                         steps.append("login_success")
@@ -358,7 +358,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Continue' in txt or 'Next' in txt:
-            await btn.click(force=True); await asyncio.sleep(3)
+            await btn.click(force=True); await asyncio.sleep(2)
             break
     
     # Use-case checkboxes (skip cookie banner checkboxes)
@@ -393,11 +393,11 @@ async def _fireworks_playwright_onboarding(page) -> None:
     logger.warning("Playwright onboarding — kein Redirect, force navigate")
     try:
         await page.goto("https://app.fireworks.ai/settings/users/api-keys", timeout=15000, wait_until='domcontentloaded')
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
     except:
         try:
             await page.goto("https://app.fireworks.ai/settings/users/api-keys", timeout=20000)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
         except:
             logger.error("Force navigate failed")
 
@@ -447,7 +447,7 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
                         break
                     await asyncio.sleep(1)
                 await menu.click(force=True)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
             except Exception as e:
                 logger.warning(f"Reload failed: {e}")
                 continue
@@ -519,14 +519,14 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
             # Always use a fresh page to avoid stale frame issues
             pg = await browser.contexts[0].new_page()
             await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
             # Retry navigate if redirected to login
             for _ in range(3):
                 if 'login' in pg.url.lower():
                     logger.warning(f"Redirected to login — retrying ({pg.url[:60]})")
                     await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
-                    await asyncio.sleep(3)
+                    await asyncio.sleep(2)
                 else:
                     break
 
@@ -596,7 +596,7 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
                         break
                     await asyncio.sleep(1)
             await menu.click(force=True)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
 
             # Verify dialog actually appeared (should have input + buttons)
             _dialog_ok = False
@@ -618,7 +618,7 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
                         break
                     await asyncio.sleep(1)
                 await menu.click(force=True)
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
             return await _generate_and_poll_key(pg, key_name)
 
@@ -637,7 +637,7 @@ async def verify_account(verify_url: str) -> bool:
             browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
             page = await browser.contexts[0].new_page()
             await page.goto(verify_url)
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             logger.info(f"Verify URL opened: {page.url[:80]}")
             await page.close()
             return True
