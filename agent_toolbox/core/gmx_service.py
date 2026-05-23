@@ -861,13 +861,14 @@ class GmxService:
             logger.error(f"get_iframe_url failed: {_e}")
             return None
 
-    async def _delete_alias_via_playwright(self, alias_email: str, cdp_port: int = 9222) -> bool:
+    async def _delete_alias_via_playwright(self, alias_email: str, cdp_port: int = 9222, iframe_url: Optional[str] = None) -> bool:
         """Löscht via Playwright: öffnet allEmailAddresses URL in neuem Tab."""
         import re as _re
         try:
             from playwright.async_api import async_playwright
 
-            iframe_url = await self._get_iframe_url(cdp_port)
+            if not iframe_url:
+                iframe_url = await self._get_iframe_url(cdp_port)
             if not iframe_url:
                 logger.warning("allEmailAddresses iframe URL nicht gefunden")
                 return False
@@ -914,7 +915,7 @@ class GmxService:
             logger.error(f"Playwright delete failed: {e}")
             return False
 
-    async def _create_alias_via_playwright(self, alias_name: str, cdp_port: int = 9222) -> Optional[str]:
+    async def _create_alias_via_playwright(self, alias_name: str, cdp_port: int = 9222, iframe_url: Optional[str] = None) -> Optional[str]:
         """Erstellt Alias via Playwright: öffnet allEmailAddresses URL in neuem Tab.
 
         Returns: alias_email bei Erfolg, None bei Fehler.
@@ -922,7 +923,8 @@ class GmxService:
         try:
             from playwright.async_api import async_playwright
 
-            iframe_url = await self._get_iframe_url(cdp_port)
+            if not iframe_url:
+                iframe_url = await self._get_iframe_url(cdp_port)
             if not iframe_url:
                 logger.warning("allEmailAddresses iframe URL nicht gefunden")
                 return None
@@ -1127,6 +1129,7 @@ class GmxService:
             # Check page for existing aliases via Playwright
             from playwright.async_api import async_playwright as _ap
             _deleted = False
+            _iframe_url = None
             async with _ap() as _p:
                 _b = await _p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
                 _pg = await _b.contexts[0].new_page()
@@ -1142,7 +1145,7 @@ class GmxService:
                             alias_to_delete = _e
                             logger.info(f"Delete Alias: {alias_to_delete}")
                             await _pg.close()
-                            _deleted = await self._delete_alias_via_playwright(alias_to_delete, cdp_port)
+                            _deleted = await self._delete_alias_via_playwright(alias_to_delete, cdp_port, iframe_url=_iframe_url)
                             if _deleted:
                                 deleted_alias = alias_to_delete
                                 steps_completed.append("alias_deleted")
@@ -1165,7 +1168,7 @@ class GmxService:
             await client.disconnect()
             client = None
 
-            created_alias = await self._create_alias_via_playwright(new_alias_name, cdp_port)
+            created_alias = await self._create_alias_via_playwright(new_alias_name, cdp_port, iframe_url=_iframe_url)
             if created_alias:
                 created_alias_name = new_alias_name
                 steps_completed.append("input_found")
