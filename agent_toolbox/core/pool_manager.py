@@ -68,6 +68,10 @@ class PoolManager:
             logger.info("Kein Pool gefunden, erstelle neuen")
             self.keys = []
 
+    def reload(self):
+        """Lädt den Pool frisch von Disk (sync mit externen Änderungen)."""
+        self._load()
+
     def save(self):
         """Speichert den Pool in die JSON-Datei."""
         try:
@@ -91,6 +95,7 @@ class PoolManager:
         Returns:
             Dict mit status und key_id
         """
+        self.reload()
         key_entry = {
             "id": str(uuid.uuid4()),
             "api_key": api_key,
@@ -120,6 +125,7 @@ class PoolManager:
         Returns:
             Dict mit api_key, alias_email, key_name oder None
         """
+        self.reload()
         for key in self.keys:
             if not key.get("used", False):
                 return key
@@ -135,6 +141,7 @@ class PoolManager:
         Returns:
             True wenn Key gefunden und markiert
         """
+        self.reload()
         for key in self.keys:
             if key["id"] == key_id:
                 key["used"] = True
@@ -151,6 +158,7 @@ class PoolManager:
         Returns:
             Dict mit total, used, available, keys
         """
+        self.reload()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
         available = total - used
@@ -187,6 +195,7 @@ class PoolManager:
         Returns:
             True wenn Key gefunden und aktualisiert
         """
+        self.reload()
         for key in self.keys:
             if key["id"] == key_id:
                 key["credits_remaining"] = round(credits_remaining, 2)
@@ -211,6 +220,7 @@ class PoolManager:
         Returns:
             True wenn Key gefunden und gelöscht
         """
+        self.reload()
         initial_len = len(self.keys)
         self.keys = [k for k in self.keys if k["id"] != key_id]
         if len(self.keys) < initial_len:
