@@ -57,9 +57,11 @@ SWAP_REASONS = {
 PERMANENT_429_KEYWORDS = ("spending limit", "monthly", "quota exceeded", "suspended")
 
 
+PUBLIC_PROXY_PATHS = ("/health", "/pool-status", "/pool-lease")
+
 @web.middleware
 async def _pool_auth_middleware(request: web.Request, handler) -> web.Response:
-    if POOL_AUTH_TOKEN:
+    if POOL_AUTH_TOKEN and request.path not in PUBLIC_PROXY_PATHS:
         path = request.path
         if path.startswith("/inference/") or path.startswith("/v1/"):
             auth = request.headers.get("Authorization", "")
@@ -87,6 +89,7 @@ class PoolProxy:
         app.middlewares.append(_pool_auth_middleware)
         app.router.add_get("/health", self._health)
         app.router.add_get("/pool-status", self._pool_status)
+        app.router.add_get("/pool-lease", self._lease_key)
         app.router.add_route("*", "/inference/v1/{path:.*}", self._handle_proxy)
         app.router.add_route("*", "/v1/{path:.*}", self._handle_proxy_v1)
         app.on_startup.append(self._on_startup)
@@ -335,6 +338,29 @@ class PoolProxy:
             "backup_key": self.cache.backup.get("key_id", "")[:8] + "..." if self.cache.backup else None,
             "request_count": self.cache.request_count,
         })
+
+    async def _lease_key(self, request: web.Request) -> web.Response:
+        """Lease a single API key from the pool."""
+        try:
+            leased_to = request.query.get("leased_to", f"app-{time.time():.0f}")
+            result = await self.pool_client.lease(leased_to=leased_to)
+            if not result:
+                return web.json_response(
+                    {"error": "no_keys", "message": "No API keys available"},
+                    status=503,
+                )
+            return web.json_response({
+                "api_key": result["api_key"],
+                "key_name": result.get("key_name", ""),
+                "alias_email": result.get("alias_email", ""),
+                "key_id": result.get("key_id", ""),
+            })
+        except Exception as e:
+            logger.error(f"Lease key error: {e}")
+            return web.json_response(
+                {"error": "lease_failed", "message": str(e)},
+                status=500,
+            )
 
     async def _pool_status(self, request: web.Request) -> web.Response:
         stats = await self.pool_client.stats()
