@@ -43,6 +43,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pool-proxy")
 
+POOL_AUTH_TOKEN = os.environ.get("SINATOR_AUTH_TOKEN", "").strip()
+
 DEAD_KEY_CODES = {401, 402, 403, 412}
 SWAP_REASONS = {
     401: "unauthorized",
@@ -53,6 +55,20 @@ SWAP_REASONS = {
 }
 
 PERMANENT_429_KEYWORDS = ("spending limit", "monthly", "quota exceeded", "suspended")
+
+
+@web.middleware
+async def _pool_auth_middleware(request: web.Request, handler) -> web.Response:
+    if POOL_AUTH_TOKEN:
+        path = request.path
+        if path.startswith("/inference/") or path.startswith("/v1/"):
+            auth = request.headers.get("Authorization", "")
+            if auth != f"Bearer {POOL_AUTH_TOKEN}":
+                return web.json_response(
+                    {"error": "unauthorized", "message": "Invalid or missing auth token"},
+                    status=401,
+                )
+    return await handler(request)
 
 
 class PoolProxy:
@@ -68,6 +84,7 @@ class PoolProxy:
 
     def create_app(self) -> web.Application:
         app = web.Application()
+        app.middlewares.append(_pool_auth_middleware)
         app.router.add_get("/health", self._health)
         app.router.add_get("/pool-status", self._pool_status)
         app.router.add_route("*", "/inference/v1/{path:.*}", self._handle_proxy)
