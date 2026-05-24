@@ -195,6 +195,10 @@ async def main():
                 await asyncio.sleep(2)
                 if await _page.locator('input[name="email"]').first.count() > 0:
                     break
+                await _page.goto("https://app.fireworks.ai/login?useEmail=true")
+                await asyncio.sleep(2)
+                if await _page.locator('input[name="email"]').first.count() > 0:
+                    break
             except: pass
             await asyncio.sleep(2)
 
@@ -204,88 +208,26 @@ async def main():
 
         for btn in await _page.locator('button[type="submit"]').all():
             if 'Next' in (await btn.text_content() or ''):
-                await btn.click(); await asyncio.sleep(3); break
+                await btn.click(force=True); await asyncio.sleep(5); break
 
-        # --- PLAYWRIGHT ONBOARDING ---
+        # --- ONBOARDING (CUA-first, Playwright fallback) ---
         _logged_in = False
         if 'onboarding' in _page.url:
-            logger.info("Onboarding via Playwright")
-            try:
-                fn = _page.locator('input[name="firstName"]').first
-                if await fn.count() == 0: fn = _page.locator('input[name="first"]').first
-                if await fn.count() > 0: await fn.fill("Super"); await asyncio.sleep(0.2)
-
-                ln = _page.locator('input[name="lastName"]').first
-                if await ln.count() == 0: ln = _page.locator('input[name="last"]').first
-                if await ln.count() > 0: await ln.fill("Cheetah"); await asyncio.sleep(0.2)
-
-                # Terms checkbox
-                for cb in await _page.locator('input[type="checkbox"]').all():
-                    try:
-                        aid = (await cb.get_attribute('aria-label') or '').lower()
-                        nid = (await cb.get_attribute('id') or '').lower()
-                        if 'terms' in aid or 'agree' in aid or 'terms' in nid:
-                            await cb.check(force=True); await asyncio.sleep(0.2); break
-                    except: pass
-
-                # Continue
-                for btn in await _page.locator('button').all():
-                    try:
-                        t = (await btn.text_content() or '').strip()
-                        if 'Continue' in t or 'Next' in t:
-                            await btn.click(force=True); await asyncio.sleep(3); break
-                    except: pass
-
-                # Use-cases
-                for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
-                    try:
-                        for cb in await _page.locator('input[type="checkbox"]').all():
-                            try:
-                                aid = (await cb.get_attribute('aria-label') or '').lower()
-                                if uc.lower() in aid:
-                                    await cb.check(force=True); await asyncio.sleep(0.2); break
-                            except: pass
-                    except: pass
-
-                # Submit
-                for btn in await _page.locator('button').all():
-                    try:
-                        t = (await btn.text_content() or '').strip()
-                        if 'Submit' in t or 'Get' in t:
-                            await btn.click(force=True); await asyncio.sleep(2); break
-                    except: pass
-
-                # Wait for redirect
-                for _ in range(20):
-                    await asyncio.sleep(2)
-                    try:
-                        if any(x in _page.url for x in ['home', 'account', 'settings']):
-                            logger.info("Playwright onboarding → redirect OK")
-                            _logged_in = True
-                            break
-                    except: pass
-            except Exception as e:
-                logger.warning(f"Playwright onboarding failed: {e}")
-        else:
-            _logged_in = True  # No onboarding needed
-
-        if not _logged_in and 'onboarding' in _page.url:
-            # CUA fallback
-            logger.info("Playwright failed — CUA fallback")
+            logger.info("Onboarding — trying CUA first (AXPress works for React checkboxes)")
             try:
                 from cua_helper import find_cua_window
-                _c = find_cua_window(title_keywords=["fireworks"])
-                if _c:
-                    _pid, _wid = _c
-                    def _click(e): _sp.run(["cua-driver", "call", "click"], capture_output=True, text=True, timeout=10,
+                _cua_result = find_cua_window(title_keywords=["fireworks"])
+                if _cua_result:
+                    _pid, _wid = _cua_result
+                    def _cua_click(e): _sp.run(["cua-driver", "call", "click"], capture_output=True, text=True, timeout=10,
                         input=_json_inner.dumps({"pid": _pid, "window_id": _wid, "element_index": e}))
-                    def _type(t): _sp.run(["cua-driver", "call", "type_text"], capture_output=True, text=True, timeout=5,
+                    def _cua_type(t): _sp.run(["cua-driver", "call", "type_text"], capture_output=True, text=True, timeout=5,
                         input=_json_inner.dumps({"pid": _pid, "text": t}))
-                    def _scan():
+                    def _cua_scan():
                         from cua_helper import cua_get_window_state
                         return cua_get_window_state(_pid, _wid)
-                    def _find(t, elt="AXButton"):
-                        for ln in _scan().split('\n'):
+                    def _cua_find(t, elt="AXButton"):
+                        for ln in _cua_scan().split('\n'):
                             s = ln.strip()
                             if t in s and elt in s:
                                 m2 = _re_inner.search(r'\]?\s*-\s*\[(\d+)\]', s)
@@ -293,30 +235,94 @@ async def main():
                         return None
                     
                     for nm, target in [("Super", "First"), ("Cheetah", "Last")]:
-                        el = _find(target, "AXTextField")
-                        if el: _click(el); await asyncio.sleep(0.3); _type(nm)
+                        el = _cua_find(target, "AXTextField")
+                        if el:
+                            _cua_click(el); await asyncio.sleep(0.3)
+                            _cua_type(nm); await asyncio.sleep(0.3)
 
-                    el = _find("agree", "AXCheckBox")
-                    if el: _click(el); await asyncio.sleep(0.3)
+                    el = _cua_find("agree", "AXCheckBox")
+                    if el: _cua_click(el); await asyncio.sleep(0.3)
 
-                    el = _find("Continue")
-                    if el: _click(el); await asyncio.sleep(2)
+                    el = _cua_find("Continue")
+                    if el: _cua_click(el); await asyncio.sleep(3)
 
                     for uc in ["Prototype", "Flexible", "Conversational", "Search"]:
-                        el = _find(uc, "AXCheckBox")
-                        if el: _click(el); await asyncio.sleep(0.2)
+                        el = _cua_find(uc, "AXCheckBox")
+                        if el: _cua_click(el); await asyncio.sleep(0.2)
 
-                    el = _find("Submit")
-                    if el: _click(el)
+                    el = _cua_find("Submit")
+                    if el: _cua_click(el)
 
                     for _ in range(10):
                         await asyncio.sleep(2)
                         try:
                             if any(x in _page.url for x in ['home', 'account', 'settings']):
+                                logger.info("CUA onboarding → redirect OK")
                                 _logged_in = True; break
                         except: pass
             except Exception as e:
-                logger.warning(f"CUA fallback failed: {e}")
+                logger.warning(f"CUA onboarding failed: {e}")
+
+            if not _logged_in:
+                logger.info("CUA failed — Playwright fallback (type() with delay for React)")
+                try:
+                    fn = _page.locator('input[name="firstName"]').first
+                    if await fn.count() == 0: fn = _page.locator('input[name="first"]').first
+                    if await fn.count() > 0:
+                        await fn.click(); await asyncio.sleep(0.2)
+                        await fn.type("Super", delay=50); await asyncio.sleep(0.3)
+
+                    ln = _page.locator('input[name="lastName"]').first
+                    if await ln.count() == 0: ln = _page.locator('input[name="last"]').first
+                    if await ln.count() > 0:
+                        await ln.click(); await asyncio.sleep(0.2)
+                        await ln.type("Cheetah", delay=50); await asyncio.sleep(0.3)
+
+                    for cb in await _page.locator('input[type="checkbox"]').all():
+                        try:
+                            aid = (await cb.get_attribute('aria-label') or '').lower()
+                            nid = (await cb.get_attribute('id') or '').lower()
+                            if 'terms' in aid or 'agree' in aid or 'terms' in nid:
+                                await cb.click(force=True); await asyncio.sleep(0.2); break
+                        except: pass
+
+                    for btn in await _page.locator('button').all():
+                        try:
+                            t = (await btn.text_content() or '').strip()
+                            if 'Continue' in t or 'Next' in t:
+                                await btn.click(force=True); await asyncio.sleep(3); break
+                        except: pass
+
+                    for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
+                        try:
+                            for cb in await _page.locator('input[type="checkbox"]').all():
+                                try:
+                                    aid = (await cb.get_attribute('aria-label') or '').lower()
+                                    nid = (await cb.get_attribute('id') or '').lower()
+                                    if 'cky' in nid: continue
+                                    if uc.lower() in aid:
+                                        await cb.click(force=True); await asyncio.sleep(0.2); break
+                                except: pass
+                        except: pass
+
+                    for btn in await _page.locator('button').all():
+                        try:
+                            t = (await btn.text_content() or '').strip()
+                            if 'Submit' in t or 'Get' in t:
+                                await btn.click(force=True); await asyncio.sleep(2); break
+                        except: pass
+
+                    for _ in range(20):
+                        await asyncio.sleep(2)
+                        try:
+                            if any(x in _page.url for x in ['home', 'account', 'settings']):
+                                logger.info("Playwright onboarding → redirect OK")
+                                _logged_in = True; break
+                        except: pass
+                except Exception as e:
+                    logger.warning(f"Playwright onboarding failed: {e}")
+        else:
+            _logged_in = True
 
         if _logged_in:
             logger.info("✅ Fireworks Login + Onboarding OK")
@@ -327,13 +333,15 @@ async def main():
             await asyncio.sleep(2)
 
         logger.info("=== API Key ===")
-        await _page.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
-        await asyncio.sleep(3)
+        for _api_retry in range(3):
+            api_key = None
+            await _page.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
+            await asyncio.sleep(3)
 
-        if 'login' in _page.url.lower():
-            logger.error("API keys redirect to login — session lost")
-        else:
-            # Dismiss cookie banner
+            if 'login' in _page.url.lower():
+                logger.error("API keys redirect to login — session lost")
+                break
+
             try:
                 for _ in range(2):
                     for btn in await _page.locator('button').all():
@@ -342,42 +350,68 @@ async def main():
                             await btn.click(force=True); await asyncio.sleep(1); break
             except: pass
 
-            # Open Create API Key dialog
+            _found_create = False
             for btn in await _page.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
-                    await btn.click(force=True); await asyncio.sleep(1); break
+                    await btn.click(force=True); await asyncio.sleep(2)
+                    _found_create = True; break
+            if not _found_create:
+                await asyncio.sleep(5)
+                for btn in await _page.locator('button').all():
+                    if 'Create API Key' in (await btn.text_content() or ''):
+                        await btn.click(force=True); await asyncio.sleep(2)
+                        _found_create = True; break
 
-            # Click API Key menu item
-            try:
-                mi = _page.locator('[role="menuitem"]:has-text("API Key")')
-                if await mi.count() > 0:
-                    await mi.first.click(force=True); await asyncio.sleep(1)
-            except: pass
+            mi = _page.locator('[role="menuitem"]:has-text("API Key")')
+            for _ in range(5):
+                if await mi.count() > 0: break
+                await asyncio.sleep(1)
+            if await mi.count() > 0:
+                await mi.first.click(force=True); await asyncio.sleep(2)
 
-            # Fill name
-            for inp in await _page.locator('input').all():
-                if 'name' in (await inp.get_attribute('name') or '').lower():
-                    await inp.fill(key_name); await asyncio.sleep(1); break
+            _name_inp = _page.locator('input[name="name"]').first
+            if await _name_inp.count() > 0:
+                await _name_inp.click(); await asyncio.sleep(0.2)
+                await _name_inp.type(key_name, delay=40); await asyncio.sleep(1)
+            else:
+                for inp in await _page.locator('input').all():
+                    if 'name' in (await inp.get_attribute('name') or '').lower():
+                        await inp.click(); await asyncio.sleep(0.2)
+                        await inp.type(key_name, delay=40); await asyncio.sleep(1); break
 
-            # Generate
-            for _ in range(10):
+            _generate_clicked = False
+            for _ in range(15):
                 for btn in await _page.locator('button').all():
                     t = (await btn.text_content() or '').strip()
                     if 'Generate' in t and not await btn.is_disabled():
-                        await btn.click(force=True); await asyncio.sleep(1); break
-                else:
-                    await asyncio.sleep(1); continue
-                break
+                        await btn.click(force=True); await asyncio.sleep(1)
+                        _generate_clicked = True; break
+                if _generate_clicked: break
+                await asyncio.sleep(1)
 
-            # Extract key
-            for _ in range(10):
+            if not _generate_clicked:
+                logger.warning(f"Generate button not found/clicked (retry {_api_retry+1}/3)")
+                continue
+
+            for _ in range(20):
                 body = await _page.evaluate("document.body.innerText")
                 m = _re_inner.search(r'fw_[a-zA-Z0-9]{20,}', body)
                 if m:
                     api_key = m.group(0)
                     logger.info(f"✅ API Key: {api_key}")
                     break
+                if 'Missing' in body and 'Name' in body:
+                    logger.warning("Missing Name modal — closing + retry")
+                    for btn in await _page.locator('button').all():
+                        t = (await btn.text_content() or '').strip()
+                        if t in ['Close', 'Cancel', 'OK', '×']:
+                            await btn.click(force=True); await asyncio.sleep(1); break
+                    break
                 await asyncio.sleep(1)
+
+            if api_key:
+                break
+            logger.warning(f"API key not extracted (retry {_api_retry+1}/3)")
 
     if not api_key:
         logger.error("❌ API Key creation failed")

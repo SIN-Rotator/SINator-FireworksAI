@@ -324,24 +324,23 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
 
 
 async def _fireworks_playwright_onboarding(page) -> None:
-    """Playwright-based onboarding fallback (fill names, checkboxes, submit)."""
+    """Playwright-based onboarding fallback (type() with delay for React, click() for checkboxes)."""
     import asyncio
     
-    # Fill First Name
     fn = page.locator('input[name="firstName"]').first
     if await fn.count() == 0:
         fn = page.locator('input[name="first"]').first
     if await fn.count() > 0:
-        await fn.fill("Super"); await asyncio.sleep(0.5)
+        await fn.click(); await asyncio.sleep(0.2)
+        await fn.type("Super", delay=50); await asyncio.sleep(0.5)
     
-    # Fill Last Name
     ln = page.locator('input[name="lastName"]').first
     if await ln.count() == 0:
         ln = page.locator('input[name="last"]').first
     if await ln.count() > 0:
-        await ln.fill("Cheetah"); await asyncio.sleep(0.5)
+        await ln.click(); await asyncio.sleep(0.2)
+        await ln.type("Cheetah", delay=50); await asyncio.sleep(0.5)
     
-    # Terms checkbox (avoid Cookie banner checkboxes!)
     terms = None
     for cb in await page.locator('input[type="checkbox"]').all():
         lbl = (await cb.get_attribute('aria-label') or '').lower()
@@ -352,39 +351,30 @@ async def _fireworks_playwright_onboarding(page) -> None:
     if not terms:
         terms = page.locator('label:has-text("Terms")').first
     if await terms.count() > 0:
-        await terms.check(force=True); await asyncio.sleep(0.5)
+        await terms.click(force=True); await asyncio.sleep(0.5)
     
-    # Continue button
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Continue' in txt or 'Next' in txt:
             await btn.click(force=True); await asyncio.sleep(2)
             break
     
-    # Use-case checkboxes (skip cookie banner checkboxes)
     for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
-        cb = page.locator(f'label:has-text("{uc}")').first
-        if await cb.count() > 0:
-            await cb.click(force=True); await asyncio.sleep(0.3)
-        else:
-            # Try direct checkbox (filter out cookie banner ones)
-            for inp in await page.locator('input[type="checkbox"]').all():
-                i_id = (await inp.get_attribute('id') or '').lower()
-                if 'cky' in i_id:
-                    continue
-                label = await inp.get_attribute('aria-label') or ''
-                if uc.lower() in label.lower():
-                    await inp.check(force=True); await asyncio.sleep(0.3)
-                    break
+        for inp in await page.locator('input[type="checkbox"]').all():
+            i_id = (await inp.get_attribute('id') or '').lower()
+            if 'cky' in i_id:
+                continue
+            label = await inp.get_attribute('aria-label') or ''
+            if uc.lower() in label.lower():
+                await inp.click(force=True); await asyncio.sleep(0.3)
+                break
     
-    # Submit
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Submit' in txt or 'Get $5' in txt:
             await btn.click(force=True); await asyncio.sleep(4)
             break
     
-    # Poll for redirect (max 20s)
     for _ in range(10):
         await asyncio.sleep(2)
         if any(x in page.url for x in ['home', 'account', 'settings']):
@@ -453,7 +443,9 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
                 continue
 
         # Ensure name is filled
-        await pg.locator(f'input[name="name"]').first.fill(name)
+        await pg.locator(f'input[name="name"]').first.click()
+        await asyncio.sleep(0.2)
+        await pg.locator(f'input[name="name"]').first.type(name, delay=40)
         await asyncio.sleep(1)
 
         # Wait for Generate to be enabled (max 10s)
