@@ -40,21 +40,19 @@ case "${1:-status}" in
 </plist>
 EOF
 
-        # Watchdog service
-        cat > ~/Library/LaunchAgents/com.sinator.watchdog.plist << EOF
+        # Pool Proxy service (replaces deprecated watchdog)
+        cat > ~/Library/LaunchAgents/com.sinator.pool-proxy.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.sinator.watchdog</string>
+    <string>com.sinator.pool-proxy</string>
     <key>ProgramArguments</key>
     <array>
         <string>${PYTHON}</string>
-        <string>${SINATOR_DIR}/tools/key_watchdog.py</string>
-        <string>--interval</string>
-        <string>120</string>
+        <string>${SINATOR_DIR}/proxy/server.py</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -62,12 +60,23 @@ EOF
     <true/>
     <key>WorkingDirectory</key>
     <string>${SINATOR_DIR}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONPATH</key>
+        <string>${SINATOR_DIR}</string>
+        <key>SIN_CACHE_DIR</key>
+        <string>${HOME}/.sin-pool</string>
+        <key>SIN_POOL_API_URL</key>
+        <string>http://localhost:8000/api/v1</string>
+        <key>SIN_PROXY_PORT</key>
+        <string>8888</string>
+    </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/key_watchdog.log</string>
+    <string>/tmp/pool-proxy.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/key_watchdog.err</string>
+    <string>/tmp/pool-proxy.err</string>
     <key>ThrottleInterval</key>
-    <integer>30</integer>
+    <integer>10</integer>
 </dict>
 </plist>
 EOF
@@ -103,14 +112,14 @@ EOF
 EOF
 
         echo "→ Loading services..."
-        for svc in backend watchdog tunnel; do
+        for svc in backend pool-proxy tunnel; do
             launchctl load ~/Library/LaunchAgents/com.sinator.${svc}.plist 2>/dev/null || true
         done
         echo "✅ All services installed"
         ;;
 
     start)
-        for svc in backend watchdog tunnel; do
+        for svc in backend pool-proxy tunnel; do
             launchctl kickstart gui/$(id -u)/com.sinator.${svc} 2>/dev/null || \
                 launchctl start com.sinator.${svc} 2>/dev/null || true
         done
@@ -118,7 +127,7 @@ EOF
         ;;
 
     stop)
-        for svc in backend watchdog tunnel; do
+        for svc in backend pool-proxy tunnel; do
             launchctl bootout gui/$(id -u)/com.sinator.${svc} 2>/dev/null || true
         done
         echo "✅ Services stopped"
@@ -126,7 +135,7 @@ EOF
 
     status)
         echo "=== SINator Services ==="
-        for svc in backend watchdog tunnel; do
+        for svc in backend pool-proxy tunnel; do
             if launchctl print gui/$(id -u)/com.sinator.${svc} 2>/dev/null | grep -q "state = running"; then
                 echo "  ✅ com.sinator.${svc} — running"
             else
@@ -144,8 +153,8 @@ EOF
         echo "=== Backend ==="
         tail -5 /tmp/sinator-backend.log 2>/dev/null || echo "  (no log)"
         echo ""
-        echo "=== Watchdog ==="
-        tail -5 /tmp/key_watchdog.log 2>/dev/null || echo "  (no log)"
+        echo "=== Pool Proxy ==="
+        tail -5 /tmp/pool-proxy.log 2>/dev/null || echo "  (no log)"
         echo ""
         echo "=== Tunnel ==="
         tail -3 /tmp/sinator-tunnel.log 2>/dev/null || echo "  (no log)"
