@@ -17,8 +17,18 @@ Usage:
 import subprocess
 import json
 import logging
+import time
 
 logger = logging.getLogger(__name__)
+
+
+def _activate_chrome():
+    try:
+        subprocess.run(["osascript", "-e", 'tell application "Google Chrome" to activate'],
+                       capture_output=True, timeout=5)
+        time.sleep(1.5)
+    except Exception:
+        pass
 
 
 def find_cua_window(
@@ -81,6 +91,21 @@ def find_cua_window(
                         w["pid"], w["window_id"], w.get("title", "")[:60]
                     )
                     return w["pid"], w["window_id"]
+
+        # Activate Chrome and retry
+        logger.info("Activating Chrome and retrying...")
+        _activate_chrome()
+        time.sleep(1)
+        res2 = subprocess.run(
+            ["cua-driver", "call", "list_windows"],
+            capture_output=True, text=True, timeout=10,
+            input=json.dumps({"query": "Chrome"}),
+        )
+        windows2 = json.loads(res2.stdout).get("windows", [])
+        for w in windows2:
+            if _match(w):
+                logger.info("CUA window found after activate: pid=%s wid=%s", w["pid"], w["window_id"])
+                return w["pid"], w["window_id"]
 
         logger.warning(
             "CUA window not found: app=%s keywords=%s",
