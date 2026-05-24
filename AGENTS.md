@@ -9,8 +9,13 @@ python tools/rotate.py
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Pool:** 56 Keys (56 total, 42+ available)
+**Pool:** 57 Keys
 **Cycle Time:** ~210s average (Strecke: 198-224s)
+**Pool Proxy V2:** läuft auf :8888 (aiohttp SSE + auto-swap), Dashboard SSE live
+**Services:** com.sinator.backend (:8000), com.sinator.pool-proxy (:8888), com.sinator.tunnel
+**Neue Endpoints:** POST /lease, /return, /report, GET /events (SSE) | **Files:** proxy/, deprecated/
+**Setup für Miner MacBooks:** proxy/setup.sh <tunnel-url>
+**opencode config:** baseURL: http://localhost:8888/inference/v1, apiKey: pool
 
 ## 🔧 V10 FIX — CUA PID TARGETING (2026-05-24)
 
