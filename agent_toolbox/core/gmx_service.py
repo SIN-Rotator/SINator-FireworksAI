@@ -466,11 +466,22 @@ class GmxService:
             async with async_playwright() as _pw:
                 _b = await _pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
 
-                # Try CUA click "Einstellungen" — only visible on inbox/mail page
                 _cua_success = False
                 try:
+                    import subprocess as _sp_local
+                    _chrome_pid = None
+                    try:
+                        _lsof = _sp_local.run(["lsof", "-i", ":9222", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=5)
+                        for _lf_line in _lsof.stdout.split('\n')[1:]:
+                            _parts = _lf_line.split()
+                            if len(_parts) >= 2 and _parts[1].isdigit():
+                                _chrome_pid = int(_parts[1])
+                                break
+                    except Exception:
+                        pass
+
                     from agent_toolbox.core.cua_helper import find_cua_window, cua_click, cua_get_window_state
-                    _cua = find_cua_window(title_keywords=["GMX", "FreeMail", "E-Mail", "Postfach"])
+                    _cua = find_cua_window(title_keywords=["FreeMail"], target_pid=_chrome_pid)
                     if _cua:
                         _cua_pid, _cua_wid = _cua
                         _tree = cua_get_window_state(_cua_pid, _cua_wid)

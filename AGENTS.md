@@ -1,6 +1,6 @@
-# AGENTS.md — SINator Fireworks AI Rotator V9 (2026-05-23)
+# AGENTS.md — SINator Fireworks AI Rotator V9 (2026-05-24)
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-23
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-24
 
 **Full automated flow in ONE command:**
 ```bash
@@ -9,8 +9,28 @@ python tools/rotate.py
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Pool:** 45 Keys (45 total, 45 available)
-**Cycle Time:** ~173s average (Strecke: 158-188s) — nach V9 sleep-Reduktion
+**Pool:** 56 Keys (56 total, 42+ available)
+**Cycle Time:** ~210s average (Strecke: 198-224s)
+
+## 🔧 V10 FIX — CUA PID TARGETING (2026-05-24)
+
+**Problem:** `allEmailAddresses iframe not found` — CUA `find_cua_window` fand das falsche GMX-Fenster.
+Mehrere Chrome-Instanzen liefen gleichzeitig (stale Instanz auf Port 9223 + Haupt-Instanz auf Port 9222).
+`find_cua_window(title_keywords=["GMX","FreeMail","E-Mail","Postfach"])` matched das erste on-screen GMX-Fenster
+— das konnte die stale Einstellungen-Seite auf dem falschen PID sein.
+
+**Fix:**
+1. `lsof -i :9222 -sTCP:LISTEN` ermittelt den Chrome-PID der Haupt-Instanz
+2. `find_cua_window(title_keywords=["FreeMail"], target_pid=_chrome_pid)` targetet nur das richtige Fenster
+3. Keywords eingeschränkt auf `"FreeMail"` (Inbox-Titel = "GMX FreeMail", nicht "GMX - Einstellungen")
+4. `rotate.py` setzt `SINATOR_CHROME_PID` env var beim Start
+5. Tab-Cleanup erweitert: `chrome://newtab`, `chrome://new-tab`, `mail_settings` URLs
+6. AppleScript: Dashboard links (0-960), neues Fenster rechts (960-1920)
+
+**Dateien:**
+- `agent_toolbox/core/gmx_service.py` — `lsof` PID-Ermittlung + `target_pid` an `find_cua_window`
+- `tools/rotate.py` — `SINATOR_CHROME_PID` env var + erweitertes Tab-Cleanup
+- `agent_toolbox/api/routes/rotation.py` — AppleScript side-by-side Fenster-Positionierung
 
 ## 🐛 BEKANNTE PROBLEME (2026-05-23)
 

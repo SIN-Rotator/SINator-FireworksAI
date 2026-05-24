@@ -9,10 +9,12 @@ Usage:
     python tools/rotate.py my-alias-123 # Specific alias name
 """
 import sys
+import os
 import asyncio
 import time
 import logging
 import argparse
+import re as _re_inner
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -34,6 +36,18 @@ async def main():
     args = parser.parse_args()
     CDP = f"http://127.0.0.1:{args.cdp_port}"
 
+    import subprocess as _sp_cleanup
+    try:
+        _lsof = _sp_cleanup.run(["lsof", "-i", f":{args.cdp_port}", "-sTCP:LISTEN"], capture_output=True, text=True, timeout=5)
+        for _line in _lsof.stdout.split('\n')[1:]:
+            _parts = _line.split()
+            if len(_parts) >= 2 and _parts[1].isdigit():
+                os.environ["SINATOR_CHROME_PID"] = _parts[1]
+                logger.info(f"Chrome PID: {_parts[1]} (port {args.cdp_port})")
+                break
+    except Exception:
+        pass
+
     from pool_manager import PoolManager
     pool = PoolManager()
 
@@ -44,13 +58,12 @@ async def main():
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
         _b = await _p.chromium.connect_over_cdp(CDP)
-        # Nur Rotator-Pages schließen (nicht Dashboard)
-        for _old in _b.contexts[0].pages:
+        for _old in list(_b.contexts[0].pages):
             try:
                 _url = _old.url
-                if 'localhost' in _url and 'dashboard' not in _url.lower():
-                    pass  # Dashboard behalten
-                elif 'gmx' in _url.lower() or 'fireworks' in _url.lower() or 'about:blank' in _url:
+                if 'localhost:3000' in _url or 'localhost:8000' in _url:
+                    pass
+                elif 'gmx' in _url.lower() or 'fireworks' in _url.lower() or 'about:blank' in _url or 'chrome://newtab' in _url or 'chrome://new-tab' in _url or 'mail_settings' in _url:
                     await _old.close()
             except: pass
         _pg = await _b.contexts[0].new_page()
@@ -114,20 +127,8 @@ async def main():
             logger.warning("⚠️ GMX Login fehlgeschlagen")
         # Keep page open so GmxService can find it via CDP+CUA
 
-    # ═══ Step 1: GMX Alias Rotation ═══
+    # ═══ Step 1: GMX Alias Rotation (via GmxService — CUA + Playwright) ═══
     logger.info("=== GMX Alias Rotation ===")
-    
-    # GMX-Fenster in Vordergrund bringen (damit CUA es findet)
-    try:
-        _sp.run(["osascript", "-e",
-            'tell application "Google Chrome"\n'
-            '    activate\n'
-            '    set index of window 1 to 1\n'
-            'end tell'
-        ], capture_output=True, timeout=5)
-        await asyncio.sleep(1)
-    except: pass
-    
     from gmx_service import GmxService
     svc = GmxService()
     result = await svc.rotate_alias(new_alias_name=args.alias, cdp_port=args.cdp_port)
@@ -168,7 +169,6 @@ async def main():
 
     # ═══ Login + API Key in ONE Playwright session ═══
     import json as _json_inner, subprocess as _sp
-    import re as _re_inner
     key_name = alias.split("@")[0].split("-")[0] if alias else "sinator-key"
     api_key = None
 
