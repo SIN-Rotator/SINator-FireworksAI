@@ -57,19 +57,29 @@ SWAP_REASONS = {
 PERMANENT_429_KEYWORDS = ("spending limit", "monthly", "quota exceeded", "suspended")
 
 
-PUBLIC_PROXY_PATHS = ("/health", "/pool-status", "/pool-lease")
+PUBLIC_PROXY_PATHS = ("/health", "/pool-status")
 
 @web.middleware
 async def _pool_auth_middleware(request: web.Request, handler) -> web.Response:
-    if POOL_AUTH_TOKEN and request.path not in PUBLIC_PROXY_PATHS:
-        path = request.path
-        if path.startswith("/inference/") or path.startswith("/v1/"):
-            auth = request.headers.get("Authorization", "")
-            if auth != f"Bearer {POOL_AUTH_TOKEN}":
-                return web.json_response(
-                    {"error": "unauthorized", "message": "Invalid or missing auth token"},
-                    status=401,
-                )
+    if not POOL_AUTH_TOKEN:
+        return await handler(request)
+    path = request.path
+    if path in PUBLIC_PROXY_PATHS:
+        return await handler(request)
+    peer = request.transport.get_extra_info("peername")
+    if peer:
+        host = peer[0]
+        if host.startswith("::ffff:"):
+            host = host[7:]
+        if host in ("127.0.0.1", "::1"):
+            return await handler(request)
+    if path.startswith("/inference/") or path.startswith("/v1/") or path == "/pool-lease":
+        auth = request.headers.get("Authorization", "")
+        if auth != f"Bearer {POOL_AUTH_TOKEN}":
+            return web.json_response(
+                {"error": "unauthorized", "message": "Invalid or missing auth token"},
+                status=401,
+            )
     return await handler(request)
 
 
