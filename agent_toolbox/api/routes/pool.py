@@ -8,18 +8,29 @@
 ║  POST /pool/add          → API-Key zum Pool hinzufügen                      ║
 ║  POST /pool/use          → API-Key als verwendet markieren                  ║
 ║  GET  /pool/key          → Nächsten verfügbaren API-Key (Klartext)          ║
+║  POST /pool/lease        → Key leasen (atomic, mit TTL)                     ║
+║  POST /pool/return       → Geleaste Key zurückgeben                         ║
+║  POST /pool/report       → Bad key melden + Ersatz                          ║
+║  GET  /pool/events       → SSE Stream für Dashboard Live-Updates            ║
 ║  GET  /pool/health       → Validiert alle Keys via Fireworks API            ║
 ║  DELETE /pool/{key_id}   → API-Key aus Pool löschen                         ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """
 import time
+import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
-from agent_toolbox.core.pool_manager import get_pool_manager
+from agent_toolbox.core.pool_manager import (
+    get_pool_manager,
+    register_sse_listener,
+    unregister_sse_listener,
+)
 from agent_toolbox.api.schemas import (
     PoolStatsResponse,
     PoolAddKeyRequest,
@@ -46,6 +57,7 @@ async def get_pool_stats():
             status="success",
             total=stats["total"],
             used=stats["used"],
+            leased=stats.get("leased", 0),
             available=stats["available"],
             keys=stats["keys"],
             execution_time=f"{elapsed:.2f}s",
@@ -133,6 +145,7 @@ async def report_bad_key(request: dict):
     Markiert den Key als used und liefert einen neuen.
     
     Body: {"api_key": "fw_xxx"} oder {"key_id": "xxx"}
+    Optional: {"reason": "suspended" | "rate_limited" | "unauthorized" | "credits_exhausted"}
     
     Returns:
       200 + swapped=true + new_key wenn Key gefunden und markiert wurde
@@ -142,52 +155,142 @@ async def report_bad_key(request: dict):
     pool_mgr = get_pool_manager()
     key_id = request.get("key_id") or request.get("id")
     api_key = request.get("api_key") or request.get("key")
+    reason = request.get("reason", "unknown")
 
     if not key_id and not api_key:
         raise HTTPException(status_code=400, detail="Missing 'api_key' or 'key_id' in request body")
 
-    found_key_id = None
-    found_key_api = None
-    if key_id:
-        # Verifiziere dass key_id existiert
-        for k in pool_mgr.get_stats()["keys"]:
-            if k["id"] == key_id:
-                found_key_id = key_id
-                found_key_api = k.get("api_key", "")
-                break
-    elif api_key:
-        for k in pool_mgr.get_stats()["keys"]:
-            if k.get("api_key") == api_key:
-                found_key_id = k["id"]
-                found_key_api = api_key
-                break
-        if not found_key_id:
-            import json as _json
-            for k in _json.loads(Path("data/fireworksai-pool.json").read_text()):
-                if k.get("api_key") == api_key:
-                    found_key_id = k["id"]
-                    found_key_api = api_key
-                    break
+    result = pool_mgr.report_key(api_key=api_key, key_id=key_id, reason=reason)
 
-    if not found_key_id:
+    if result is None:
         raise HTTPException(
             status_code=404,
             detail=f"Key '{api_key or key_id}' not found in pool"
         )
 
-    pool_mgr.mark_used(found_key_id)
+    return {
+        "status": result.get("status", "success"),
+        "swapped": result.get("swapped", False),
+        "new_key": result.get("new_api_key"),
+        "new_key_id": result.get("new_key_id"),
+        "new_alias": result.get("new_alias"),
+        "reason": reason,
+    }
 
-    new_key = pool_mgr.get_available_key()
-    if not new_key:
-        return {"status": "no_keys_available", "swapped": False}
+
+@router.post("/lease")
+async def lease_key(request: dict):
+    """
+    Lease an available key atomically with TTL.
+    
+    Body: {
+      "ttl_seconds": 1800,        // Lease duration (default 30min)
+      "leased_to": "proxy-1",     // Identifier of lessee
+      "lease_backup": false       // Also lease a backup key?
+    }
+    
+    Returns:
+      200 + key info + lease_id + expires_at
+      404 if no available keys
+    """
+    pool_mgr = get_pool_manager()
+    ttl_seconds = request.get("ttl_seconds", 1800)
+    leased_to = request.get("leased_to", "proxy")
+    lease_backup = request.get("lease_backup", False)
+
+    result = pool_mgr.lease_key(
+        ttl_seconds=ttl_seconds,
+        leased_to=leased_to,
+        lease_backup=lease_backup,
+    )
+
+    if not result:
+        raise HTTPException(status_code=404, detail="No available keys to lease")
 
     return {
         "status": "success",
-        "swapped": True,
-        "new_key": new_key.get("api_key"),
-        "new_key_id": new_key.get("id"),
-        "new_alias": new_key.get("alias_email"),
+        "api_key": result["api_key"],
+        "key_id": result["key_id"],
+        "lease_id": result["lease_id"],
+        "expires_at": result["expires_at"],
+        "alias_email": result["alias_email"],
+        "key_name": result.get("key_name", ""),
+        "backup": result.get("backup"),
     }
+
+
+@router.post("/return")
+async def return_leased_key(request: dict):
+    """
+    Return a leased key, making it available again.
+    
+    Body: {"key_id": "xxx"} or {"key_id": "xxx", "lease_id": "yyy"}
+    
+    Returns:
+      200 if key was returned
+      404 if key not found
+      400 if lease_id mismatch
+    """
+    pool_mgr = get_pool_manager()
+    key_id = request.get("key_id")
+    lease_id = request.get("lease_id")
+
+    if not key_id:
+        raise HTTPException(status_code=400, detail="Missing 'key_id' in request body")
+
+    success = pool_mgr.return_key(key_id=key_id, lease_id=lease_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Key '{key_id}' not found or lease_id mismatch")
+
+    return {"status": "success", "key_id": key_id}
+
+
+@router.get("/events")
+async def pool_events():
+    """
+    SSE stream for dashboard live updates.
+    
+    Events:
+      key_leased   — key was leased by a proxy
+      key_returned — key was returned
+      key_swapped  — bad key was swapped for a new one
+      stats        — periodic pool stats update (every 30s)
+    """
+    queue = register_sse_listener()
+
+    async def event_generator():
+        try:
+            stats_interval = 30
+            last_stats = time.time()
+            while True:
+                try:
+                    payload = await asyncio.wait_for(queue.get(), timeout=1.0)
+                    event_type = payload.get("event", "stats")
+                    data = payload.get("data", {})
+                    yield f"event: {event_type}\ndata: {__import__('json').dumps(data)}\n\n"
+                except asyncio.TimeoutError:
+                    pass
+                now = time.time()
+                if now - last_stats >= stats_interval:
+                    pool_mgr = get_pool_manager()
+                    stats = pool_mgr.get_stats()
+                    yield f"event: stats\ndata: {__import__('json').dumps({'total': stats['total'], 'used': stats['used'], 'leased': stats['leased'], 'available': stats['available']})}\n\n"
+                    last_stats = now
+        except asyncio.CancelledError:
+            pass
+        finally:
+            unregister_sse_listener(queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/health")

@@ -1,23 +1,3 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — Pool Manager (Core)                     ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  ZWECK:                                                                      ║
-║  API-Key-Pool-Speicherung und -Verwaltung.                                   ║
-║                                                                              ║
-║  ARCHITEKTUR:                                                                 ║
-║  ┌─────────────────────────────────────────────────────────────────────┐    ║
-║  │ PoolManager                                                          │    ║
-║  │ ├── add_key() → Fügt neuen API-Key zum Pool hinzu                   │    ║
-║  │ ├── get_available_key() → Liefert nächsten unverwendeten Key        │    ║
-║  │ ├── mark_used() → Markiert Key als verwendet                        │    ║
-║  │ ├── get_stats() → Pool-Statistiken                                  │    ║
-║  │ └── save() → Speichert Pool in JSON-Datei                           │    ║
-║  └─────────────────────────────────────────────────────────────────────┘    ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-"""
 import json
 import time
 import uuid
@@ -120,14 +100,16 @@ class PoolManager:
 
     def get_available_key(self) -> Optional[Dict[str, Any]]:
         """
-        Liefert den nächsten unverwendeten API-Key.
-
-        Returns:
-            Dict mit api_key, alias_email, key_name oder None
+        Liefert den nächsten unverwendeten und nicht-geleasten API-Key.
         """
         self.reload()
+        self.expire_leases()
+        now = time.time()
         for key in self.keys:
             if not key.get("used", False):
+                leased_until = key.get("leased_until")
+                if leased_until is not None and leased_until > now:
+                    continue
                 return key
         return None
 
@@ -154,17 +136,20 @@ class PoolManager:
     def get_stats(self) -> Dict[str, Any]:
         """
         Generiert Pool-Statistiken.
-
-        Returns:
-            Dict mit total, used, available, keys
         """
         self.reload()
+        self.expire_leases()
+        now = time.time()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
-        available = total - used
+        leased = sum(1 for k in self.keys if not k.get("used", False)
+                     and k.get("leased_until") is not None and k["leased_until"] > now)
+        available = total - used - leased
 
         keys_list = []
         for k in self.keys:
+            leased_until = k.get("leased_until")
+            is_leased = (not k.get("used", False) and leased_until is not None and leased_until > now)
             keys_list.append({
                 "id": k["id"],
                 "alias_email": k["alias_email"],
@@ -176,11 +161,16 @@ class PoolManager:
                 "credits_initial": k.get("credits_initial", 6.0),
                 "credits_remaining": k.get("credits_remaining", 6.0),
                 "credits_checked_at": k.get("credits_checked_at"),
+                "leased": is_leased,
+                "leased_to": k.get("leased_to") if is_leased else None,
+                "leased_until": leased_until if is_leased else None,
+                "lease_id": k.get("lease_id") if is_leased else None,
             })
 
         return {
             "total": total,
             "used": used,
+            "leased": leased,
             "available": available,
             "keys": keys_list,
         }
@@ -229,6 +219,219 @@ class PoolManager:
             logger.info(f"API-Key gelöscht: {key_id[:8]}...")
             return True
         return False
+
+    def lease_key(self, ttl_seconds: int = 1800, leased_to: str = "proxy",
+                  lease_backup: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Leases an available key atomically. Key becomes unavailable to other
+        consumers until the lease expires or is returned.
+
+        Args:
+            ttl_seconds: Lease duration in seconds (default 30min)
+            leased_to: Identifier of the lessee (e.g. "proxy-macbook-1")
+            lease_backup: If True, also lease a second key as backup
+
+        Returns:
+            Dict with api_key, key_id, lease_id, expires_at or None
+        """
+        self.reload()
+        self.expire_leases()
+        now = time.time()
+        expires_at = now + ttl_seconds
+        for key in self.keys:
+            if not key.get("used", False):
+                leased_until = key.get("leased_until")
+                if leased_until is not None and leased_until > now:
+                    continue
+                lease_id = uuid.uuid4().hex[:12]
+                key["leased_until"] = expires_at
+                key["leased_to"] = leased_to
+                key["lease_id"] = lease_id
+                key["leased_at"] = now
+                self.save()
+                _emit_event("key_leased", {
+                    "key_id": key["id"],
+                    "lease_id": lease_id,
+                    "leased_to": leased_to,
+                    "expires_at": expires_at,
+                })
+                logger.info(f"Key leased: {key['id'][:8]}... → {leased_to} (TTL={ttl_seconds}s)")
+                result = {
+                    "api_key": key["api_key"],
+                    "key_id": key["id"],
+                    "lease_id": lease_id,
+                    "expires_at": expires_at,
+                    "alias_email": key["alias_email"],
+                    "key_name": key.get("key_name", ""),
+                }
+                if lease_backup:
+                    backup = self.lease_key(ttl_seconds=ttl_seconds, leased_to=leased_to + "-backup")
+                    if backup:
+                        result["backup"] = backup
+                return result
+        logger.warning("No available keys to lease")
+        return None
+
+    def return_key(self, key_id: str, lease_id: Optional[str] = None) -> bool:
+        """
+        Returns a leased key, making it available again.
+
+        Args:
+            key_id: ID of the key to return
+            lease_id: Optional lease_id for verification
+
+        Returns:
+            True if key was found and returned
+        """
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                if lease_id and key.get("lease_id") != lease_id:
+                    logger.warning(f"Lease ID mismatch for key {key_id[:8]}...")
+                    return False
+                key["leased_until"] = None
+                key["leased_to"] = None
+                key["lease_id"] = None
+                key["leased_at"] = None
+                self.save()
+                _emit_event("key_returned", {
+                    "key_id": key_id,
+                    "from": key.get("leased_to", "unknown"),
+                })
+                logger.info(f"Key returned: {key_id[:8]}...")
+                return True
+        return False
+
+    def expire_leases(self) -> int:
+        """
+        Expires all leases whose TTL has passed. Called automatically
+        before lease_key() and in get_stats().
+
+        Returns:
+            Number of leases expired
+        """
+        now = time.time()
+        expired = 0
+        for key in self.keys:
+            leased_until = key.get("leased_until")
+            if leased_until is not None and leased_until <= now:
+                key["leased_until"] = None
+                key["leased_to"] = None
+                key["lease_id"] = None
+                key["leased_at"] = None
+                expired += 1
+        if expired > 0:
+            self.save()
+            logger.info(f"Expired {expired} lease(s)")
+        return expired
+
+    def get_leased_keys(self) -> List[Dict[str, Any]]:
+        """
+        Returns all currently leased keys (active leases only).
+
+        Returns:
+            List of leased key dicts
+        """
+        self.reload()
+        self.expire_leases()
+        now = time.time()
+        leased = []
+        for key in self.keys:
+            leased_until = key.get("leased_until")
+            if not key.get("used", False) and leased_until is not None and leased_until > now:
+                leased.append({
+                    "id": key["id"],
+                    "alias_email": key["alias_email"],
+                    "key_name": key.get("key_name", ""),
+                    "api_key": key.get("api_key", ""),
+                    "leased_to": key.get("leased_to"),
+                    "lease_id": key.get("lease_id"),
+                    "leased_at": key.get("leased_at"),
+                    "leased_until": leased_until,
+                })
+        return leased
+
+    def report_key(self, api_key: Optional[str] = None, key_id: Optional[str] = None,
+                   reason: str = "unknown") -> Optional[Dict[str, Any]]:
+        """
+        Report a key as bad (suspended/rate-limited/invalid). Marks it as used
+        and returns a new available key.
+
+        Args:
+            api_key: API key string to find (alternative to key_id)
+            key_id: Key ID to find
+            reason: Why the key was reported (suspended, rate_limited, unauthorized, etc.)
+
+        Returns:
+            Dict with new_key info or None
+        """
+        self.reload()
+        found_id = key_id
+        if not found_id and api_key:
+            for k in self.keys:
+                if k.get("api_key") == api_key:
+                    found_id = k["id"]
+                    break
+        if not found_id:
+            return None
+        old_alias = ""
+        for k in self.keys:
+            if k["id"] == found_id:
+                old_alias = k.get("alias_email", "")
+                break
+        self.mark_used(found_id)
+        _emit_event("key_swapped", {
+            "old_key_id": found_id,
+            "old_alias": old_alias,
+            "reason": reason,
+        })
+        logger.info(f"Key reported as {reason}: {found_id[:8]}...")
+        new_key = self.get_available_key()
+        if new_key:
+            return {
+                "status": "swapped",
+                "new_api_key": new_key.get("api_key"),
+                "new_key_id": new_key.get("id"),
+                "new_alias": new_key.get("alias_email"),
+            }
+        return {"status": "no_keys_available", "swapped": False}
+
+
+_SSE_LISTENERS: List = []
+
+
+def _emit_event(event_type: str, data: Dict[str, Any]):
+    """
+    Emits an SSE event to all registered listeners.
+    Thread-safe — safe to call from any PoolManager method.
+    """
+    import asyncio as _asyncio
+    payload = {"event": event_type, "data": data}
+    dead = []
+    for q in _SSE_LISTENERS:
+        try:
+            q.put_nowait(payload)
+        except Exception:
+            dead.append(q)
+    for q in dead:
+        _SSE_LISTENERS.remove(q)
+
+
+def register_sse_listener() -> "asyncio.Queue":
+    """
+    Register a new SSE listener queue. Returns an asyncio.Queue
+    that will receive event payloads.
+    """
+    import asyncio as _asyncio
+    q = _asyncio.Queue()
+    _SSE_LISTENERS.append(q)
+    return q
+
+
+def unregister_sse_listener(q: "asyncio.Queue"):
+    """Remove an SSE listener queue."""
+    if q in _SSE_LISTENERS:
+        _SSE_LISTENERS.remove(q)
 
 
 _pool_manager: Optional[PoolManager] = None

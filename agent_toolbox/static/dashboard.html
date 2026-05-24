@@ -29,6 +29,22 @@
     .status-healthy { color: #22c55e; }
     .status-suspended { color: #ef4444; }
     .status-used { color: #f59e0b; }
+    .status-leased { color: #3b82f6; }
+    .stat-card.leased .value { color: #3b82f6; }
+    .active-key-card { background: #1e293b; border-radius: 8px; padding: 16px 20px; border: 1px solid #3b82f6; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; }
+    .active-key-card .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .active-key-card .dot.green { background: #22c55e; box-shadow: 0 0 8px #22c55e80; }
+    .active-key-card .dot.yellow { background: #f59e0b; box-shadow: 0 0 8px #f59e0b80; animation: pulse 1s ease-in-out infinite; }
+    .active-key-card .dot.red { background: #ef4444; box-shadow: 0 0 8px #ef444480; }
+    .active-key-card .info { flex: 1; }
+    .active-key-card .info .label { color: #94a3b8; font-size: 12px; }
+    .active-key-card .info .detail { font-size: 14px; margin-top: 2px; }
+    .active-key-card .info .detail code { font-family: monospace; color: #3b82f6; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .evt-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-right: 4px; }
+    .evt-badge.leased { background: #3b82f620; color: #3b82f6; }
+    .evt-badge.swapped { background: #ef444420; color: #ef4444; }
+    .evt-badge.returned { background: #22c55e20; color: #22c55e; }
     .key-cell { display: flex; align-items: center; gap: 6px; }
     .key-text { font-family: monospace; font-size: 11px; color: #94a3b8; background: #0f172a; padding: 2px 6px; border-radius: 4px; }
     .btn-copy { background: #334155; border: none; color: #e2e8f0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
@@ -66,7 +82,16 @@
     <div class="stat-card"><div class="value" id="stat-total">—</div><div class="label">Total Keys</div></div>
     <div class="stat-card"><div class="value" id="stat-available">—</div><div class="label">Available</div></div>
     <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used / Suspended</div></div>
+    <div class="stat-card leased"><div class="value" id="stat-leased">—</div><div class="label">Leased</div></div>
     <div class="stat-card credits"><div class="value" id="stat-credits">—</div><div class="label">Credits</div></div>
+  </div>
+
+  <div class="active-key-card" id="active-key-card" style="display:none">
+    <div class="dot green" id="active-key-dot"></div>
+    <div class="info">
+      <div class="label">Active Proxy Key</div>
+      <div class="detail" id="active-key-detail">—</div>
+    </div>
   </div>
 
   <div class="actions">
@@ -83,7 +108,7 @@
   <div class="card">
     <h2>API Keys</h2>
     <table>
-      <thead><tr><th>Alias</th><th>Status</th><th>Credits</th><th>API Key</th></tr></thead>
+      <thead><tr><th>Alias</th><th>Status</th><th>Lease</th><th>Credits</th><th>API Key</th></tr></thead>
       <tbody id="key-table"><tr><td colspan="4" style="color:#64748b;text-align:center;padding:20px;">Lade...</td></tr></tbody>
     </table>
   </div>
@@ -102,13 +127,45 @@
 <script>
 const API = '/api/v1';
 let token = '__AUTH_TOKEN__';
+let evtSource = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   const saved = localStorage.getItem('sinator_token');
   if (saved) token = saved;
   document.getElementById('auth-token-display').textContent = token;
   loadDashboard();
+  connectSSE();
 });
+
+function connectSSE() {
+  if (evtSource) { evtSource.close(); }
+  try {
+    evtSource = new EventSource(API + '/pool/events');
+    evtSource.addEventListener('key_leased', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge leased">LEASED</span> ' + (d.key_id || '').slice(0, 8) + '... → ' + (d.leased_to || '?'), 'info');
+      loadDashboard();
+    });
+    evtSource.addEventListener('key_swapped', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge swapped">SWAPPED</span> ' + (d.old_key_id || '').slice(0, 8) + '... (' + (d.reason || '?') + ')', 'error');
+      loadDashboard();
+    });
+    evtSource.addEventListener('key_returned', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge returned">RETURNED</span> ' + (d.key_id || '').slice(0, 8) + '...', 'success');
+      loadDashboard();
+    });
+    evtSource.addEventListener('stats', (e) => {
+      const d = JSON.parse(e.data);
+      document.getElementById('stat-total').textContent = d.total || 0;
+      document.getElementById('stat-available').textContent = d.available || 0;
+      document.getElementById('stat-used').textContent = d.used || 0;
+      document.getElementById('stat-leased').textContent = d.leased || 0;
+    });
+    evtSource.onerror = () => { /* auto-reconnect */ };
+  } catch (e) { /* SSE not available */ }
+}
 
 function copyToken() {
   navigator.clipboard.writeText(token);
@@ -158,11 +215,29 @@ async function loadDashboard() {
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-available').textContent = stats.available || 0;
     document.getElementById('stat-used').textContent = stats.used || 0;
+    document.getElementById('stat-leased').textContent = stats.leased || 0;
     document.getElementById('stat-credits').textContent = '—';
+    updateActiveKeyCard(stats.keys || []);
     renderKeys(stats.keys || []);
   } catch (e) {
     log('Fehler: ' + e.message, 'error');
   }
+}
+
+function updateActiveKeyCard(keys) {
+  const card = document.getElementById('active-key-card');
+  const dot = document.getElementById('active-key-dot');
+  const detail = document.getElementById('active-key-detail');
+  const leased = keys.filter(k => k.leased);
+  if (leased.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'flex';
+  const k = leased[0];
+  const keyTail = (k.api_key || '').slice(-6) || '???';
+  dot.className = 'dot green';
+  detail.innerHTML = '<code>fw_...' + keyTail + '</code> &middot; ' + (k.alias_email || '?') + ' &middot; <span style="color:#94a3b8">leased to ' + (k.leased_to || '?') + '</span>';
 }
 
 function copyKey(apiKey) {
@@ -188,21 +263,22 @@ function copyKey(apiKey) {
 function renderKeys(keys) {
   const tbody = document.getElementById('key-table');
   if (!keys.length) {
-    tbody.innerHTML = '<tr><td colspan="4" style="color:#64748b;text-align:center;padding:20px;">Keine Keys</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#64748b;text-align:center;padding:20px;">Keine Keys</td></tr>';
     return;
   }
   tbody.innerHTML = keys.map((k, idx) => {
-    const status = k.status || (k.used ? 'used' : 'unknown');
-    const cls = status === 'healthy' ? 'status-healthy' : status === 'suspended' ? 'status-suspended' : 'status-used';
+    const status = k.status || (k.used ? 'used' : k.leased ? 'leased' : 'available');
+    const cls = status === 'healthy' ? 'status-healthy' : status === 'suspended' ? 'status-suspended' : status === 'leased' ? 'status-leased' : 'status-used';
     const credits = k.credits_remaining != null ? '$' + k.credits_remaining.toFixed(1) : '—';
+    const leaseInfo = k.leased ? '<span style="color:#3b82f6">' + (k.leased_to || '?') + '</span>' : '—';
     return '<tr><td>' + (k.alias_email || k.email || '?').split('@')[0] + '</td>' +
       '<td class="' + cls + '">' + status + '</td>' +
+      '<td>' + leaseInfo + '</td>' +
       '<td>' + credits + '</td>' +
       '<td class="key-cell"><code class="key-text">' + (k.api_key || '').slice(0, 30) + '...</code>' +
       ' <button class="btn-copy" data-idx="' + idx + '" title="Key kopieren">📋</button></td></tr>';
   }).join('');
 
-  // Attach click handlers via closure over keys array (robust, no HTML escaping issues)
   tbody.querySelectorAll('.btn-copy').forEach(btn => {
     const idx = parseInt(btn.dataset.idx, 10);
     btn.addEventListener('click', () => copyKey(keys[idx].api_key || ''));
