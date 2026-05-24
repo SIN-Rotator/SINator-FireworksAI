@@ -29,7 +29,10 @@ async def main():
     parser.add_argument("alias", nargs="?", help="Optional alias name")
     parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks password")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
+    parser.add_argument("--cdp-port", type=int, default=9222, help="CDP port for Chrome")
+    parser.add_argument("--chrome-pid", type=int, default=None, help="PID of Chrome process for CUA targeting")
     args = parser.parse_args()
+    CDP = f"http://127.0.0.1:{args.cdp_port}"
 
     from pool_manager import PoolManager
     pool = PoolManager()
@@ -40,7 +43,7 @@ async def main():
     logger.info("=== GMX Login ===")
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
-        _b = await _p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        _b = await _p.chromium.connect_over_cdp(CDP)
         # Cleanup: alle alten Pages schließen (Chrome stellt sie wieder her)
         for _old in _b.contexts[0].pages:
             try: await _old.close()
@@ -110,7 +113,7 @@ async def main():
     logger.info("=== GMX Alias Rotation ===")
     from gmx_service import GmxService
     svc = GmxService()
-    result = await svc.rotate_alias(new_alias_name=args.alias, cdp_port=9222)
+    result = await svc.rotate_alias(new_alias_name=args.alias, cdp_port=args.cdp_port)
     if result.get('status') != 'success':
         logger.error(f"❌ GMX rotation failed: {result.get('error')}")
         return
@@ -124,7 +127,7 @@ async def main():
     # First: LOGOUT from any existing Fireworks session (separate PW for cleanup)
     logger.info("Logout from existing Fireworks session...")
     async with _ap() as _p2:
-        _b2 = await _p2.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        _b2 = await _p2.chromium.connect_over_cdp(CDP)
         for _pg in _b2.contexts[0].pages:
             if 'fireworks' in _pg.url.lower():
                 await _pg.close()
@@ -153,7 +156,7 @@ async def main():
     api_key = None
 
     async with _ap() as _p3:
-        _b3 = await _p3.chromium.connect_over_cdp("http://127.0.0.1:9222")
+        _b3 = await _p3.chromium.connect_over_cdp(CDP)
         _page = await _b3.contexts[0].new_page()
 
         # --- LOGIN ---

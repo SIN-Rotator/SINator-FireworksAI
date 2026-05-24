@@ -212,17 +212,24 @@ async function runHealthCheck() {
 }
 
 async function startRotation() {
-  log('Starte Rotation...', 'info');
+  const btn = document.querySelector('.actions .btn:nth-child(3)');
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Rotation läuft...'; }
+
+  log('Starte Rotation in separatem Chrome-Fenster...', 'info');
   try {
     const r = await api('POST', '/rotation/full', { fireworks_password: 'ZOE.jerry2024', save_to_pool: true });
-    if (r.status === 'success') log('Rotation erfolgreich!', 'success');
-    else log('Status: ' + r.status, 'error');
+    if (r.status === 'success') log('✅ Rotation erfolgreich! Key: ' + (r.api_key || '?'), 'success');
+    else if (r.status === 'partial') log('⚠️ Teil-Erfolg — Alias: ' + (r.gmx_alias || '?') + ', Key fehlt', 'error');
+    else log('❌ Status: ' + r.status + ' — ' + (r.error || ''), 'error');
     if (r.gmx_alias) log('Alias: ' + r.gmx_alias);
     if (r.api_key) log('Key: ' + r.api_key);
     if (r.execution_time) log('Dauer: ' + r.execution_time);
     loadDashboard();
   } catch (e) {
-    log('Fehler: ' + e.message, 'error');
+    log('❌ Fehler: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = origText; }
   }
 }
 

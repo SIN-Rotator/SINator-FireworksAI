@@ -18,6 +18,7 @@ import subprocess
 import json
 import logging
 import time
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -35,24 +36,25 @@ def find_cua_window(
     title_keywords=None,
     app_name="Google Chrome",
     include_minimized_fallback=True,
+    target_pid=None,
 ) -> tuple:
     """Find a CUA-accessible window by title keywords.
 
     Scans all Chrome windows via cua-driver list_windows and returns
     the first match. Case-insensitive matching for both app_name and title.
 
-    Args:
-        title_keywords: List of strings to match in window title
-                        (case-insensitive). If None, returns first on-screen
-                        Chrome window.
-        app_name: Application name filter (default: "Google Chrome").
-                  Case-insensitive.
-        include_minimized_fallback: If no on-screen match found, also check
-                                    off-screen/minimized windows.
+    If target_pid is not provided, reads from SINATOR_CHROME_PID env var.
 
     Returns:
         (pid, window_id) tuple, or None if no window matches.
     """
+    if target_pid is None:
+        env_pid = os.environ.get("SINATOR_CHROME_PID")
+        if env_pid:
+            try:
+                target_pid = int(env_pid)
+            except ValueError:
+                pass
     try:
         res = subprocess.run(
             ["cua-driver", "call", "list_windows"],
@@ -65,6 +67,8 @@ def find_cua_window(
 
         def _match(w):
             if w.get("app_name", "").lower() != app_name.lower():
+                return False
+            if target_pid and w.get("pid") != target_pid:
                 return False
             title = w.get("title", "")
             if title_keywords:

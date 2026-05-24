@@ -1,6 +1,7 @@
 import time
 import logging
 import asyncio
+import subprocess
 import re
 from pathlib import Path
 
@@ -16,16 +17,21 @@ ROTATE_SCRIPT = Path(__file__).parent.parent.parent.parent / "tools" / "rotate.p
 
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
+    """
+    Rotation im GLEICHEN Chrome (Port 9222), separater Tab.
+    Dashboard bleibt sichtbar, Rotation läuft im neuen Tab.
+    """
     t0 = time.time()
 
     cmd = [
         "python3", str(ROTATE_SCRIPT),
         "--password", request.fireworks_password,
+        "--cdp-port", "9222",
     ]
     if request.new_alias_name:
         cmd.append(request.new_alias_name)
 
-    logger.info(f"Running: {' '.join(cmd)}")
+    logger.info(f"Running rotate.py --cdp-port 9222")
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -43,23 +49,16 @@ async def full_rotation(request: RotationRequest):
         async for line_bytes in proc.stdout:
             line = line_bytes.decode("utf-8", errors="replace").rstrip()
             output_lines.append(line)
+            logger.info(line)
 
             m = re.search(r'✅ GMX Alias:\s*(\S+@gmx\.de)', line)
             if m:
                 gmx_alias = m.group(1)
-                api_key_name = gmx_alias.split("@")[0].split("-")[0] if gmx_alias else "key"
+                api_key_name = gmx_alias.split("@")[0].split("-")[0]
 
             m = re.search(r'✅ API Key:\s*(fw_\w+)', line)
             if m:
                 api_key = m.group(1)
-
-            if 'ROTATION COMPLETE' in line:
-                m = re.search(r'Alias:\s*(\S+@gmx\.de)', line)
-                if m:
-                    gmx_alias = m.group(1)
-                m = re.search(r'API Key:\s*(fw_\w+)', line)
-                if m:
-                    api_key = m.group(1)
 
         await proc.wait()
         elapsed = time.time() - t0
@@ -77,16 +76,12 @@ async def full_rotation(request: RotationRequest):
         else:
             steps_failed.append("api_key_creation_failed")
 
-        full_output = "\n".join(output_lines[-15:])
-        if "Login + Onboarding OK" in full_output:
+        if any("Login + Onboarding OK" in l for l in output_lines[-20:]):
             steps_completed.append("fireworks_login")
-        elif "login" in full_output.lower() or "signup" in full_output.lower():
+        else:
             steps_failed.append("fireworks_login_failed")
 
         final_status = "success" if api_key else ("partial" if gmx_alias else "failed")
-
-        if gmx_alias:
-            logger.info(f"Rotation: {gmx_alias} in {elapsed:.1f}s")
 
         return RotationResponse(
             status=final_status,
