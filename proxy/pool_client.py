@@ -3,7 +3,10 @@ from typing import Optional, Dict, Any
 
 import httpx
 
-from .config import load_config
+try:
+    from .config import load_config
+except ImportError:
+    from config import load_config
 
 logger = logging.getLogger(__name__)
 

@@ -3,13 +3,27 @@ import json
 from pathlib import Path
 
 DEFAULT_PROXY_PORT = int(os.getenv("SIN_PROXY_PORT", "8888"))
-DEFAULT_POOL_API_URL = os.getenv("SIN_POOL_API_URL", "http://localhost:8000/api/v1")
 FIREWORKS_BASE = "https://api.fireworks.ai/inference/v1"
 LEASE_TTL_SECONDS = int(os.getenv("SIN_LEASE_TTL", "1800"))
 LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "true").lower() == "true"
 MAX_RETRIES = int(os.getenv("SIN_MAX_RETRIES", "3"))
 CACHE_DIR = Path(os.getenv("SIN_CACHE_DIR", str(Path.home() / ".sin-pool")))
 CONFIG_FILE = CACHE_DIR / "config.json"
+TUNNEL_URL_FILE = CACHE_DIR / "tunnel-url.txt"
+
+_proxy_project_root = Path(__file__).parent.parent if "__file__" in dir() else Path(os.getcwd())
+SHARED_TUNNEL_URL_FILE = _proxy_project_root.parent / ".sin-pool" / "tunnel-url.txt"
+
+
+def _resolve_pool_api_url() -> str:
+    if os.getenv("SIN_POOL_API_URL"):
+        return os.getenv("SIN_POOL_API_URL")
+    for f in (TUNNEL_URL_FILE, SHARED_TUNNEL_URL_FILE):
+        if f.exists():
+            url = f.read_text().strip()
+            if url:
+                return f"{url}/api/v1"
+    return "http://localhost:8000/api/v1"
 
 
 def load_config() -> dict:
@@ -18,7 +32,7 @@ def load_config() -> dict:
             return json.load(f)
     return {
         "proxy_port": DEFAULT_PROXY_PORT,
-        "pool_api_url": DEFAULT_POOL_API_URL,
+        "pool_api_url": _resolve_pool_api_url(),
         "fireworks_base": FIREWORKS_BASE,
         "lease_ttl_seconds": LEASE_TTL_SECONDS,
         "lease_backup": LEASE_BACKUP,

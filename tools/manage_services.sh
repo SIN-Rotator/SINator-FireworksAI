@@ -81,7 +81,8 @@ EOF
 </plist>
 EOF
 
-        # Tunnel service
+        # Tunnel service (wraps cloudflared, auto-saves URL)
+        mkdir -p "${HOME}/.sin-pool"
         cat > ~/Library/LaunchAgents/com.sinator.tunnel.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -92,13 +93,11 @@ EOF
     <string>com.sinator.tunnel</string>
     <key>ProgramArguments</key>
     <array>
-        <string>$(which cloudflared)</string>
-        <string>tunnel</string>
-        <string>--url</string>
-        <string>http://localhost:8000</string>
+        <string>/bin/bash</string>
+        <string>${SINATOR_DIR}/tools/sinator_tunnel.sh</string>
     </array>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>

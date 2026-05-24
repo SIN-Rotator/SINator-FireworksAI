@@ -4,7 +4,10 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from .config import CACHE_DIR
+try:
+    from .config import CACHE_DIR
+except ImportError:
+    from config import CACHE_DIR
 
 logger = logging.getLogger(__name__)
 

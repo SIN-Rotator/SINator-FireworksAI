@@ -49,7 +49,7 @@ print(f'Config written to ${INSTALL_DIR}/config.json')
 "
 echo "[3/6] Config saved (pool_api_url: $TUNNEL_URL/api/v1)"
 
-# 4. Create LaunchAgent
+# 4. Create LaunchAgent (runs server.py from install dir)
 cat > "$PLIST_PATH" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -60,13 +60,14 @@ cat > "$PLIST_PATH" << PLIST
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
-        <string>-m</string>
-        <string>proxy.server</string>
+        <string>${INSTALL_DIR}/server.py</string>
     </array>
     <key>WorkingDirectory</key>
     <string>${INSTALL_DIR}</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PYTHONPATH</key>
+        <string>${INSTALL_DIR}</string>
         <key>SIN_CACHE_DIR</key>
         <string>${INSTALL_DIR}</string>
         <key>SIN_POOL_API_URL</key>

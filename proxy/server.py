@@ -23,12 +23,18 @@ from typing import Optional
 import aiohttp
 from aiohttp import web
 
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
+_script_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(_script_dir))
+sys.path.insert(0, str(_script_dir.parent))
 
-from proxy.config import load_config, FIREWORKS_BASE
-from proxy.pool_client import PoolClient
-from proxy.key_cache import KeyCache
+try:
+    from proxy.config import load_config, FIREWORKS_BASE
+    from proxy.pool_client import PoolClient
+    from proxy.key_cache import KeyCache
+except ImportError:
+    from config import load_config, FIREWORKS_BASE
+    from pool_client import PoolClient
+    from key_cache import KeyCache
 
 logging.basicConfig(
     level=logging.INFO,
