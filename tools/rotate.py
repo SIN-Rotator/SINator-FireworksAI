@@ -44,9 +44,14 @@ async def main():
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
         _b = await _p.chromium.connect_over_cdp(CDP)
-        # Cleanup: alle alten Pages schließen (Chrome stellt sie wieder her)
+        # Nur Rotator-Pages schließen (nicht Dashboard)
         for _old in _b.contexts[0].pages:
-            try: await _old.close()
+            try:
+                _url = _old.url
+                if 'localhost' in _url and 'dashboard' not in _url.lower():
+                    pass  # Dashboard behalten
+                elif 'gmx' in _url.lower() or 'fireworks' in _url.lower() or 'about:blank' in _url:
+                    await _old.close()
             except: pass
         _pg = await _b.contexts[0].new_page()
         await _pg.goto("https://www.gmx.net/")
@@ -111,6 +116,18 @@ async def main():
 
     # ═══ Step 1: GMX Alias Rotation ═══
     logger.info("=== GMX Alias Rotation ===")
+    
+    # GMX-Fenster in Vordergrund bringen (damit CUA es findet)
+    try:
+        _sp.run(["osascript", "-e",
+            'tell application "Google Chrome"\n'
+            '    activate\n'
+            '    set index of window 1 to 1\n'
+            'end tell'
+        ], capture_output=True, timeout=5)
+        await asyncio.sleep(1)
+    except: pass
+    
     from gmx_service import GmxService
     svc = GmxService()
     result = await svc.rotate_alias(new_alias_name=args.alias, cdp_port=args.cdp_port)

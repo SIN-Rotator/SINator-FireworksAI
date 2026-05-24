@@ -133,7 +133,16 @@ async function api(method, path, body) {
     },
     body: body ? JSON.stringify(body) : undefined
   });
-  return r.json();
+  let data;
+  try {
+    data = await r.json();
+  } catch(e) {
+    throw new Error('HTTP ' + r.status + ': nicht-JSON Response');
+  }
+  if (!r.ok) {
+    throw new Error(data.detail || data.message || 'HTTP ' + r.status);
+  }
+  return data;
 }
 
 function log(msg, cls = 'info') {
