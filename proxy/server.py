@@ -12,6 +12,7 @@ Usage:
   python -m proxy.server
   SIN_PROXY_PORT=8888 python -m proxy.server
 """
+import os
 import sys
 import asyncio
 import logging
@@ -329,6 +330,20 @@ class PoolProxy:
 
 
 def main():
+    import urllib.request
+    backend_wait = int(os.environ.get("SIN_BACKEND_WAIT", "5"))
+    for i in range(backend_wait):
+        try:
+            urllib.request.urlopen("http://localhost:8000/health", timeout=2)
+            logger.info(f"✅ Backend ready (waited {i}s)")
+            break
+        except Exception:
+            if i == 0:
+                logger.info(f"⏳ Waiting for backend on :8000 (max {backend_wait*sleep}s)...")
+            time.sleep(1)
+    else:
+        logger.warning("⚠️ Backend not ready — proxy will start anyway")
+
     proxy = PoolProxy()
     app = proxy.create_app()
     web.run_app(app, host="0.0.0.0", port=proxy.port, print=logger.info)

@@ -183,10 +183,24 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+    import urllib.request
 
     port = int(os.getenv("TOOLBOX_PORT", "8000"))
     host = os.getenv("TOOLBOX_HOST", "0.0.0.0")
     reload = os.getenv("TOOLBOX_RELOAD", "false").lower() == "true"
+
+    cdp_wait = int(os.getenv("SINATOR_CDP_WAIT", "8"))
+    for i in range(cdp_wait):
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:9222/json/version", timeout=2)
+            logger.info(f"✅ Chrome CDP ready (waited {i}s)")
+            break
+        except Exception:
+            if i == 0:
+                logger.info(f"⏳ Waiting for Chrome CDP on port 9222 (max {cdp_wait}s)...")
+            import time; time.sleep(1)
+    else:
+        logger.warning("⚠️ Chrome CDP not ready — backend will start anyway")
 
     logger.info(f"🌐 Starte Uvicorn auf {host}:{port} (reload={reload})")
 
