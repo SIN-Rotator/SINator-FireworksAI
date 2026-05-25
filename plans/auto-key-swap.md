@@ -1,5 +1,10 @@
 # Auto-Key-Swap bei Rate-Limit — OpenCode Integration
 
+> **⚠️ DEPRECATED — Replaced by Pool Proxy auto-swap (V9+).**
+> The proxy at `:8888` handles 401/402/403/412/429 automatically.
+> No manual key swapping needed — proxy swaps + retries transparently.
+> `auth.json` approach is obsolete. Kept for historical reference only.
+
 > Issue: https://github.com/SIN-Rotator/SINator-FireworksAI/issues/17
 
 ## Flow

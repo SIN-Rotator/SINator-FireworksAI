@@ -1,5 +1,13 @@
 # Fireworks Pool Proxy — Detailed Build Plan (V2, 2026-05-24)
 
+> **⚠️ DEPRECATED — This plan was IMPLEMENTED in V9-V11.**
+> The proxy is live at `sinator.delqhi.com` (`:8888` locally).
+> Tunnel is now a named tunnel (not ephemeral).
+> `leased` was removed from stats in V11 — `available = total - used - suspended`.
+> Keys are encrypted in macOS Keychain (not plaintext in pool.json).
+> See `proxy/server.py` for the actual implementation.
+> Kept for historical reference only.
+
 ## Problem Statement
 
 **Was NICHT funktioniert hat:**

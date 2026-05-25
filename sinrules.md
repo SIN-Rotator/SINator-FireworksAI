@@ -1,19 +1,20 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-23 (V9 — 45 Keys, ~173s avg)
+> Letzte Aktualisierung: 2026-05-25 (V11 — 112 Keys, ~210s avg)
 
 ---
 
-## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-23)
+## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-25)
 
-**Pool:** 45 Keys (45 available, 0 used — alle recovered nach Health-Check-Bugfix)
-**Cycle Time:** ~173s (V9 sleep-Reduktion)
+**Pool:** 112 Keys (60 verfügbar, 44 gesperrt, 8 verbraucht)
+**Cycle Time:** ~210s average (Strecke: 198-224s)
 **E2E Single Command:** `python tools/rotate.py`
+**Config:** GMX/Fireworks Credentials aus `data/config.json` (nicht mehr hardcodiert!)
 
 ### WAS IMMER VERWENDET WERDEN MUSS
 
-| ✅ ERLABUT | Für was |
+| ✅ ERLAUBT | Für was |
 |-----------|---------|
 | **CUA `click`** | React-Checkbox, Dialog-OK, Navigation-Links, PopUpButton |
 | **CUA `type_text`** | Names (First/Last), beliebige Textfelder (OS-Level, React-kompatibel) |
@@ -23,6 +24,7 @@
 | **Playwright new-tab** | allEmailAddresses iframe-URL als Top-Level öffnen — umgeht Viewport/Trusted-Event-Issues |
 | **CDP Target** | mailbody-ui.de OOPIF für Email-Inhalt |
 | **CDP Cookie** | `Network.deleteCookies` + `clearBrowserCookies` NUR für Fireworks Domain |
+| **Config Manager** | `get_config()` für GMX Email/Passwort + Fireworks Passwort |
 
 ### WAS NIEMALS VERWENDET WERDEN DARF
 
@@ -41,6 +43,12 @@
 | `_re` import NUR global | Wird in inner function scope nicht gefunden |
 | `Network.clearBrowserCookies` global | Killt GMX-Session — nur für Fireworks Domain |
 | `pkill -9 -f "Google Chrome"` | Killt User-Chrome → Session tot |
+| Hardcodierte GMX/FW Credentials im Code | Config Manager nutzen (`get_config()`) |
+| `__TAURI_INTERNALS__` Check in Frontend | Existiert nicht im Production Build |
+| Next.js API Routes in Static Export | Tauri export ist statisch — keine Server-Routes |
+| `fetch()` zu localhost:8888 aus Tauri WebView | WebView blockiert → Rust Command nutzen |
+| `kimi-k2p5` als Chat-Modell | `reasoning_content` statt `content` → leer |
+| Frontend-Fetch ohne Auth-Token | 401 Unauthorized |
 
 ### MANDATORY PATTERNS
 
@@ -60,6 +68,10 @@ def _find_element(text, el_type="AXButton"):
             m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
             if m: return int(m.group(1))
     return None
+
+# Config Manager statt Hardcoding
+from agent_toolbox.core.config_manager import get_config
+cfg = get_config()  # cfg.gmx_email, cfg.gmx_password, cfg.fireworks_password
 ```
 
 ### BEI FEHLER: SESSION CHECKEN
@@ -167,6 +179,7 @@ nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 ❌ Profil kopieren (Keychain-Verschlüsselung)
 ❌ Symlinks (bricht Cookie-Entschlüsselung)
 ❌ pkill -9 (SIGTERM nur!)
+❌ --force-renderer-accessibility (GMX zeigt "Barrierefreies Postfach" — Email-Rows nicht klickbar!)
 ```
 
 ---
@@ -242,9 +255,28 @@ Fireworks suspendiert Accounts bei Spending Limit ($5 Credits aufgebraucht):
 Account XXX is suspended, possibly due to reaching the monthly
 spending limit or failure to pay past invoices.
 ```
-**Workaround:** Key via `POST /pool/report` als used markieren → neuen Key holen.
+**Workaround:** Key via `POST /pool/report` als suspended markieren → neuen Key holen.
 Account ist tot, kein Recovery möglich.
 
 ---
 
-*Letzte Aktualisierung: 2026-05-11*
+## 🚨 REGEL 12: Tauri v2 — Rust Commands statt Frontend-Fetch
+
+**Tauri WebView blockiert `fetch()` zu localhost:8888!**
+
+```
+❌ Frontend fetch("http://localhost:8888/inference/v1/...")  → TypeError: Load failed
+✅ Rust Command invoke("chat_send", {message})               → Rust macht den HTTP-Call
+```
+
+**Auch verboten:**
+- `listen()` für Streaming → ACL denied trotz Permissions
+- Next.js API Routes → nicht im Static Export enthalten
+- `__TAURI_INTERNALS__` Check → leer im Production Build
+
+**Chat-Modell:** `accounts/fireworks/models/gpt-oss-120b` ($0.15/M, billigstes Serverless)
+**Nicht verwenden:** `kimi-k2p5` (reasoning_content statt content → leer bei zu wenig max_tokens)
+
+---
+
+*Letzte Aktualisierung: 2026-05-25 (V11)*

@@ -1,5 +1,9 @@
 # Fix GMX Alias Creation + Fireworks Flow — Plan
 
+> **⚠️ ARCHIVED — This fix was implemented and verified 2026-05-21.**
+> Current flow uses V8+ Playwright+CUA hybrid with New-Tab iframe approach.
+> See AGENTS.md for the latest working flow. Kept for historical reference only.
+
 ## Problem
 Raw CDP kann Cross-Origin-Iframes (`3c.gmx.net`) nicht handlen.
 Alle DOM.getBoxModel Calls returnen stale NodeIDs (0).

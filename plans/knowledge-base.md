@@ -1,16 +1,17 @@
 # SINator Knowledge Database — Lessons Learned
 
 > "Once Verified = Read-Only. New code = New file. Learnings → Here."
-> Last verified: 2026-05-23 — V9 COMPLETE: 45 Keys, ~173s avg
+> Last verified: 2026-05-25 — V11 COMPLETE: 112 Keys (60 avail, 44 suspended, 8 used), ~210s avg
 
-## 🟢 WHAT WORKS (V8 Playwright+CUA+CDP Hybrid)
+## 🟢 WHAT WORKS (V11 Playwright+CUA+CDP Hybrid)
 
 ### GMX Alias Rotation (~63s, New-Tab Approach)
-- **Nav**: Playwright `goto("inbox?sid=...")` → CUA click Einstellungen [148] → JS evaluate click hidden `#nav-menu` button → extract allEmailAddresses iframe URL
+- **Nav**: Playwright `goto("inbox?sid=...")` → CUA click Einstellungen [148] → Playwright Frame-Scanning bis allEmailAddresses iframe gefunden (8×3s)
 - **Delete**: Playwright new-tab iframe-URL → hover `.table_field:has-text(alias)` → click `[title*="löschen"]` force=True → click OK button in confirmation dialog
 - **Create**: Playwright new-tab iframe-URL → fill `input[name*="localPart"]` → click `button:has-text("Hinzufügen")` force=True → verify `input_value() == ''`
-- **Iframe URL helper**: `_get_iframe_url()` mit 6×3s Retry-Loop
+- **Iframe URL helper**: `_get_iframe_url()` mit 8×3s Retry-Loop
 - **Email filter**: `e != 'opensin@gmx.de'` (exact match)
+- **CUA PID Targeting**: `lsof -i :9222 -sTCP:LISTEN` ermittelt Chrome-PID → `find_cua_window(target_pid=pid)` targetet nur das richtige Fenster
 
 > **⚠️ WICHTIG:** allEmailAddresses iframe ist OFF-SCREEN auf `/produkte_ha`. Öffne iframe-URL in NEUEM TAB als Top-Level-Dokument. Playwright `fill()`/`click()` funktioniert dann normal.
 
@@ -29,6 +30,7 @@
 ### Fireworks Onboarding (CUA required — React ignores Playwright)
 - **Names**: CUA `type_text` → search "First" + "Last" (NOT "Name" — matches Company Name!)
 - **Terms checkbox**: NUR CUA `AXPress` toggelt React-CB. Playwright `check()` + JS `click()` = IGNORIERT
+- **Playwright Fallback**: Falls CUA Submit keinen Redirect triggert → Playwright füllt Formular + Submit
 - **Order**: ALLE Felder zuerst → DANN Terms-CB → DANN Continue
 - **Continue redirects to login**: Account confirmed → must login again
 - **Use-Cases**: CUA dynamic text-based scan (no hardcoded indices!) → checkboxes + Submit
@@ -36,15 +38,37 @@
 ### Fireworks API Key (Playwright)
 - **URL**: `/settings/users/api-keys` (NICHT `/settings/workspace/api-keys`!)
 - **Create button**: PopUpButton force-click → `[role="menuitem"]:has-text("API Key")` click
-- **Name**: `input[name*="name"]` fill → "Generate" button click
-- **Extract**: `re.findall(r'fw_[a-zA-Z0-9]{20,}', page.content() + page.evaluate("body.innerText"))`
+- **Name**: `input[name*="name"]` fill → Wait 1s (React re-render) → disabled→enabled polling → "Generate" button click
+- **Extract**: `re.findall(r'fw_[a-zA-Z0-9]{20,}', page.content() + page.evaluate("body.innerText"))` mit 10s DOM-Polling
+- **Error Handling**: "Missing API Key Name!" Modal → Close → retry fill + Generate
 
 ### Session Management
 - **GMX E-Mail click**: `page.locator('a:has-text("E-Mail")').click()` → inbox with SID
 - **Fireworks Logout before Signup**: CDP `Network.deleteCookies` for fireworks domain + `clearBrowserCookies`
 - **IAC close**: `for pg in pages: if 'iac' in pg.url: await pg.close()`
 
-## 🔴 KNOWN ISSUES (2026-05-23)
+### Config Manager (V11)
+- **Singleton** `get_config()` liest `data/config.json`
+- **Fields**: `gmx_email`, `gmx_password`, `fireworks_password`
+- **API**: `GET/POST /api/v1/config` (public, kein Auth-Token)
+- **Rotation**: Liest Config → `--gmx-email`, `--gmx-password`, `--password` an rotate.py
+- **Dashboard**: `/setup` Formular mit Show/Hide Toggle
+
+### Pool-Verschlüsselung (V11)
+- **macOS Keychain** `com.sinator.pool` — alle 112 API-Keys verschlüsselt
+- **Pool-JSON** enthält SENTINEL-Werte (keine Keys im Klartext)
+- **`keychain_store.py`** — CRUD + Migration (Pool→Keychain)
+- **`GET /pool/reveal/{key_id}`** — hydratisiert Key aus Keychain
+
+### Chat-Assistent (V11)
+- **Rust Command** `chat_send` — umgeht Tauri WebView Fetch-Blockade
+- **Modell**: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M, billigstes Serverless)
+- **System-Prompt**: `chat-system-prompt.txt` (include_str! in Rust)
+- **Live-Stats**: Rust holt Pool-Stats (:8000) + Backend-Health → injiziert in System-Prompt
+- **Fallback**: `content` + `reasoning_content` (Reasoning-Modelle)
+- **Kein Streaming** — einfacher invoke Return
+
+## 🔴 KNOWN ISSUES (2026-05-25)
 
 ### Account Suspension (Spending Limit)
 Fireworks suspendiert Accounts wenn die $5 Credits aufgebraucht sind:
@@ -52,23 +76,17 @@ Fireworks suspendiert Accounts wenn die $5 Credits aufgebraucht sind:
 Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
 spending limit or failure to pay past invoices.
 ```
-- **Workaround:** Key via `POST /pool/report` als used markieren, neuen Key holen
+- **Workaround:** Key via `POST /pool/report` als suspended markieren, neuen Key holen
 - **Kein Recovery möglich** — Account ist tot, neuer Account nötig
 
-### PoolManager Reload Bug (FIXED)
-`PoolManager` als Singleton lädt `fireworksai-pool.json` nur einmal beim Start.
-Änderungen von externen Tools (`key_watchdog.py`, `fw_proxy.py`) werden nicht gesehen.
-→ **Fix (V9):** `reload()` vor jeder public Methode
+### Tauri WebView Fetch Blockiert
+`fetch("http://localhost:8888/...")` aus Tauri WebView → `TypeError: Load failed`
+- **Workaround:** Rust Command `chat_send` macht den HTTP-Call
+- ** Auch verboten:** `listen()` (ACL denied), Next.js API Routes (nicht im Static Export)
 
-### Health Check mark_used() Bug (FIXED)
-`GET /pool/health` rief `pool_mgr.mark_used()` auf Keys mit HTTP-Status 401/402/403/412.
-→ Zerstörte 7 Keys am 2026-05-23 in einer Sekunde.
-→ **Fix (V9):** health ist read-only
-
-### Dashboard /pool/health Override (FIXED)
-`dashboard.html:151` rief `GET /pool/health` in `loadDashboard()` und überschrieb
-die pool/stats Anzeige mit health-Daten.
-→ **Fix (V9):** aus loadDashboard() entfernt
+### CUA Finds Wrong Window (Multiple Chrome Instances)
+Stale Chrome-Instanz auf Port 9223 + Haupt-Instanz auf Port 9222 → `find_cua_window` matched falsches Fenster
+- **Fix (V10):** `lsof -i :9222 -sTCP:LISTEN` ermittelt Chrome-PID → `target_pid` in `find_cua_window`
 
 ## 🔴 BANNED / BROKEN
 
@@ -89,6 +107,14 @@ die pool/stats Anzeige mit health-Daten.
 - React kontrollierte Inputs ignorieren CUA Keyboard Events
 - **Lösung**: Playwright `fill()` für Email/Password (funktioniert über CDP)
 
+### Tauri v2 Banned Patterns
+- `__TAURI_INTERNALS__` Check → leer im Production Build
+- Next.js API Routes → nicht im Static Export
+- `listen()` für Streaming → ACL denied
+- `fetch()` zu localhost:8888 → WebView blockiert
+- `kimi-k2p5` als Chat-Modell → `reasoning_content` statt `content`
+- Frontend-Fetch ohne Auth-Token → 401
+
 ## 📊 TOOL COMPARISON
 
 | Tool | Nav | Input Fill | Button Click | React-CB | Verify |
@@ -97,33 +123,35 @@ die pool/stats Anzeige mit health-Daten.
 | CDP DOM | ❌ | ❌ (stale) | ❌ (stale) | ❌ | ❌ |
 | Playwright | ✅ | ✅ | ✅ | ❌ | ✅ |
 | JS evaluate | ❌ | ✅ (nativeSetter) | ⚠️ | ❌ | ✅ |
+| Rust Command | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ### Best Hybrid: CUA nav + Playwright form + CUA for React-CB + Playwright verify
+### Chat: Rust Command (nicht Frontend Fetch!)
 
-### Performance: Sleep-Reduktion V9
-| Vorher | Nachher | Einsparung |
-|--------|---------|:----------:|
-| `asyncio.sleep(5)` | `sleep(2)` | −3s |
-| `asyncio.sleep(3)` | `sleep(1.5/2)` | −1.5s |
-| 3× iframe URL scan | 1× + Cache | −~6s |
-| **Total** | | **~36s/Rotation** |
+### Performance: V9→V11
+| Metric | V9 | V11 |
+|--------|:--:|:---:|
+| Pool Size | 45 | 112 |
+| Cycle Time | ~173s | ~210s |
+| Key Storage | JSON file | Keychain + JSON |
+| Credentials | Hardcoded | Config Manager |
+| Chat | N/A | Rust Command |
 
 ## 🔧 VERIFIED WORKING COMMITS
 
 | Commit | Date | Status |
 |--------|------|--------|
-| `HEAD` | May 23 | ✅ **LATEST**: V9 Cleanup — 45 Keys, ~173s, Bugfixes: health/dashboard/purge/reload |
+| `HEAD` | May 25 | ✅ **LATEST**: V11 — Config Manager, Chat, Keychain, 112 Keys |
+| V10 | May 24 | ✅ V10: CUA PID Targeting, ~204s E2E |
+| V9 | May 23 | ✅ V9: Sleep-Reduktion + Bugfixes, 45 Keys |
 | `3ac4b30` | May 22 | ✅ V8: pulse-jaguar-899 → `fw_6rWU4KGUPts6zVnaRreu6R` (30 Keys) |
-| `58618c9` | May 22 | ✅ V8 GMX Nav Fix: Playwright inbox + CUA Einstellungen + JS hidden-nav + New-Tab iframe |
-| `54e0efa` | May 22 | ✅ Perf: Wartezeiten reduziert (~30s Ersparnis) |
-| `35cd420` | May 22 | ✅ crystal-beetle-676 → `fw_MdM6tGucgWuuc7zQyJGeTK` |
+| `58618c9` | May 22 | ✅ V8 GMX Nav Fix |
 | `1d3ddf5` | May 21 | ✅ Complete flow: GMX → FW → `fw_8d1PLFjvQMdgJFzjDZSTRx` |
-| `aa9b538` (v3) | May 12 | ⚠️ CDP-based, broke when GMX enabled accessible mode |
 
 ## 🚀 QUICK REFERENCE
 
 ```bash
-# Start Chrome (Profile 901, Port 9222)
+# Start Chrome (Profile 901, Port 9222, OHNE accessibility!)
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 901" \
@@ -134,7 +162,7 @@ nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 # Start CUA
 cua-driver serve &
 
-# Full E2E
+# Full E2E (liest Config aus data/config.json)
 python tools/rotate.py
 
 # API Key URL
@@ -142,4 +170,27 @@ https://app.fireworks.ai/settings/users/api-keys
 
 # Pool Stats
 curl -s http://localhost:8000/pool/stats | python3 -m json.tool
+
+# Config
+curl -s http://localhost:8000/api/v1/config | python3 -m json.tool
+
+# Pool-Proxy (opencode baseURL)
+http://localhost:8888/inference/v1
+# apiKey: pool
+```
+
+## 🔧 ARCHITECTURE (V11)
+
+```
+SINator-fireworksai/        ← Backend (:8000) + Proxy (:8888) + Rotation
+SINator-dashboard/          ← Next.js + Tauri v2 App (Dashboard + Chat)
+sinator-pages/              ← Landing Page (:8040)
+
+Services (LaunchAgents):
+  com.sinator.backend     :8000  FastAPI
+  com.sinator.pool-proxy  :8888  aiohttp SSE + auto-swap
+  com.sinator.tunnel      —      Cloudflare Named Tunnel (sinator.delqhi.com)
+  com.sinator.pages       :8040  Landing Page
+  com.sinator.chrome      :9222  Chrome Profile 901
+  com.sinator.cua-driver  —      CUA AX-Daemon
 ```

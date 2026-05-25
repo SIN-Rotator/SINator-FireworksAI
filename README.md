@@ -75,8 +75,76 @@ OpenAI-compatible proxy with automatic key management:
 - **Cascade Stop:** Max 2 consecutive swaps per request
 - **Key Verification:** `_verify_key_dead()` tests against `/models` before marking dead
 
+```
+baseURL: https://sinator.delqhi.com/inference/v1
+apiKey:  7avN1KkfInNqcOMn2CtwLTvx
+```
+
+Rate-limit handling is automatic: 401/402/403/412 → key swapped, 429 → retry or swap (permanent vs temporary).
+
+---
+
+## Setup: opencode
+
+1. Create `~/.config/opencode/opencode.json` (or merge into existing):
+
+```json
+{
+  "provider": {
+    "fireworks-ai": {
+      "npm": "@ai-sdk/fireworks",
+      "name": "Fireworks AI",
+      "models": {
+        "deepseek-v4-pro": {
+          "id": "fireworks/deepseek-v4-pro",
+          "name": "DeepSeek V4 Pro",
+          "options": { "thinking": { "type": "enabled", "budgetTokens": 64000 } },
+          "limit": { "context": 1048576, "output": 65536 }
+        },
+        "glm-5p1": {
+          "id": "fireworks/glm-5p1",
+          "name": "GLM 5.1",
+          "options": { "thinking": { "type": "enabled", "budgetTokens": 32000 } },
+          "limit": { "context": 202752, "output": 32768 }
+        },
+        "kimi-k2p6": {
+          "id": "fireworks/kimi-k2p6",
+          "name": "Kimi K2.6",
+          "options": { "thinking": { "type": "enabled", "budgetTokens": 32000 } },
+          "limit": { "context": 262144, "output": 32768 }
+        }
+      },
+      "options": {
+        "baseURL": "https://sinator.delqhi.com/inference/v1"
+      }
+    }
+  }
+}
+```
+
+2. Set API key as environment variable (in `~/.zshrc` or `~/.bashrc`):
+
 ```bash
-# Direct proxy usage
+export FIREWORKS_API_KEY="7avN1KkfInNqcOMn2CtwLTvx"
+```
+
+The `@ai-sdk/fireworks` SDK reads `FIREWORKS_API_KEY` automatically as `Authorization: Bearer` header.
+
+> **Local users** (localhost) don't need the API key — the proxy skips auth for `127.0.0.1`/`::1`. Remote users **must** set it or they get 401.
+
+---
+
+## Setup: Cursor / Continue / other OpenAI clients
+
+Any OpenAI-compatible client works:
+
+```
+baseURL = https://sinator.delqhi.com/inference/v1
+apiKey  = 7avN1KkfInNqcOMn2CtwLTvx
+```
+
+```bash
+# Test it
 curl -H "Authorization: Bearer 7avN1KkfInNqcOMn2CtwLTvx" \
   https://sinator.delqhi.com/inference/v1/models
 ```

@@ -4,6 +4,22 @@
 
 ---
 
+## 🛑 BANNED: Tauri v2 Patterns (2026-05-25)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| `__TAURI_INTERNALS__` in `BACKEND_URL` Check | Existiert im Production Build nicht → `BACKEND_URL` wird leer → alle Fetches failen |
+| Next.js API Routes im Tauri Static Export | `frontendDist: "../out"` = statischer Export, `/api/*` Routen existieren nicht |
+| Tauri Event `listen()` für Chat-Streaming | ACL `plugin:event|listen not allowed` — Permission existiert aber JS API braucht anderen Scope |
+| `fetch()` von Tauri WebView zu `localhost:8888` | Tauri v2 blockiert externe Fetches per Default — braucht Rust Command statt Frontend-Fetch |
+| `kimi-k2p5` als Chat-Modell | Reasoning-Modell — denkt 20-30s, Antwort kommt in `reasoning_content` statt `content` |
+| `gpt-oss-120b` mit `max_tokens=50` | Zu kurz — Reasoning wird abgeschnitten bevor die Antwort kommt |
+| Frontend `fetch` zu `localhost:8000` ohne Auth | `/api/v1/config` war nicht in `public_prefixes` → 401 → GMX Passwort wurde nicht geladen |
+
+**✅ Korrektur:** Rust `chat_send` Command (kein Event nötig), `BACKEND_URL` immer `"http://localhost:8000"`, `/api/v1/config` in `public_prefixes`, `gpt-oss-120b` mit `max_tokens=2048`
+
+---
+
 ## 🛑 BANNED: Health Check Side-Effects (2026-05-23)
 
 | ❌ Verboten | Grund |
