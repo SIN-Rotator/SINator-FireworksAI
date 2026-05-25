@@ -37,9 +37,13 @@ async def full_rotation(request: RotationRequest):
     except Exception as e:
         logger.warning(f"AppleScript window: {e}")
 
+    from agent_toolbox.core.config_manager import get_config
+    cfg = get_config()
     cmd = [
         "python3", str(ROTATE_SCRIPT),
-        "--password", request.fireworks_password,
+        "--gmx-email", cfg.gmx_email,
+        "--gmx-password", cfg.gmx_password,
+        "--password", cfg.fireworks_password,
         "--cdp-port", "9222",
     ]
     if request.new_alias_name:

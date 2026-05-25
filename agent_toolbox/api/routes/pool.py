@@ -59,7 +59,6 @@ async def get_pool_stats():
             total=stats["total"],
             used=stats["used"],
             suspended=stats.get("suspended", 0),
-            leased=stats.get("leased", 0),
             available=stats["available"],
             keys=stats["keys"],
             execution_time=f"{elapsed:.2f}s",

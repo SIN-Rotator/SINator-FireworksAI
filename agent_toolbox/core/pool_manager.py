@@ -174,15 +174,10 @@ class PoolManager:
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
         suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
-        leased = sum(1 for k in self.keys if not k.get("used", False) and not k.get("suspended", False)
-                     and k.get("leased_until") is not None and k["leased_until"] > now)
-        available = total - used - suspended - leased
+        available = total - used - suspended
 
         keys_list = []
         for k in self.keys:
-            leased_until = k.get("leased_until")
-            is_leased = (not k.get("used", False) and not k.get("suspended", False)
-                         and leased_until is not None and leased_until > now)
             keys_list.append({
                 "id": k["id"],
                 "alias_email": k["alias_email"],
@@ -197,17 +192,12 @@ class PoolManager:
                 "credits_initial": k.get("credits_initial", 6.0),
                 "credits_remaining": k.get("credits_remaining", 6.0),
                 "credits_checked_at": k.get("credits_checked_at"),
-                "leased": is_leased,
-                "leased_to": k.get("leased_to") if is_leased else None,
-                "leased_until": leased_until if is_leased else None,
-                "lease_id": k.get("lease_id") if is_leased else None,
             })
 
         return {
             "total": total,
             "used": used,
             "suspended": suspended,
-            "leased": leased,
             "available": available,
             "keys": keys_list,
         }

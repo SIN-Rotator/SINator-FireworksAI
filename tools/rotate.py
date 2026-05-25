@@ -29,7 +29,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
 async def main():
     parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation")
     parser.add_argument("alias", nargs="?", help="Optional alias name")
-    parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks password")
+    parser.add_argument("--gmx-email", default="opensin@gmx.de", help="GMX account email")
+    parser.add_argument("--gmx-password", default="ZOE.jerry2024", help="GMX account password")
+    parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks account password")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
     parser.add_argument("--cdp-port", type=int, default=9222, help="CDP port for Chrome")
     parser.add_argument("--chrome-pid", type=int, default=None, help="PID of Chrome process for CUA targeting")
@@ -100,7 +102,7 @@ async def main():
             if await _email.count() == 0:
                 _email = _pg.locator('input[name="username"]').first
             if await _email.count() > 0:
-                await _email.fill("opensin@gmx.de")
+                await _email.fill(args.gmx_email)
                 await asyncio.sleep(1)
 
                 for _btn in await _pg.locator('button').all():
@@ -110,7 +112,7 @@ async def main():
 
                 _pw = _pg.locator('input[type="password"]').first
                 if await _pw.count() > 0:
-                    await _pw.fill("ZOE.jerry2024")
+                    await _pw.fill(args.gmx_password)
                     await asyncio.sleep(1)
                     for _btn in await _pg.locator('button').all():
                         _t = (await _btn.text_content() or "").strip().lower()

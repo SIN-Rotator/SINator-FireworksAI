@@ -51,10 +51,10 @@ python agent_toolbox/start_toolbox.py
 
 ---
 
-## E2E Flow (V10 — ~210s)
+## E2E Flow (V11 — ~210s)
 
 ```
-Step 0:  GMX Login via Playwright                      → frische Cookies
+Step 0:  GMX Login via Playwright (credentials from /api/v1/config)  → frische Cookies
 Step 1:  GMX Alias Rotation (CUA+Playwright)            → new-alias@gmx.de
 Step 2:  Fireworks Signup (Playwright + CDP)            → Account created
 Step 3:  OTP Polling (GMX MailCheck Extension + CDP)    → Verify URL extracted
@@ -115,6 +115,13 @@ All endpoints prefixed with `/api/v1`.
 | POST | `/pool/migrate-to-keychain` | Migrate plaintext → Keychain |
 | GET | `/pool/events` | SSE stream for live updates |
 
+### Config
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/config` | Get GMX email + passwords |
+| POST | `/config` | Save GMX + Fireworks credentials |
+
 ### Rotation
 
 | Method | Endpoint | Description |
@@ -160,12 +167,14 @@ SINator-fireworksai/
 │   ├── core/
 │   │   ├── keychain_store.py      macOS Keychain CRUD
 │   │   ├── pool_manager.py        Pool: add/lease/report/stats
+│   │   ├── config_manager.py      GMX + Fireworks credentials
 │   │   ├── gmx_service.py         GMX: Session, Alias, OTP
 │   │   ├── fireworks_service.py   Fireworks: E2E 12-Phase
 │   │   ├── cdp_client.py         Raw CDP Websocket
 │   │   └── browser_manager.py    Chrome Lifecycle
 │   └── api/routes/
 │       ├── pool.py                Pool + Reveal + Migrate
+│       ├── config.py               GMX + Fireworks Config
 │       ├── rotation.py            POST /rotation/full
 │       ├── gmx.py / fireworks.py / browser.py / cookies.py
 ├── proxy/
@@ -177,6 +186,7 @@ SINator-fireworksai/
 │   └── rotate.py                 Single-command E2E
 ├── data/
 │   └── fireworksai-pool.json     Pool metadata (keys in Keychain)
+│   └── config.json                GMX + Fireworks credentials
 └── AGENTS.md                     Full technical documentation
 ```
 
@@ -192,4 +202,4 @@ SINator-fireworksai/
 
 ---
 
-*V10 — 2026-05-25 | 112 Keys | macOS Keychain | Pool Proxy + Tunnel*
+*V11 — 2026-05-25 | 112 Keys | macOS Keychain | Pool Proxy + Tunnel | Config Manager*

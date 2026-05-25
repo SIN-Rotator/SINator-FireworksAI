@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V9 (2026-05-24)
+# AGENTS.md — SINator Fireworks AI Rotator V11 (2026-05-25)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-24
 
@@ -9,13 +9,61 @@ python tools/rotate.py
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Pool:** 57 Keys
+**Pool:** 112 Keys (60 verfügbar, 44 gesperrt, 8 verbraucht)
 **Cycle Time:** ~210s average (Strecke: 198-224s)
 **Pool Proxy V2:** läuft auf :8888 (aiohttp SSE + auto-swap), Dashboard SSE live
-**Services:** com.sinator.backend (:8000), com.sinator.pool-proxy (:8888), com.sinator.tunnel
-**Neue Endpoints:** POST /lease, /return, /report, GET /events (SSE) | **Files:** proxy/, deprecated/
-**Setup für Miner MacBooks:** proxy/setup.sh <tunnel-url>
+**Services:** com.sinator.backend (:8000), com.sinator.pool-proxy (:8888), com.sinator.tunnel, com.sinator.pages (:8040)
 **opencode config:** baseURL: http://localhost:8888/inference/v1, apiKey: pool
+
+## 🔧 V11 CHANGES (2026-05-25)
+
+### Config Manager — GMX + Fireworks Credentials
+**Neue Dateien:**
+- `agent_toolbox/core/config_manager.py` — speichert GMX Email/Passwort + Fireworks Passwort in `data/config.json`
+- `agent_toolbox/api/routes/config.py` — `GET /api/v1/config` + `POST /api/v1/config` (public, kein Auth)
+
+**Config-Objekt:**
+```json
+{
+  "gmx_email": "opensin@gmx.de",
+  "gmx_password": "ZOE.jerry2024",
+  "fireworks_password": "ZOE.jerry2024!"
+}
+```
+
+**Rotation nutzt Config:**
+- `rotation.py` liest `get_config()` → übergibt `--gmx-email` + `--gmx-password` + `--password` an `rotate.py`
+- `rotate.py` hat neue Args: `--gmx-email` (default: opensin@gmx.de), `--gmx-password` (default: ZOE.jerry2024)
+- GMX Login nutzt `args.gmx_email` + `args.gmx_password` (nicht mehr hardcodiert!)
+
+### Setup-Seite (Dashboard)
+- `/setup` — Formular für GMX Email, GMX Passwort, Fireworks Passwort
+- Show/Hide Toggle auf Passwort-Feldern (Eye/EyeOff Icon)
+- Speichert via `POST /api/v1/config`
+- Lädt aktuelle Werte beim Öffnen
+
+### Pool-Stats: `leased` entfernt
+- `available = total - used - suspended` (geleastete Keys zählen als verfügbar)
+- `leased` Feld entfernt aus: `PoolStatsResponse` Schema, `pool.py` Route, `pool_manager.py` Stats
+- Dashboard zeigt nur: Gesamt / Verfügbar / Verbraucht
+
+### Chat-Assistent (Dashboard /hilfe)
+- Rust-Command `chat_send` ruft Pool-Proxy (`localhost:8888`) auf
+- Modell: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M input, billigstes)
+- System-Prompt in `src-tauri/chat-system-prompt.txt` (include_str!)
+- Live-Pool-Stats + Backend-Health werden in Rust geholt und in den System-Prompt injiziert
+- `content` + `reasoning_content` Fallback (Reasoning-Modelle)
+- Kein Streaming (einfacher invoke), kein Tauri-Event-ACL-Problem
+- Keine Next.js API Route nötig (statischer Export reicht)
+
+### CORS + Auth
+- `/api/v1/config` zu `public_prefixes` hinzugefügt (kein Auth-Token nötig)
+- CORS Origins: `https://tauri.localhost`, `tauri://localhost`, `http://localhost:3000`, `http://localhost:8000`
+
+### Tauri Build
+- Neue Dependencies: `reqwest` (HTTP), `tokio` (async), `futures-util` (stream)
+- `chat_send` Command registriert in `invoke_handler`
+- Clipboard-Plugin bleibt
 
 ## 🔧 V10 FIX — CUA PID TARGETING (2026-05-24)
 
@@ -236,22 +284,27 @@ SINator-fireworksai/
 │   │   ├── gmx_service.py               GMX: Session, Alias (Playwright+CUA+CDP), OTP
 │   │   ├── fireworks_service.py          V6: Playwright+CUA + Playwright-Onboarding-Fallback
 │   │   ├── browser_manager.py           Browser Lifecycle
-│   │   ├── pool_manager.py              API-Key Pool CRUD
+│   │   ├── pool_manager.py              API-Key Pool CRUD (available = total - used - suspended)
+│   │   ├── config_manager.py            GMX + Fireworks Credentials (data/config.json)
+│   │   ├── keychain_store.py            macOS Keychain CRUD + Migration
 │   │   └── cookie_manager.py            Cookie Management (legacy)
 │   └── api/
-│       ├── schemas.py                   Pydantic Models
+│       ├── schemas.py                   Pydantic Models (PoolStatsResponse ohne leased)
 │       └── routes/
-│           ├── rotation.py              POST /rotation/full (V5 Playwright+CUA)
+│           ├── rotation.py              POST /rotation/full (liest config für credentials)
+│           ├── config.py                GET/POST /api/v1/config (GMX+FW credentials)
 │           ├── gmx.py                   GMX Alias Endpoints
 │           ├── fireworks.py             Fireworks Endpoints
 │           ├── browser.py               Browser Start/Stop/Status
 │           ├── cookies.py               Cookie Extract/Inject/Recover
-│           └── pool.py                  Pool Stats/Key/Get
+│           └── pool.py                  Pool Stats/Key/Get/Reveal/Health
+├── proxy/                               Pool-Proxy V2 (aiohttp SSE + auto-swap)
 ├── tools/
-│   ├── rotate.py                        Single-command E2E (GMX → FW → API Key)
+│   ├── rotate.py                        Single-command E2E (--gmx-email, --gmx-password, --password)
 │   └── gmx_alias_tool.py                CLI tool (rotates alias standalone)
 ├── data/
-│   └── fireworksai-pool.json            API-Key Pool (gitignored — secrets!)
+│   ├── fireworksai-pool.json            API-Key Pool (STORED_IN_KEYCHAIN Sentinel)
+│   └── config.json                       GMX + Fireworks Credentials
 ├── AGENTS.md                            ← DIESE DATEI
 ├── banned.md                            Verbotene Methoden
 ├── sinrules.md                          Absolute Regeln
@@ -1570,9 +1623,19 @@ API-Key Pool im Plain-Array Format:
 ### Pool
 | Methode | Endpoint | Request | Response |
 |---|---|---|---|
-| GET | `/pool/stats` | — | `{status, total, used, available, keys}` |
+| GET | `/pool/stats` | — | `{status, total, used, suspended, available, keys}` |
+| GET | `/pool/reveal/{key_id}` | — | `{status, api_key}` (hydratisiert aus Keychain) |
 | POST | `/pool/key/use` | `{key_id}` | `{status, key_id}` |
+| POST | `/pool/lease` | `{ttl_seconds, leased_to}` | `{status, key_id, api_key, lease_id}` |
+| POST | `/pool/return` | `{key_id, lease_id}` | `{status}` |
+| POST | `/pool/report` | `{api_key, key_id, reason}` | `{status}` |
 | POST | `/pool/add` | `{api_key, alias_email, key_name}` | `{status, key_id}` |
+
+### Config
+| Methode | Endpoint | Request | Response |
+|---|---|---|---|
+| GET | `/config` | — | `{gmx_email, gmx_password, fireworks_password}` |
+| POST | `/config` | `{gmx_email, gmx_password, fireworks_password}` | `{gmx_email, fireworks_password}` |
 
 ### Rotation (HAUPT)
 | Methode | Endpoint | Request | Response |
@@ -1732,15 +1795,21 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 |---|---|---|
 | Verbannte Methoden | `banned.md` | — |
 | CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session, **get_browser_ws_endpoint (urllib)** |
-| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_existing_alias, check_session, _inject_saved_cookies |
+| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_existing_alias, check_session |
 | GMX Alias CLI Tool | `tools/gmx_alias_tool.py` | status, check, rotate, create, delete — **READ-ONLY VERIFIED, NEVER CHANGE** |
 | Fireworks E2E | `agent_toolbox/core/fireworks_service.py` | register(email, password, gmx_password) |
-| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py:55` | POST /rotation/full |
-| Pool Manager | `agent_toolbox/core/pool_manager.py:33` | add_key, get_available_key, mark_used, get_stats |
-| Browser Lifecycle | `agent_toolbox/core/browser_manager.py:138` | start, stop, is_running |
+| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py` | POST /rotation/full (liest config für credentials) |
+| Config Manager | `agent_toolbox/core/config_manager.py` | get_config(), Config.save(), data/config.json |
+| Config API | `agent_toolbox/api/routes/config.py` | GET /api/v1/config, POST /api/v1/config |
+| Pool Manager | `agent_toolbox/core/pool_manager.py` | add_key, get_available_key, mark_used, get_stats (available = total - used - suspended) |
+| Keychain Store | `agent_toolbox/core/keychain_store.py` | store_key, retrieve_key, delete_key, SENTINEL |
+| Browser Lifecycle | `agent_toolbox/core/browser_manager.py` | start, stop, is_running |
 | GMX API Routes | `agent_toolbox/api/routes/gmx.py` | POST /gmx/alias/rotate, /gmx/alias/create, /gmx/alias/delete |
-| API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, RotationResponse, alle Models |
-| FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app registration |
+| Pool Routes | `agent_toolbox/api/routes/pool.py` | stats, reveal, lease, return, report, add, health |
+| API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, PoolStatsResponse (ohne leased), alle Models |
+| FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app, CORS, public_prefixes |
+| Chat System Prompt | `src-tauri/chat-system-prompt.txt` | SINator-Wissen für Hilfe-Assistenten |
+| E2E Rotation Script | `tools/rotate.py` | --gmx-email, --gmx-password, --password, --cdp-port |
 
 ---
 
