@@ -36,6 +36,7 @@ from agent_toolbox.api.schemas import (
     PoolAddKeyRequest,
     PoolAddKeyResponse,
 )
+from agent_toolbox.core.keychain_store import migrate_pool as _migrate_pool
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pool", tags=["API Key Pool"])
@@ -57,6 +58,7 @@ async def get_pool_stats():
             status="success",
             total=stats["total"],
             used=stats["used"],
+            suspended=stats.get("suspended", 0),
             leased=stats.get("leased", 0),
             available=stats["available"],
             keys=stats["keys"],
@@ -124,7 +126,7 @@ async def mark_key_used(key_id: str):
 @router.get("/key")
 async def get_api_key():
     """
-    Liefert den nächsten verfügbaren API-Key im Klartext (für Chat/LLM).
+    Liefert den nächsten verfügbaren API-Key (hydratisiert aus Keychain).
     """
     pool_mgr = get_pool_manager()
     key = pool_mgr.get_available_key()
@@ -307,6 +309,7 @@ async def check_pool_health(deep_check: bool = False):
     import asyncio
     import json
     from pathlib import Path
+    from agent_toolbox.core.keychain_store import retrieve_key as _retrieve_from_keychain, SENTINEL as _KC_SENTINEL
 
     pool_path = Path("data/fireworksai-pool.json")
     if not pool_path.exists():
@@ -318,7 +321,11 @@ async def check_pool_health(deep_check: bool = False):
 
     async def check_key(k: dict) -> dict:
         key_id = k.get("id", "?")
-        api_key = k.get("api_key", "")
+        raw_api_key = k.get("api_key", "")
+        if raw_api_key == _KC_SENTINEL:
+            api_key = _retrieve_from_keychain(key_id) or ""
+        else:
+            api_key = raw_api_key
         email = k.get("alias_email", "?")
         result = {
             "key_id": key_id, "email": email, "status": "unknown",
@@ -362,6 +369,40 @@ async def check_pool_health(deep_check: bool = False):
         "total_credits_remaining": round(total_credits, 2),
         "checked": results,
     }
+
+
+@router.get("/reveal/{key_id}")
+async def reveal_key(key_id: str):
+    """
+    Gibt den echten API-Key für einen Pool-Eintrag zurück (aus Keychain).
+    Nur für localhost/Tauri Dashboard — nicht öffentlich exponieren.
+    """
+    pool_mgr = get_pool_manager()
+    pool_mgr.reload()
+    for k in pool_mgr.keys:
+        if k["id"] == key_id:
+            hydrated = pool_mgr._hydrate_key(k)
+            return {
+                "status": "success",
+                "api_key": hydrated.get("api_key", ""),
+                "key_id": key_id,
+                "alias_email": k.get("alias_email", ""),
+            }
+    raise HTTPException(status_code=404, detail="Key not found")
+
+
+@router.post("/migrate-to-keychain")
+async def migrate_to_keychain(dry_run: bool = False):
+    """
+    Migriert alle Plaintext API-Keys in macOS Keychain.
+    Nach der Migration enthält die Pool-JSON nur noch SENTINEL-Werte.
+    
+    Query-Parameter:
+      dry_run=true  — nur zählen, nicht wirklich migrieren
+    """
+    from agent_toolbox.core.pool_manager import DEFAULT_POOL_PATH
+    result = _migrate_pool(DEFAULT_POOL_PATH, dry_run=dry_run)
+    return result
 
 
 @router.delete("/{key_id}")

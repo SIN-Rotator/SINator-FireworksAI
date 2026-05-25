@@ -5,6 +5,13 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+from agent_toolbox.core.keychain_store import (
+    store_key as _store_to_keychain,
+    retrieve_key as _retrieve_from_keychain,
+    delete_key as _delete_from_keychain,
+    SENTINEL as _KEYCHAIN_SENTINEL,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_POOL_PATH = Path(__file__).parent.parent.parent / "data" / "fireworksai-pool.json"
@@ -76,9 +83,11 @@ class PoolManager:
             Dict mit status und key_id
         """
         self.reload()
+        key_id = str(uuid.uuid4())
+        _store_to_keychain(key_id, api_key)
         key_entry = {
-            "id": str(uuid.uuid4()),
-            "api_key": api_key,
+            "id": key_id,
+            "api_key": _KEYCHAIN_SENTINEL,
             "alias_email": alias_email,
             "key_name": key_name,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -100,22 +109,44 @@ class PoolManager:
 
     def get_available_key(self) -> Optional[Dict[str, Any]]:
         """
-        Liefert den nächsten unverwendeten und nicht-geleasten API-Key.
+        Liefert den nächsten unverwendeten, nicht-suspended und nicht-geleasten API-Key.
         """
         self.reload()
         self.expire_leases()
         now = time.time()
         for key in self.keys:
-            if not key.get("used", False):
-                leased_until = key.get("leased_until")
-                if leased_until is not None and leased_until > now:
-                    continue
-                return key
+            if key.get("used", False) or key.get("suspended", False):
+                continue
+            leased_until = key.get("leased_until")
+            if leased_until is not None and leased_until > now:
+                continue
+            return self._hydrate_key(key)
         return None
+
+    def _hydrate_key(self, key: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of the key dict with api_key hydrated from Keychain."""
+        out = dict(key)
+        api_key = out.get("api_key", "")
+        if api_key == _KEYCHAIN_SENTINEL:
+            real = _retrieve_from_keychain(out["id"])
+            out["api_key"] = real or ""
+        return out
+
+    def mark_suspended(self, key_id: str, reason: str = "unknown") -> bool:
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                key["suspended"] = True
+                key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                key["suspended_reason"] = reason
+                self.save()
+                logger.info(f"Key suspended ({reason}): {key_id[:8]}...")
+                return True
+        return False
 
     def mark_used(self, key_id: str) -> bool:
         """
-        Markiert einen API-Key als verwendet.
+        Markiert einen API-Key als verwendet (manuell, z.B. nach Rotation).
 
         Args:
             key_id: ID des Keys
@@ -142,22 +173,27 @@ class PoolManager:
         now = time.time()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
-        leased = sum(1 for k in self.keys if not k.get("used", False)
+        suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
+        leased = sum(1 for k in self.keys if not k.get("used", False) and not k.get("suspended", False)
                      and k.get("leased_until") is not None and k["leased_until"] > now)
-        available = total - used - leased
+        available = total - used - suspended - leased
 
         keys_list = []
         for k in self.keys:
             leased_until = k.get("leased_until")
-            is_leased = (not k.get("used", False) and leased_until is not None and leased_until > now)
+            is_leased = (not k.get("used", False) and not k.get("suspended", False)
+                         and leased_until is not None and leased_until > now)
             keys_list.append({
                 "id": k["id"],
                 "alias_email": k["alias_email"],
                 "key_name": k["key_name"],
-                "api_key": k.get("api_key", ""),
+                "api_key": "",
                 "created_at": k["created_at"],
                 "used": k.get("used", False),
                 "used_at": k.get("used_at"),
+                "suspended": k.get("suspended", False),
+                "suspended_at": k.get("suspended_at"),
+                "suspended_reason": k.get("suspended_reason"),
                 "credits_initial": k.get("credits_initial", 6.0),
                 "credits_remaining": k.get("credits_remaining", 6.0),
                 "credits_checked_at": k.get("credits_checked_at"),
@@ -170,6 +206,7 @@ class PoolManager:
         return {
             "total": total,
             "used": used,
+            "suspended": suspended,
             "leased": leased,
             "available": available,
             "keys": keys_list,
@@ -194,27 +231,23 @@ class PoolManager:
                 self.save()
                 logger.info(f"Credits aktualisiert: {key_id[:8]}... = ${credits_remaining:.2f}")
                 if credits_remaining <= 0.01:
-                    key["used"] = True
-                    key["used_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    key["suspended"] = True
+                    key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    key["suspended_reason"] = "credits_exhausted"
                     self.save()
-                    logger.warning(f"Key automatisch als used markiert (0 Credits): {key_id[:8]}...")
+                    logger.warning(f"Key suspended (0 Credits): {key_id[:8]}...")
                 return True
         return False
 
     def delete_key(self, key_id: str) -> bool:
         """
-        Löscht einen API-Key aus dem Pool.
-
-        Args:
-            key_id: ID des Keys
-
-        Returns:
-            True wenn Key gefunden und gelöscht
+        Löscht einen API-Key aus dem Pool und aus der Keychain.
         """
         self.reload()
         initial_len = len(self.keys)
         self.keys = [k for k in self.keys if k["id"] != key_id]
         if len(self.keys) < initial_len:
+            _delete_from_keychain(key_id)
             self.save()
             logger.info(f"API-Key gelöscht: {key_id[:8]}...")
             return True
@@ -239,36 +272,38 @@ class PoolManager:
         now = time.time()
         expires_at = now + ttl_seconds
         for key in self.keys:
-            if not key.get("used", False):
-                leased_until = key.get("leased_until")
-                if leased_until is not None and leased_until > now:
-                    continue
-                lease_id = uuid.uuid4().hex[:12]
-                key["leased_until"] = expires_at
-                key["leased_to"] = leased_to
-                key["lease_id"] = lease_id
-                key["leased_at"] = now
-                self.save()
-                _emit_event("key_leased", {
-                    "key_id": key["id"],
-                    "lease_id": lease_id,
-                    "leased_to": leased_to,
-                    "expires_at": expires_at,
-                })
-                logger.info(f"Key leased: {key['id'][:8]}... → {leased_to} (TTL={ttl_seconds}s)")
-                result = {
-                    "api_key": key["api_key"],
-                    "key_id": key["id"],
-                    "lease_id": lease_id,
-                    "expires_at": expires_at,
-                    "alias_email": key["alias_email"],
-                    "key_name": key.get("key_name", ""),
-                }
-                if lease_backup:
-                    backup = self.lease_key(ttl_seconds=ttl_seconds, leased_to=leased_to + "-backup")
-                    if backup:
-                        result["backup"] = backup
-                return result
+            if key.get("used", False) or key.get("suspended", False):
+                continue
+            leased_until = key.get("leased_until")
+            if leased_until is not None and leased_until > now:
+                continue
+            lease_id = uuid.uuid4().hex[:12]
+            key["leased_until"] = expires_at
+            key["leased_to"] = leased_to
+            key["lease_id"] = lease_id
+            key["leased_at"] = now
+            self.save()
+            _emit_event("key_leased", {
+                "key_id": key["id"],
+                "lease_id": lease_id,
+                "leased_to": leased_to,
+                "expires_at": expires_at,
+            })
+            logger.info(f"Key leased: {key['id'][:8]}... → {leased_to} (TTL={ttl_seconds}s)")
+            hydrated = self._hydrate_key(key)
+            result = {
+                "api_key": hydrated["api_key"],
+                "key_id": key["id"],
+                "lease_id": lease_id,
+                "expires_at": expires_at,
+                "alias_email": key["alias_email"],
+                "key_name": key.get("key_name", ""),
+            }
+            if lease_backup:
+                backup = self.lease_key(ttl_seconds=ttl_seconds, leased_to=leased_to + "-backup")
+                if backup:
+                    result["backup"] = backup
+            return result
         logger.warning("No available keys to lease")
         return None
 
@@ -337,13 +372,16 @@ class PoolManager:
         now = time.time()
         leased = []
         for key in self.keys:
+            if key.get("used", False) or key.get("suspended", False):
+                continue
             leased_until = key.get("leased_until")
             if not key.get("used", False) and leased_until is not None and leased_until > now:
+                hydrated = self._hydrate_key(key)
                 leased.append({
                     "id": key["id"],
                     "alias_email": key["alias_email"],
                     "key_name": key.get("key_name", ""),
-                    "api_key": key.get("api_key", ""),
+                    "api_key": hydrated["api_key"],
                     "leased_to": key.get("leased_to"),
                     "lease_id": key.get("lease_id"),
                     "leased_at": key.get("leased_at"),
@@ -354,8 +392,8 @@ class PoolManager:
     def report_key(self, api_key: Optional[str] = None, key_id: Optional[str] = None,
                    reason: str = "unknown") -> Optional[Dict[str, Any]]:
         """
-        Report a key as bad (suspended/rate-limited/invalid). Marks it as used
-        and returns a new available key.
+        Report a key as bad (suspended/rate-limited/invalid). Marks it as suspended
+        (NOT used!) and returns a new available key.
 
         Args:
             api_key: API key string to find (alternative to key_id)
@@ -379,7 +417,7 @@ class PoolManager:
             if k["id"] == found_id:
                 old_alias = k.get("alias_email", "")
                 break
-        self.mark_used(found_id)
+        self.mark_suspended(found_id, reason=reason)
         _emit_event("key_swapped", {
             "old_key_id": found_id,
             "old_alias": old_alias,

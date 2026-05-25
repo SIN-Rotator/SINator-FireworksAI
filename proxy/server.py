@@ -56,8 +56,28 @@ SWAP_REASONS = {
 
 PERMANENT_429_KEYWORDS = ("spending limit", "monthly", "quota exceeded", "suspended")
 
+CONFIRMED_DEAD_CODES = {401, 402}
+MAYBE_DEAD_CODES = {403, 412}
 
 PUBLIC_PROXY_PATHS = ("/health", "/pool-status")
+
+CORS_ALLOW_HEADERS = "Authorization, Content-Type, Accept, Origin"
+
+@web.middleware
+async def _cors_middleware(request: web.Request, handler) -> web.Response:
+    origin = request.headers.get("Origin", "*")
+    cors_hdrs = {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": CORS_ALLOW_HEADERS,
+        "Access-Control-Max-Age": "86400",
+    }
+    if request.method == "OPTIONS":
+        return web.Response(status=204, headers=cors_hdrs)
+    resp = await handler(request)
+    for k, v in cors_hdrs.items():
+        resp.headers[k] = v
+    return resp
 
 @web.middleware
 async def _pool_auth_middleware(request: web.Request, handler) -> web.Response:
@@ -96,6 +116,7 @@ class PoolProxy:
 
     def create_app(self) -> web.Application:
         app = web.Application()
+        app.middlewares.append(_cors_middleware)
         app.middlewares.append(_pool_auth_middleware)
         app.router.add_get("/health", self._health)
         app.router.add_get("/pool-status", self._pool_status)
@@ -196,6 +217,19 @@ class PoolProxy:
         logger.info(f"Key swapped ({reason}): new key {key_info.get('key_id','?')[:8]}...")
         return key_info
 
+    MAX_CONSECUTIVE_SWAPS = 2
+
+    async def _verify_key_dead(self, api_key: str) -> bool:
+        try:
+            async with self.fw_session.get(
+                f"{self.fireworks_base}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                return r.status != 200
+        except Exception:
+            return False
+
     async def _handle_proxy(self, request: web.Request) -> web.Response:
         path = request.match_info.get("path", "")
         fw_url = f"{self.fireworks_base}/{path}"
@@ -216,6 +250,7 @@ class PoolProxy:
 
         headers = self._build_forward_headers(request, key_info)
         is_sse = self._is_streaming_request(request, fw_url)
+        consecutive_swaps = 0
 
         for attempt in range(self.max_retries):
             try:
@@ -225,7 +260,19 @@ class PoolProxy:
                     status = fw_resp.status
 
                     if status in DEAD_KEY_CODES:
+                        consecutive_swaps += 1
+                        if consecutive_swaps > self.MAX_CONSECUTIVE_SWAPS:
+                            logger.error(f"Cascade stop: {consecutive_swaps} swaps, returning error")
+                            error_body = await fw_resp.read()
+                            return web.Response(body=error_body, status=status,
+                                                content_type=fw_resp.headers.get("Content-Type", "application/json"))
                         reason = SWAP_REASONS.get(status, "unknown")
+                        if status in MAYBE_DEAD_CODES:
+                            still_dead = await self._verify_key_dead(key_info['api_key'])
+                            if not still_dead:
+                                logger.warning(f"Key got {status} but /models still OK — transient error, retrying same key")
+                                await asyncio.sleep(2)
+                                continue
                         logger.warning(f"Dead key: {status} ({reason}), swapping (attempt {attempt+1})...")
                         new_key = await self._swap_key(reason)
                         if new_key and attempt < self.max_retries - 1:
@@ -239,6 +286,11 @@ class PoolProxy:
                         error_text = await fw_resp.text()
                         is_permanent = any(kw in error_text.lower() for kw in PERMANENT_429_KEYWORDS)
                         if is_permanent:
+                            consecutive_swaps += 1
+                            if consecutive_swaps > self.MAX_CONSECUTIVE_SWAPS:
+                                logger.error(f"Cascade stop: {consecutive_swaps} swaps for permanent 429")
+                                return web.Response(body=error_text.encode(), status=429,
+                                                    content_type="application/json")
                             logger.warning(f"Permanent 429 (spending limit), swapping...")
                             new_key = await self._swap_key("rate_limited_permanent")
                             if new_key and attempt < self.max_retries - 1:
