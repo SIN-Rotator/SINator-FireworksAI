@@ -16,7 +16,7 @@ class PoolClient:
         cfg = load_config()
         self.pool_api_url = pool_api_url or cfg.get("pool_api_url", "http://localhost:8000/api/v1")
         self.lease_ttl = cfg.get("lease_ttl_seconds", 1800)
-        self.lease_backup = cfg.get("lease_backup", True)
+        self.lease_backup = cfg.get("lease_backup", False)
         self._http = httpx.AsyncClient(timeout=15.0)
 
     async def lease(self, leased_to: str = "proxy") -> Optional[Dict[str, Any]]:

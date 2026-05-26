@@ -5,7 +5,7 @@ from pathlib import Path
 DEFAULT_PROXY_PORT = int(os.getenv("SIN_PROXY_PORT", "8888"))
 FIREWORKS_BASE = "https://api.fireworks.ai/inference/v1"
 LEASE_TTL_SECONDS = int(os.getenv("SIN_LEASE_TTL", "1800"))
-LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "true").lower() == "true"
+LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "false").lower() == "true"
 MAX_RETRIES = int(os.getenv("SIN_MAX_RETRIES", "3"))
 CACHE_DIR = Path(os.getenv("SIN_CACHE_DIR", str(Path.home() / ".sin-pool")))
 CONFIG_FILE = CACHE_DIR / "config.json"

@@ -40,7 +40,7 @@ cfg = {
     'proxy_port': 8888,
     'fireworks_base': 'https://api.fireworks.ai/inference/v1',
     'lease_ttl_seconds': 1800,
-    'lease_backup': True,
+    'lease_backup': False,
     'max_retries': 3,
 }
 with open('${INSTALL_DIR}/config.json', 'w') as f:
