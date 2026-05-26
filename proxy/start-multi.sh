@@ -11,18 +11,20 @@ echo "🚀 SINator Multi-Pool Proxy — $INSTANCES Instanzen"
 echo "================================================"
 echo ""
 
-# Kill old instances
+# Kill old instances + stale tunnel URL
 for port in $(seq $BASE_PORT $((BASE_PORT + INSTANCES - 1))); do
   lsof -ti :$port 2>/dev/null | xargs kill -9 2>/dev/null || true
 done
+rm -f ~/.sin-pool/tunnel-url.txt
 sleep 1
 
-# Start instances
+# Start instances (ALWAYS use local backend — never the stale tunnel URL)
 for i in $(seq 1 $INSTANCES); do
   PORT=$((BASE_PORT + i - 1))
   echo "[$i/$INSTANCES] Proxy → :$PORT"
   cd "$PROXY_DIR"
-  SIN_PROXY_PORT=$PORT SIN_LEASE_BACKUP=false SIN_NO_BACKUP=true \
+  SIN_POOL_API_URL="http://localhost:8000/api/v1" \
+    SIN_PROXY_PORT=$PORT SIN_LEASE_BACKUP=false SIN_NO_BACKUP=true \
     nohup /opt/homebrew/bin/python3 server.py > /tmp/sinator-proxy-$PORT.log 2>&1 &
   echo "  PID: $!"
 done

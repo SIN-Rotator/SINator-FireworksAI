@@ -382,7 +382,7 @@ class PoolProxy:
         headers = {}
         for k, v in request.headers.items():
             kl = k.lower()
-            if kl in ("host", "authorization", "content-length", "transfer-encoding"):
+            if kl in ("host", "authorization", "content-length", "transfer-encoding", "x-api-key"):
                 continue
             headers[k] = v
         headers["Authorization"] = f"Bearer {key_info['api_key']}"
