@@ -60,12 +60,17 @@ async def main():
     from playwright.async_api import async_playwright as _ap
     async with _ap() as _p:
         _b = await _p.chromium.connect_over_cdp(CDP)
+        # Aggressive tab cleanup — close ALL non-essential tabs (keeps Dashboard + 1 working tab)
+        _kept = 0
         for _old in list(_b.contexts[0].pages):
             try:
                 _url = _old.url
+                # Keep only: Dashboard, essential GMX/Fireworks pages
                 if 'localhost:3000' in _url or 'localhost:8000' in _url:
-                    pass
-                elif 'gmx' in _url.lower() or 'fireworks' in _url.lower() or 'about:blank' in _url or 'chrome://newtab' in _url or 'chrome://new-tab' in _url or 'mail_settings' in _url:
+                    _kept += 1
+                elif _kept == 0 and ('navigator.gmx.net' in _url or 'bap.navigator.gmx.net' in _url):
+                    _kept += 1  # Keep one GMX tab for session reuse
+                else:
                     await _old.close()
             except: pass
         _pg = await _b.contexts[0].new_page()

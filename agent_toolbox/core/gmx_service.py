@@ -467,7 +467,7 @@ class GmxService:
                             if _sid_m:
                                 _normal_url = f"https://navigator.gmx.net/mail?sid={_sid_m.group(1)}"
                                 logger.info(f"🔄 Redirecting from bap → {_normal_url[:80]}")
-                                await _pg.goto(_normal_url, wait_until="domcontentloaded", timeout=15000)
+                                await _pg.goto(_normal_url, wait_until="domcontentloaded", timeout=30000)
                                 await asyncio.sleep(3)
                                 _inbox_pg = _pg
                                 break
