@@ -5,21 +5,23 @@ OpenAI-compatible proxy with automatic key rotation on rate-limits.
 
 **Backend Port:** `8000` | **Dashboard Repo:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | **HeyPiggy Repo:** [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy)
 
-## Multi-Proxy Setup (3 Macs)
+## 3 Pool-Proxies — je Mac ein dedizierter
 
-Drei dedizierte Pool-Proxy-Instanzen — jeder Mac hat eigenen Port + eigenen Key:
+Drei Cloudflare-Tunnel-Subdomains, drei Proxy-Instanzen (`:8888`–`:8890`).  
+Jeder Mac bekommt seinen eigenen Proxy mit eigenem API-Key aus dem Pool.
 
 ```bash
 cd ~/dev/SINator-fireworksai && proxy/start-multi.sh
 ```
 
-| Mac | Port | baseURL |
-|-----|------|---------|
-| Mac 1 | :8888 | `http://localhost:8888/inference/v1` |
-| Mac 2 | :8889 | `http://localhost:8889/inference/v1` |
-| Mac 3 | :8890 | `http://localhost:8890/inference/v1` |
+| Mac | Subdomain | baseURL |
+|-----|-----------|---------|
+| Mac 1 | `sinatorpool1.delqhi.com` | `https://sinatorpool1.delqhi.com/inference/v1` |
+| Mac 2 | `sinatorpool2.delqhi.com` | `https://sinatorpool2.delqhi.com/inference/v1` |
+| Mac 3 | `sinatorpool3.delqhi.com` | `https://sinatorpool3.delqhi.com/inference/v1` |
 
-**apiKey:** `pool` (localhost — kein Auth nötig)
+Lokal (auf Mac 1): `http://localhost:{8888,8889,8890}/inference/v1` — kein Auth nötig.  
+**apiKey (remote):** `7avN1KkfInNqcOMn2CtwLTvx` (für alle Subdomains gleich)
 
 ## Quick Start
 
