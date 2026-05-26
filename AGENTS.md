@@ -2321,6 +2321,21 @@ https://app.fireworks.ai/signup/confirm?client_id=sueas7prsfrdp16nantbeqcjv&user
 **Key Takeaway:** Mail-Panel Extension → `mailbody-ui.de` OOPIF ist der EINZIGE Weg.
 NIEMALS `3c.gmx.net` direkt, NIEMALS `lightmailer-bs.gmx.net`, NIEMALS CDP DOM API.
 
-**Letzte Aktualisierung: 2026-05-13 (Mail-Panel Verified + Documentation Sync)**
+**Letzte Aktualisierung: 2026-05-26 (V12 — lease_backup Fix + Dashboard Cross-References)**
 
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
+
+---
+
+## 🔗 CROSS-REFERENCES — SINator Ecosystem
+
+| Repo | Port | Was |
+|------|------|-----|
+| **SINator-fireworksai** (dieses) | `:8000` | Fireworks Key Pool + Proxy |
+| **SINator-heypiggy** | `:8002` | HeyPiggy Account Generator |
+| **SINator-dashboard** | `:3000` | Tauri App, Provider-Switcher |
+
+Start: `cd ~/dev/SINator-dashboard && ./start.sh` → :8000 + :8002 + :3000 + Tauri App  
+Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
+
+⚠️ Tauri Release App ist **statisch** — jedes Code-Update erfordert `./build.sh`.

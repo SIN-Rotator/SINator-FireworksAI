@@ -3,10 +3,25 @@
 Automated GMX alias rotation → Fireworks AI account → API key pool.  
 OpenAI-compatible proxy with automatic key rotation on rate-limits.
 
+**Backend Port:** `8000` | **Dashboard Repo:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | **HeyPiggy Repo:** [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy)
+
 **Endpoint:**
 ```
 baseURL: https://sinator.delqhi.com/inference/v1
 apiKey:  7avN1KkfInNqcOMn2CtwLTvx
+```
+
+## Quick Start
+
+```bash
+# Mit dem Dashboard-Launcher (empfohlen):
+cd ~/dev/SINator-dashboard
+./start.sh
+# → Startet Fireworks (:8000) + HeyPiggy (:8002) + Dashboard (:3000) + Tauri App
+
+# Oder standalone:
+python agent_toolbox/start_toolbox.py
+# → http://localhost:8000/docs
 ```
 
 ---
@@ -38,16 +53,27 @@ GMX → Fireworks AI → API Key
 
 ---
 
-## Quick Start
+## Dashboard + HeyPiggy Integration
+
+Dieses Repo ist der Fireworks-Backend. Das vollständige System besteht aus drei Repos:
+
+| Repo | Port | Funktion |
+|------|------|----------|
+| **SINator-fireworksai** (dieses) | `:8000` | Fireworks Key Pool + Pool-Proxy |
+| [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy) | `:8002` | HeyPiggy Account Generator |
+| [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | `:3000` | Tauri App (Provider-Switcher) |
 
 ```bash
-# Full Rotation (Single Command)
-python tools/rotate.py
-
-# API Server starten
-python agent_toolbox/start_toolbox.py
-# → http://localhost:8000/docs
+# Alles starten (from dashboard repo):
+cd ~/dev/SINator-dashboard && ./start.sh
+# → Fireworks :8000 + HeyPiggy :8002 + Dashboard :3000 + Tauri App
 ```
+
+Nach Dashboard-Code-Änderungen: `cd ~/dev/SINator-dashboard && ./build.sh` (Tauri Release App ist statisch).
+
+## Lease Backup Fix (2026-05-26)
+
+`lease_backup`-Default war `True` → jeder Swap konsumierte 2 Keys (einen verschwendet als "backup-backup"). Gefixt in `proxy/config.py`, `proxy/pool_client.py`, `proxy/setup.sh`. Jetzt `False` — nur 1 Key pro Lease.
 
 ---
 
