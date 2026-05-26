@@ -44,6 +44,7 @@ logging.basicConfig(
 logger = logging.getLogger("pool-proxy")
 
 POOL_AUTH_TOKEN = os.environ.get("SINATOR_AUTH_TOKEN", "").strip()
+NO_BACKUP = os.environ.get("SIN_NO_BACKUP", "false").lower() == "true"
 
 DEAD_KEY_CODES = {401, 402, 403, 412}
 SWAP_REASONS = {
@@ -160,19 +161,21 @@ class PoolProxy:
         primary = self.cache.get_primary()
         if primary:
             return primary
-        promoted = self.cache.promote_backup()
-        if promoted:
-            asyncio.create_task(self._fetch_backup())
-            return promoted
+        if not NO_BACKUP:
+            promoted = self.cache.promote_backup()
+            if promoted:
+                asyncio.create_task(self._fetch_backup())
+                return promoted
         lease_result = await self.pool_client.lease(leased_to=self.proxy_id)
         if not lease_result:
             return None
         key_info = self._lease_to_key_info(lease_result)
         self.cache.set_primary(key_info)
-        if lease_result.get("backup"):
-            self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
-        else:
-            asyncio.create_task(self._fetch_backup())
+        if not NO_BACKUP:
+            if lease_result.get("backup"):
+                self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
+            else:
+                asyncio.create_task(self._fetch_backup())
         return key_info
 
     @staticmethod
@@ -203,21 +206,23 @@ class PoolProxy:
                 reason=reason,
             )
             self.cache.clear_primary()
-        promoted = self.cache.promote_backup()
-        if promoted:
-            logger.info(f"Key swapped ({reason}): promoted backup {promoted.get('key_id','?')[:8]}...")
-            asyncio.create_task(self._fetch_backup())
-            return promoted
+        if not NO_BACKUP:
+            promoted = self.cache.promote_backup()
+            if promoted:
+                logger.info(f"Key swapped ({reason}): promoted backup {promoted.get('key_id','?')[:8]}...")
+                asyncio.create_task(self._fetch_backup())
+                return promoted
         lease_result = await self.pool_client.lease(leased_to=self.proxy_id)
         if not lease_result:
             logger.error("No replacement key available!")
             return None
         key_info = self._lease_to_key_info(lease_result)
         self.cache.set_primary(key_info)
-        if lease_result.get("backup"):
-            self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
-        else:
-            asyncio.create_task(self._fetch_backup())
+        if not NO_BACKUP:
+            if lease_result.get("backup"):
+                self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
+            else:
+                asyncio.create_task(self._fetch_backup())
         logger.info(f"Key swapped ({reason}): new key {key_info.get('key_id','?')[:8]}...")
         return key_info
 
