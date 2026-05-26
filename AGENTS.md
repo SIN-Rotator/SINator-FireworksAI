@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V11 (2026-05-25)
+# AGENTS.md — SINator Fireworks AI Rotator V11 (2026-05-25, updated 2026-05-26)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-24
 
@@ -1814,6 +1814,40 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 ---
 
 ## 🏛️ INCIDENT LOG — Niemals wiederholen!
+
+### 2026-05-26: Double-Key Waste — Pool Proxy lease_backup (GEFIXT)
+
+**Was passiert ist:**
+Jeder Key-Swap im Pool-Proxy hat ZWEI Keys geleast statt einem. Der zweite Key
+(backup-backup) wurde nie genutzt, nie returned, einfach verschwendet.
+
+**Ursache:**
+Drei Defaults standen auf `True`:
+1. `proxy/config.py:8` — `SIN_LEASE_BACKUP` env default `"true"`
+2. `proxy/pool_client.py:19` — `cfg.get("lease_backup", True)`
+3. `proxy/setup.sh:43` — `'lease_backup': True` (cached config)
+
+**Ablaufkette:**
+1. `_fetch_backup()` → `pool_client.lease(lease_backup=True)`
+2. POST `/pool/lease` mit `lease_backup: true`
+3. `pool_manager.lease_key(lease_backup=True)` leased 1 Key, dann rekursiv 1 Backup-Key
+4. Result: `{api_key, backup: {api_key}}` → aber `_fetch_backup()` ignoriert `backup`!
+5. Der Backup-Backup-Key war geleast aber in keinem Cache → **verschwendet**
+
+**Symptom:** Pool verbrannte 2 Keys pro Suspension statt 1. 3 verschwendete Keys
+(mit `leased_to` endend auf `-backup-backup`) aktiv auf Disk gefunden.
+
+**Fix (3 Dateien):**
+- `proxy/pool_client.py:19`: `cfg.get("lease_backup", False)` (war True)
+- `proxy/config.py:8`: `SIN_LEASE_BACKUP` default `"false"` (war "true")
+- `proxy/setup.sh:43`: `'lease_backup': False` (war True)
+
+**3 verschwendete Keys released:** `a5d66a77`, `46980b15`, `dbd0fee9`
+(Leases gecleart, waren nicht suspended/used — nur unnötig leased)
+
+**Verhindern:**
+- `lease_backup` NIEMALS auf True setzen — der Server managed Backup selbstständig via zwei separate Lease-Calls
+- Kein rekursives Verhalten in Lease-Funktionen ohne expliziten dokumentierten Use-Case
 
 ### 2026-05-11: OOPIF Cross-Origin-Iframe Bug (GEFIXT)
 
