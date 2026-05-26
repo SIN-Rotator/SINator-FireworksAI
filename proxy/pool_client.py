@@ -55,9 +55,13 @@ class PoolClient:
             return False
 
     async def report(self, api_key: Optional[str] = None, key_id: Optional[str] = None,
-                     reason: str = "unknown") -> Optional[Dict[str, Any]]:
+                     reason: str = "unknown", leased_to: str = "proxy") -> Optional[Dict[str, Any]]:
         try:
-            body = {"reason": reason}
+            body = {
+                "reason": reason,
+                "leased_to": leased_to,
+                "ttl_seconds": self.lease_ttl,
+            }
             if api_key:
                 body["api_key"] = api_key
             if key_id:

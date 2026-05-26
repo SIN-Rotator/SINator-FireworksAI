@@ -162,7 +162,12 @@ async def report_bad_key(request: dict):
     if not key_id and not api_key:
         raise HTTPException(status_code=400, detail="Missing 'api_key' or 'key_id' in request body")
 
-    result = pool_mgr.report_key(api_key=api_key, key_id=key_id, reason=reason)
+    leased_to = request.get("leased_to", "proxy")
+    ttl_seconds = request.get("ttl_seconds", 1800)
+    result = pool_mgr.report_key(
+        api_key=api_key, key_id=key_id, reason=reason,
+        leased_to=leased_to, ttl_seconds=ttl_seconds,
+    )
 
     if result is None:
         raise HTTPException(
@@ -176,6 +181,9 @@ async def report_bad_key(request: dict):
         "new_key": result.get("new_api_key"),
         "new_key_id": result.get("new_key_id"),
         "new_alias": result.get("new_alias"),
+        "new_key_name": result.get("new_key_name", ""),
+        "lease_id": result.get("lease_id"),
+        "expires_at": result.get("expires_at"),
         "reason": reason,
     }
 

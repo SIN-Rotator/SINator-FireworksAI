@@ -200,16 +200,31 @@ class PoolProxy:
     async def _swap_key(self, reason: str) -> Optional[dict]:
         old = self.cache.primary
         if old:
-            await self.pool_client.report(
+            report_result = await self.pool_client.report(
                 key_id=old.get("key_id"),
                 api_key=old.get("api_key"),
                 reason=reason,
+                leased_to=self.proxy_id,
             )
             self.cache.clear_primary()
+            # Use the replacement key returned by report() (already leased atomically)
+            if report_result and report_result.get("new_key"):
+                key_info = {
+                    "api_key": report_result["new_key"],
+                    "key_id": report_result.get("new_key_id", ""),
+                    "lease_id": report_result.get("lease_id", ""),
+                    "expires_at": report_result.get("expires_at", 0),
+                    "alias_email": report_result.get("new_alias", ""),
+                    "key_name": report_result.get("new_key_name", ""),
+                }
+                self.cache.set_primary(key_info)
+                logger.info(f"Key swapped ({reason}): new key {key_info.get('key_id','?')[:8]}... (from report+lease)")
+                return key_info
+
+        # Fallback: report didn't return a replacement → lease one
         if not NO_BACKUP:
             promoted = self.cache.promote_backup()
             if promoted:
-                logger.info(f"Key swapped ({reason}): promoted backup {promoted.get('key_id','?')[:8]}...")
                 asyncio.create_task(self._fetch_backup())
                 return promoted
         lease_result = await self.pool_client.lease(leased_to=self.proxy_id)
@@ -338,15 +353,20 @@ class PoolProxy:
                                 )
                             return web.Response(body=error_text.encode(), status=429,
                                                 content_type="application/json")
-                        # Transientes 429 — einfach warten + retry
+                        # Transientes 429 — SOFORT an Client zurückgeben mit Retry-After
+                        # (nicht intern warten — verhindert Client-Timeouts + InvalidHTTPResponse)
                         retry_after = fw_resp.headers.get("Retry-After", "5")
                         try:
                             wait = min(int(retry_after), 30)
                         except ValueError:
                             wait = 5
-                        logger.info(f"Temporary 429, waiting {wait}s then retrying same key...")
-                        await asyncio.sleep(wait)
-                        continue
+                        logger.info(f"Temporary 429, returning to client with Retry-After: {wait}s")
+                        return web.Response(
+                            body=error_text.encode(),
+                            status=429,
+                            content_type=fw_resp.headers.get("Content-Type", "application/json"),
+                            headers={"Retry-After": str(wait)},
+                        )
 
                     if status >= 500:
                         logger.warning(f"Fireworks server error: {status}, retrying (attempt {attempt+1})...")
