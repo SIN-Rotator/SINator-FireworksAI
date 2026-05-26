@@ -57,11 +57,11 @@ SWAP_REASONS = {
 PERMANENT_429_KEYWORDS = ("account.*suspended", "monthly spending limit", "reached.*limit", "suspended due to", "spending limit")
 # Keine "monthly" oder "quota exceeded" allein — zu viele False Positives
 
-# ALL codes außer 402 werden VERIFIZIERT (GET /models) bevor ein Swap passiert.
-# Nur 402 "credits_exhausted" bedeutet sicher "Key ist tot".
-PERMANENT_ERROR_KEYWORDS = ("suspended", "deactivated", "disabled", "invalid api key", "revoked", "expired")
-CONFIRMED_DEAD_CODES = {402}
-MAYBE_DEAD_CODES = {401, 403, 412}
+# Alle Codes werden VERIFIZIERT (Body-Check + /chat/completions) bevor ein Swap passiert.
+# NICHTS wird blind als "tot" angenommen — auch 402 nicht.
+PERMANENT_ERROR_KEYWORDS = ("suspended", "deactivated", "disabled", "invalid api key", "revoked", "expired", "payment required")
+CONFIRMED_DEAD_CODES = set()  # LEER — alles wird verifiziert
+MAYBE_DEAD_CODES = {401, 402, 403, 412}
 
 PUBLIC_PROXY_PATHS = ("/health", "/pool-status")
 
