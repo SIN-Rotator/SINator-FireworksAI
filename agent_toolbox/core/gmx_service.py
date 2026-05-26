@@ -460,11 +460,29 @@ class GmxService:
                 logger.warning("Could not get GMX SID")
                 return None
 
-            # Step 2: CUA click "Einstellungen" from inbox + Playwright scan
+            # Step 2: Redirect from bap (accessible) to normal navigator
+            # bap.navigator.gmx.net zeigt keine 3c.gmx.net iframes → CUA kann nicht klicken
+            if 'bap.navigator.gmx.net' in _sid_url if '_sid_url' in dir() else False:
+                pass  # handled below
+
+            # Step 3: CUA click "Einstellungen" from inbox + Playwright scan
             from playwright.async_api import async_playwright
 
             async with async_playwright() as _pw:
                 _b = await _pw.chromium.connect_over_cdp("http://127.0.0.1:9222")
+
+                # Fix: Wenn auf bap (accessible) → navigiere zu normalem navigator
+                _bap_redirect = False
+                for _pg_init in _b.contexts[0].pages:
+                    if 'bap.navigator.gmx.net' in _pg_init.url:
+                        _sid_m = _re.search(r'sid=([^&\s]+)', _pg_init.url)
+                        if _sid_m:
+                            _normal_url = f"https://navigator.gmx.net/mail?sid={_sid_m.group(1)}"
+                            logger.info(f"🔄 Redirecting from bap → {_normal_url[:80]}")
+                            await _pg_init.goto(_normal_url, wait_until="domcontentloaded", timeout=15000)
+                            await asyncio.sleep(3)
+                            _bap_redirect = True
+                            break
 
                 _cua_success = False
                 try:
@@ -549,6 +567,41 @@ class GmxService:
                             except Exception:
                                 pass
                     await asyncio.sleep(1)
+
+                # Step 5 (FALLBACK): Extract JSESSIONID → direct 3c.gmx.net navigation
+                # Works when CUA click doesn't open the right page (accessible mode)
+                logger.info("Fallback: trying direct 3c.gmx.net navigation with JSESSIONID")
+                _jsessionid = None
+                for _ctx5 in _b.contexts:
+                    for _pg5 in _ctx5.pages:
+                        for _f5 in _pg5.frames:
+                            if '3c.gmx.net' in _f5.url and 'jsessionid=' in _f5.url:
+                                _m = _re.search(r'jsessionid=([^&?;]+)', _f5.url)
+                                if _m:
+                                    _jsessionid = _m.group(1)
+                                    break
+                        if _jsessionid:
+                            break
+                    if _jsessionid:
+                        break
+
+                if _jsessionid:
+                    _direct_url = f"https://3c.gmx.net/mail/client/settings/allEmailAddresses;jsessionid={_jsessionid}"
+                    logger.info(f"Direct 3c.gmx.net → {_direct_url[:100]}")
+                    try:
+                        _pg_new = await _b.contexts[0].new_page()
+                        await _pg_new.goto(_direct_url, wait_until="domcontentloaded", timeout=15000)
+                        await asyncio.sleep(3)
+                        # Check if the page loaded with alias management
+                        for _poll in range(10):
+                            for _f in _pg_new.frames:
+                                if 'allEmailAddresses' in _f.url:
+                                    logger.info(f"✅ allEmailAddresses via direct 3c.gmx.net: {_f.url[:100]}")
+                                    return _f.url
+                            await asyncio.sleep(1)
+                        logger.warning("3c.gmx.net loaded but no allEmailAddresses frame found")
+                    except Exception as _e3c:
+                        logger.error(f"3c.gmx.net navigation failed: {_e3c}")
 
                 logger.warning("allEmailAddresses iframe not found in any page")
                 return None
