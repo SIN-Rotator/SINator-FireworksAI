@@ -40,6 +40,7 @@ from agent_toolbox.core.keychain_store import migrate_pool as _migrate_pool
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pool", tags=["API Key Pool"])
+lease_router = APIRouter(tags=["Pool Lease"])  # no prefix — for /pool-lease (Dashboard)
 
 
 @router.get("/stats", response_model=PoolStatsResponse)
@@ -176,6 +177,24 @@ async def report_bad_key(request: dict):
         "new_key_id": result.get("new_key_id"),
         "new_alias": result.get("new_alias"),
         "reason": reason,
+    }
+
+
+@lease_router.get("/pool-lease")
+async def lease_key_get(leased_to: str = "dashboard", ttl_seconds: int = 1800):
+    """Lease a key via GET (Dashboard compatibility — same as POST /pool/lease)."""
+    pool_mgr = get_pool_manager()
+    result = pool_mgr.lease_key(ttl_seconds=ttl_seconds, leased_to=leased_to)
+    if not result:
+        raise HTTPException(status_code=404, detail="No available keys to lease")
+    return {
+        "status": "success",
+        "api_key": result["api_key"],
+        "key_id": result["key_id"],
+        "lease_id": result["lease_id"],
+        "expires_at": result["expires_at"],
+        "alias_email": result["alias_email"],
+        "key_name": result.get("key_name", ""),
     }
 
 
