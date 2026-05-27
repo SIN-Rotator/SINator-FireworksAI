@@ -1,98 +1,88 @@
 # SIN-Hermes-Provider-Bundle
 
-**Hermes-native Provider-Konfiguration für Survey Automation.**
+**Hermes-native Provider-Konfiguration fuer Survey Automation.**
 
-Fireworks-AI-Setup, 412-Retry-Fix, UA-Spoof-Patch, und Config für dedizierte sinator Pool-Proxies.
+Fireworks-AI-Setup, 412-Retry-Fix, UA-Spoof-Patch, und Pool-Router mit Auto-Failover.
 
-Für Browser-Skills siehe [SIN-Hermes-Browser-Skills-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Browser-Skills-Bundle).
+Fuer Browser-Skills siehe [SIN-Hermes-Browser-Skills-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Browser-Skills-Bundle).
 
 ## Quick Start
-
-### Router Mode (Auto-Failover zwischen allen Pools)
-
-```bash
-# Startet lokalen Proxy auf localhost:9998 der bei 429/412/5xx automatisch
-# zum nächsten Pool (1→2→3) springt.
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-router.sh | bash
-```
-
-### Einzelner Pool (direkt, kein Router)
-
-```bash
-# Mac 1 → sinatorpool1.delqhi.com
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool1.sh | bash
-
-# Mac 2 → sinatorpool2.delqhi.com
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool2.sh | bash
-
-# Mac 3 → sinatorpool3.delqhi.com
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool3.sh | bash
-```
-
-### Alle Pools (Complete, ohne Router)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install.sh | bash
 ```
 
-## Pool-Übersicht
+Das installiert alles: Pool-Router, Config, 412-Patch, UA-Spoof, unlimited max_turns.
 
-| Pool | Base URL | Mac | Installer |
-|------|----------|-----|-----------|
-| **Pool 1** | `https://sinatorpool1.delqhi.com/inference/v1` | Mac 1 | `install-pool1.sh` |
-| **Pool 2** | `https://sinatorpool2.delqhi.com/inference/v1` | Mac 2 | `install-pool2.sh` |
-| **Pool 3** | `https://sinatorpool3.delqhi.com/inference/v1` | Mac 3 | `install-pool3.sh` |
+## Pool-Router
 
-Alle Pools teilen denselben API-Key: `FIREWORKS_AI_API_KEY` (setze als Umgebungsvariable)
+Statt einen einzelnen Proxy auszuwaehlen, laeuft ein lokaler Router auf `localhost:9998`.
+Er leitet Requests an `sinatorpool1 -> pool2 -> pool3` weiter.
+
+**Auto-Failover:** Bei 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error)
+springt der Router automatisch zum naechsten Pool.
+
+| Pool | Base URL | Prioritaet |
+|------|----------|------------|
+| **Pool 1** | `https://sinatorpool1.delqhi.com/inference/v1` | 1 (bevorzugt) |
+| **Pool 2** | `https://sinatorpool2.delqhi.com/inference/v1` | 2 (Fallback) |
+| **Pool 3** | `https://sinatorpool3.delqhi.com/inference/v1` | 3 (letzter Fallback) |
 
 ## Was der Installer macht
 
-1. **Fireworks Config** — `~/.hermes/config.yaml` mit dedizierter Pool-URL
-2. **412 Retry Patch** — `error_classifier.py`: 412 + "suspended" → `billing` + retryable
-3. **UA-Spoof Patch** — `_ua_patch.py` + `import _ua_patch` in `run_agent.py`
-4. **Unlimited max_turns** — `999999` (kein Iterations-Limit)
+1. **Pool Router Config** — `~/.hermes/config.yaml` mit `localhost:9998`
+2. **Pool Router Daemon** — `pool-router.py` im Hintergrund starten
+3. **412 Retry Patch** — `error_classifier.py`: 412 + "suspended" -> `billing` + retryable
+4. **UA-Spoof Patch** — `_ua_patch.py` + `import _ua_patch` in `run_agent.py`
+5. **Unlimited max_turns** — `999999` (kein Iterations-Limit)
 
-## UA-Spoof Patch
+## Management
 
-**Warum:** Das OpenAI Python SDK sendet default `User-Agent: OpenAI/Python 1.x.x`. Unsere sinator-Proxy-Loadbalancer können damit "Bot/Script" erkennen und blocken/drosseln. Der Patch injiziert einen echten Chrome-on-Mac User-Agent in jeden HTTP-Request.
+```bash
+# Router laeuft?
+pgrep -f pool-router.py
 
-**Was gepatched wird:** `openai.OpenAI.__init__` — greift für **alle** LLM-Calls (Chat, Vision, Tools), nicht nur Browser.
+# Router stoppen
+pkill -f pool-router.py
+
+# Router Logs
+tail -f ~/.hermes/logs/pool-router.log
+
+# Router manuell starten
+python3 ~/.hermes/scripts/pool-router.py &
+```
 
 ## Inhalt
 
 | Komponente | Zweck |
 |-----------|-------|
-| `config/fireworks-router.yaml`      | Hermes Config für lokalen Pool-Router (localhost:9998) |
-| `config/fireworks-pool{1,2,3}.yaml` | Hermes Config pro dediziertem Pool-Proxy |
-| `patches/error_classifier_412.patch` | 412-Retry-Fix für Hermes error_classifier.py |
-| `_ua_patch.py` | User-Agent Spoof für OpenAI SDK |
-| `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover (429/412/5xx) |
-| `docs/` | 412-Fix-Doku, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
+| `config/fireworks-router.yaml` | Hermes Config fuer lokalen Pool-Router |
+| `config/fireworks-pool{1,2,3}.yaml` | Einzelne Pool-Configs (Referenz, nicht fuer Installation) |
+| `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover |
+| `patches/error_classifier_412.patch` | 412-Retry-Fix |
+| `_ua_patch.py` | User-Agent Spoof fuer OpenAI SDK |
+| `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
 
 ## Struktur
 
 ```
 ├── config/
-│   ├── fireworks-router.yaml           # localhost:9998 → auto-failover pool1/2/3
-│   ├── fireworks-pool1.yaml            # Mac 1 → sinatorpool1
-│   ├── fireworks-pool2.yaml            # Mac 2 → sinatorpool2
-│   └── fireworks-pool3.yaml            # Mac 3 → sinatorpool3
+│   ├── fireworks-router.yaml           # localhost:9998 -> auto-failover
+│   ├── fireworks-pool1.yaml            # Referenz: sinatorpool1
+│   ├── fireworks-pool2.yaml            # Referenz: sinatorpool2
+│   └── fireworks-pool3.yaml            # Referenz: sinatorpool3
 ├── patches/
-│   └── error_classifier_412.patch      # 412 + "suspended" → retryable
+│   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── scripts/
-│   └── pool-router.py                  # Lokaler Proxy mit Auto-Failover
+│   └── pool-router.py                  # Lokaler Proxy
 ├── docs/
-│   ├── 412-retry-fix.md                # Warum und wie der Fix funktioniert
-│   ├── ua-spoof.md                     # User-Agent Spoof Doku
+│   ├── 412-retry-fix.md                # 412 Fix Doku
+│   ├── ua-spoof.md                     # UA-Spoof Doku
 │   ├── pool-switching.md                 # Pool-Wechsel Anleitung
 │   ├── troubleshooting.md                # Fehlerbehebung
 │   └── router.md                       # Pool-Router Doku
-├── _ua_patch.py                        # UA-Spoof (OpenAI SDK Monkey-Patch)
-├── install-router.sh                   # Router Mode Installer
-├── install.sh                          # Complete Installer (alle 3 Pools direkt)
-├── install-pool1.sh                    # Pool 1 Installer
-├── install-pool2.sh                    # Pool 2 Installer
-├── install-pool3.sh                    # Pool 3 Installer
+├── _ua_patch.py                        # UA-Spoof
+├── install.sh                          # Einziger Installer (Router + alles)
 └── README.md                           # Diese Datei
 ```
 
@@ -100,7 +90,11 @@ Alle Pools teilen denselben API-Key: `FIREWORKS_AI_API_KEY` (setze als Umgebungs
 
 | Bundle | Inhalt | Update-Frequenz |
 |--------|--------|-----------------|
-| **Provider-Bundle** | Config, Patches, Auth, UA-Spoof | Selten (nur bei Provider-Änderungen) |
-| **Browser-Skills-Bundle** | 22+ Skills, SOP | Oft (nach jeder Umfrage neuer Skill) |
+| **Provider-Bundle** | Config, Patches, Router, UA-Spoof | Selten |
+| **Browser-Skills-Bundle** | 22+ Skills, SOP | Oft (nach jeder Umfrage) |
 
-Trennung erlaubt unabhängige Releases. Skills können täglich wachsen ohne Provider-Config zu berühren.
+## Auth
+
+```bash
+hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
+```

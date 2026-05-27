@@ -3,14 +3,14 @@
 SIN-Hermes Pool Router
 
 Lokaler Mini-Proxy der Requests an sinatorpool1/2/3 weiterleitet.
-Bei 429/412/5xx automatischer Failover zum nächsten Pool.
+Bei 429/412/5xx automatischer Failover zum naechsten Pool.
 
 Usage:
     python3 pool-router.py &
     # Dann in config.yaml:
     #   base_url: http://localhost:9998/inference/v1
 
-Pools (Reihenfolge = Priorität):
+Pools (Reihenfolge = Prioritaet):
     1. https://sinatorpool1.delqhi.com/inference/v1
     2. https://sinatorpool2.delqhi.com/inference/v1
     3. https://sinatorpool3.delqhi.com/inference/v1
@@ -39,8 +39,8 @@ MAX_FAILURES = 3
 
 
 class PoolHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        print(f"[PoolRouter] {fmt % args}", flush=True)
+    def log_message(self, format, *args):
+        print(f"[PoolRouter] {format % args}", flush=True)
 
     def _try_pools(self, method, path, body=None, headers=None):
         """Try each pool in order. Return (response_body, status, headers) or raise."""
