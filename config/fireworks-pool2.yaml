@@ -1,0 +1,40 @@
+model:
+  default: accounts/fireworks/routers/kimi-k2p6-turbo
+  provider: custom:fireworks
+  supports_vision: true
+model_reasoning_effort: medium
+auxiliary:
+  vision:
+    provider: custom:fireworks
+    model: accounts/fireworks/routers/kimi-k2p6-turbo
+    timeout: 120
+custom_providers:
+- name: fireworks
+  base_url: https://sinatorpool2.delqhi.com/inference/v1
+  key_env: FIREWORKS_AI_API_KEY
+toolsets:
+- web
+- terminal
+- file
+- browser
+- vision
+- memory
+- todo
+- skills
+- delegation
+- code_execution
+terminal:
+  backend: local
+  cwd: .
+  timeout: 120
+curator:
+  enabled: true
+  interval_hours: 1
+  min_idle_hours: 0.1
+agent:
+  max_turns: 999999
+  max_iterations: 999999
+browser:
+  enabled: true
+  command_timeout: 10
+  cdp_url: "ws://localhost:9999/devtools/browser/<CDP_UUID>"

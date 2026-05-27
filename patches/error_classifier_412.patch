@@ -1,0 +1,21 @@
+--- a/agent/error_classifier.py
++++ b/agent/error_classifier.py
+@@ -786,6 +786,16 @@ def _classify_by_status(
+     if status_code in {503, 529}:
+         return result_fn(FailoverReason.overloaded, retryable=True)
+ 
++    # 412 PRECONDITION_FAILED — can be account suspended on proxy pools
++    # where retry may hit a different backend key (sinator, OpenRouter).
++    if status_code == 412:
++        if "suspended" in error_msg:
++            return result_fn(
++                FailoverReason.billing,
++                retryable=True,
++                should_rotate_credential=True,
++                should_fallback=True,
++            )
++        return result_fn(FailoverReason.format_error, retryable=False, should_fallback=True)
++
+     # Other 4xx — non-retryable
+     if 400 <= status_code < 500:
+         return result_fn(
