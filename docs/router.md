@@ -17,7 +17,7 @@ Ein lokaler Mini-Proxy (`pool-router.py`) der auf `localhost:9998` lauscht und R
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-router.sh | bash
+curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install.sh | bash
 ```
 
 Das macht:
@@ -25,6 +25,36 @@ Das macht:
 2. `pool-router.py` herunterladen + ausführbar machen
 3. Router im Hintergrund starten (`nohup`)
 4. 412-Patch + UA-Spoof wie gewohnt anwenden
+
+## Neue Proxies hinzufügen
+
+Der Router nutzt eine einfache Python-Liste. Um einen 4. Pool hinzuzufügen:
+
+```bash
+# 1. Edit pool-router.py
+nano ~/.hermes/scripts/pool-router.py
+
+# 2. POOLS-Liste erweitern:
+# Vorher:
+POOLS = [
+    "https://sinatorpool1.delqhi.com",
+    "https://sinatorpool2.delqhi.com",
+    "https://sinatorpool3.delqhi.com",
+]
+# Nachher:
+POOLS = [
+    "https://sinatorpool1.delqhi.com",
+    "https://sinatorpool2.delqhi.com",
+    "https://sinatorpool3.delqhi.com",
+    "https://sinatorpool4.delqhi.com",  # NEU
+]
+
+# 3. Router neustarten
+pkill -f pool-router.py
+python3 ~/.hermes/scripts/pool-router.py &
+```
+
+Kein Hermes-Restart nötig. Kein Config-Edit nötig. Nur `POOLS`-Liste erweitern und Router neustarten.
 
 ## Hermes Config (nach Installation)
 
@@ -92,11 +122,16 @@ ls -la ~/.hermes/logs/pool-router.log
 
 ## Alternative: Direkte Pools (kein Router)
 
-Wenn du lieber direkt einen Pool ansprechen willst (z.B. weil Router einen Bug hat):
+Wenn du lieber direkt einen Pool ansprechen willst (z.B. weil Router einen Bug hat oder du nur einen Pool hast):
 
 ```bash
-# Direkt Pool 2
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool2.sh | bash
+# Config direkt auf Pool 2
+# ~/.hermes/config.yaml editieren:
+#   base_url: https://sinatorpool2.delqhi.com/inference/v1
+# Dann Router stoppen (falls läuft):
+pkill -f pool-router.py
 ```
+
+Oder `config/fireworks-pool2.yaml` als Vorlage nutzen.
 
 Der direkte Pool-Installer überschreibt die Config mit der Pool-URL.

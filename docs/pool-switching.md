@@ -2,36 +2,63 @@
 
 ## Warum wechseln?
 
-- Pool 1 überlastet / langsam → auf Pool 2 oder 3 ausweichen
-- 412 Suspended auf einem Pool → Retry trifft evtl. anderen Pool
-- Loadbalancing manuell steuern
+Mit dem Pool-Router ist manuelles Wechseln meist nicht nötig — der Router wechselt automatisch bei Fehlern (429, 412, 5xx).
 
-## Wechseln
+Aber manchmal willst du manuell eingreifen:
+- Pool 1 ist langsam (kein Fehler, nur hohe Latenz)
+- Du willst testen ob ein bestimmter Pool schneller ist
+- Router hat einen Bug und du willst direkt
 
-Einfach anderen Installer laufen lassen:
+## Mit Router (empfohlen)
+
+### Router stoppen + Config auf direkten Pool
 
 ```bash
-# Bisher: Pool 1
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool1.sh | bash
+# 1. Router stoppen
+pkill -f pool-router.py
 
-# Jetzt: Pool 2
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool2.sh | bash
+# 2. Config auf direkten Pool ändern
+# ~/.hermes/config.yaml:
+#   base_url: https://sinatorpool2.delqhi.com/inference/v1
+
+# 3. Hermes neustarten (Config wird bei Start gelesen)
 ```
 
-Der Installer überschreibt `~/.hermes/config.yaml` mit der neuen Pool-URL. Kein Restart nötig.
+### Zurück zum Router
+
+```bash
+# 1. Config auf localhost zurücksetzen
+# ~/.hermes/config.yaml:
+#   base_url: http://localhost:9998/inference/v1
+
+# 2. Router starten
+python3 ~/.hermes/scripts/pool-router.py &
+```
+
+## Ohne Router (direkte Pools)
+
+Wenn du keinen Router willst, nutze die Pool-Configs als Vorlage:
+
+```bash
+# Pool 1 Config als Vorlage
+# Siehe: config/fireworks-pool1.yaml
+# Oder: config/fireworks-pool2.yaml
+# Oder: config/fireworks-pool3.yaml
+```
+
+Diese YAML-Dateien zeigen wie eine direkte Pool-Config aussieht. Kopieren und `base_url` anpassen.
 
 ## Verifizierung
 
 ```bash
-# Aktueller Pool
+# Aktuelle Config
 grep "base_url" ~/.hermes/config.yaml
 
+# Router läuft?
+pgrep -f pool-router.py
+
 # Sollte zeigen:
-#   base_url: https://sinatorpoolX.delqhi.com/inference/v1
+#   base_url: http://localhost:9998/inference/v1  (Router-Modus)
+# ODER:
+#   base_url: https://sinatorpoolX.delqhi.com/inference/v1  (Direkt)
 ```
-
-## Multi-Pool gleichzeitig?
-
-Nein — Hermes Config erlaubt nur einen `custom_providers` Eintrag mit Namen `fireworks`. Der Complete-Installer installiert alle 3 nacheinander, aber nur der letzte "gewinnt".
-
-Workaround für Multi-Pool: Cronjob oder Script das periodisch `config.yaml` rotiert.
