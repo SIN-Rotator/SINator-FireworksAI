@@ -341,7 +341,7 @@ SINator-fireworksai/
 │           ├── browser.py               Browser Start/Stop/Status
 │           ├── cookies.py               Cookie Extract/Inject/Recover
 │           └── pool.py                  Pool Stats/Key/Get/Reveal/Health
-├── proxy/                               Pool-Proxy V2 (aiohttp SSE + auto-swap)
+├── proxy/                               3× Pool-Proxy V12 (aiohttp SSE + auto-swap)
 ├── tools/
 │   ├── rotate.py                        Single-command E2E (--gmx-email, --gmx-password, --password)
 │   └── gmx_alias_tool.py                CLI tool (rotates alias standalone)

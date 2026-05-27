@@ -268,7 +268,7 @@ Account ist tot, kein Recovery möglich.
 **Tauri WebView blockiert `fetch()` zu localhost:8888!**
 
 ```
-❌ Frontend fetch("http://localhost:8888/inference/v1/...")  → TypeError: Load failed
+❌ Frontend fetch zu localhost aus Tauri WebView → TypeError: Load failed
 ✅ Rust Command invoke("chat_send", {message})               → Rust macht den HTTP-Call
 ```
 

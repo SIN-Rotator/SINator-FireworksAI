@@ -23,7 +23,7 @@ Dashboard SSE live
 | #4 | Onboarding | ✅ | CUA: "First"+"Last" type_text + Terms AXPress + Playwright Fallback |
 | #5 | Use-Case + $5 | ✅ | CUA dynamic scan text-based checkboxes |
 | #6 | API Key | ✅ | PopUpButton force-click + menuitem + Generate (disabled-wait + polling) |
-| #7 | Pool | ✅ | Auto-save to keychain (112 keys total) |
+| #7 | Pool | ✅ | Auto-save to keychain (146 keys total) |
 
 ## ✅ V12 Changes (2026-05-26)
 
@@ -177,7 +177,7 @@ curl -X POST http://localhost:8000/api/v1/config \
 | Service | Port | Beschreibung |
 |---------|------|-------------|
 | `com.sinator.backend` | :8000 | FastAPI Backend |
-| `com.sinator.pool-proxy` | :8888 | aiohttp SSE + auto-swap Proxy |
+| `com.sinator.pool-proxy` | :8888-:8890 | 3× aiohttp SSE + auto-swap Proxies |
 | `com.sinator.tunnel` | — | Cloudflare Named Tunnel (`sinator.delqhi.com`) |
 | `com.sinator.pages` | :8040 | Landing Page |
 | `com.sinator.chrome` | :9222 | Chrome mit Profile 901 |

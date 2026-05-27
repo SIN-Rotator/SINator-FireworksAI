@@ -57,7 +57,7 @@ GMX → Fireworks AI → API Key
 | Service | Port | Purpose |
 |---------|------|---------|
 | `com.sinator.backend` | :8000 | FastAPI Backend |
-| `com.sinator.pool-proxy` | :8888 | OpenAI-compatible proxy with auto-swap |
+| `com.sinator.pool-proxy` | :8888-:8890 | 3× OpenAI-compatible proxies with auto-swap |
 | `com.sinator.tunnel` | — | Cloudflare tunnel → `sinator.delqhi.com` |
 | `com.sinator.pages` | :8040 | Landing page |
 | `com.sinator.chrome` | — | Chrome lifecycle |
@@ -89,7 +89,7 @@ Nach Dashboard-Code-Änderungen: `cd ~/dev/SINator-dashboard && ./build.sh` (Tau
 
 ---
 
-## E2E Flow (V11 — ~210s)
+## E2E Flow (V12 — ~180s)
 
 ```
 Step 0:  GMX Login via Playwright (credentials from /api/v1/config)  → frische Cookies
@@ -114,8 +114,10 @@ OpenAI-compatible proxy with automatic key management:
 - **Key Verification:** `_verify_key_dead()` tests against `/models` before marking dead
 
 ```
-baseURL: https://sinator.delqhi.com/inference/v1
-apiKey:  7avN1KkfInNqcOMn2CtwLTvx
+baseURL: https://sinatorpool1.delqhi.com/inference/v1  (Mac 1)
+baseURL: https://sinatorpool2.delqhi.com/inference/v1  (Mac 2)
+baseURL: https://sinatorpool3.delqhi.com/inference/v1  (Mac 3)
+apiKey:  7avN1KkfInNqcOMn2CtwLTvx  (alle Macs gleich)
 ```
 
 Rate-limit handling is automatic: 401/402/403/412 → key swapped, 429 → retry or swap (permanent vs temporary).
@@ -153,7 +155,7 @@ Rate-limit handling is automatic: 401/402/403/412 → key swapped, 429 → retry
         }
       },
       "options": {
-        "baseURL": "https://sinator.delqhi.com/inference/v1"
+        "baseURL": "https://sinatorpool1.delqhi.com/inference/v1"
       }
     }
   }
@@ -177,14 +179,16 @@ The `@ai-sdk/fireworks` SDK reads `FIREWORKS_API_KEY` automatically as `Authoriz
 Any OpenAI-compatible client works:
 
 ```
-baseURL = https://sinator.delqhi.com/inference/v1
-apiKey  = 7avN1KkfInNqcOMn2CtwLTvx
+baseURL = https://sinatorpool1.delqhi.com/inference/v1  (Mac 1)
+baseURL = https://sinatorpool2.delqhi.com/inference/v1  (Mac 2)
+baseURL = https://sinatorpool3.delqhi.com/inference/v1  (Mac 3)
+apiKey  = 7avN1KkfInNqcOMn2CtwLTvx  (alle Macs gleich)
 ```
 
 ```bash
-# Test it
+# Test it (Mac 1)
 curl -H "Authorization: Bearer 7avN1KkfInNqcOMn2CtwLTvx" \
-  https://sinator.delqhi.com/inference/v1/models
+  https://sinatorpool1.delqhi.com/inference/v1/models
 ```
 
 ---
@@ -308,4 +312,4 @@ SINator-fireworksai/
 
 ---
 
-*V11 — 2026-05-25 | 112 Keys | macOS Keychain | Pool Proxy + Tunnel | Config Manager*
+*V12 — 2026-05-26 | 146 Keys | macOS Keychain | 3 Pool Proxies + Tunnel | Config Manager*

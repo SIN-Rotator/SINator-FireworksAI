@@ -1,19 +1,19 @@
 # SINator Knowledge Database — Lessons Learned
 
 > "Once Verified = Read-Only. New code = New file. Learnings → Here."
-> Last verified: 2026-05-25 — V11 COMPLETE: 112 Keys (60 avail, 44 suspended, 8 used), ~210s avg
+> Last verified: 2026-05-26 — V12 COMPLETE: 146 Keys (59 available, 77 suspended, 10 used), ~180s avg
 
-## 🟢 WHAT WORKS (V11 Playwright+CUA+CDP Hybrid)
+## 🟢 WHAT WORKS (V12 Playwright+CUA+CDP Hybrid)
 
-### GMX Alias Rotation (~63s, New-Tab Approach)
-- **Nav**: Playwright `goto("inbox?sid=...")` → CUA click Einstellungen [148] → Playwright Frame-Scanning bis allEmailAddresses iframe gefunden (8×3s)
+### GMX Alias Rotation (~41s, Playwright Shadow DOM)
+- **Nav**: Playwright `ACCOUNT-AVATAR-NAVIGATOR` JS click → `dispatchEvent(mouseenter)` → Shadow DOM traversal "E-Mail Einstellungen" → Settings iframe "E-Mail-Adressen" → 20×1s Polling bis allEmailAddresses iframe gefunden
 - **Delete**: Playwright new-tab iframe-URL → hover `.table_field:has-text(alias)` → click `[title*="löschen"]` force=True → click OK button in confirmation dialog
 - **Create**: Playwright new-tab iframe-URL → fill `input[name*="localPart"]` → click `button:has-text("Hinzufügen")` force=True → verify `input_value() == ''`
 - **Iframe URL helper**: `_get_iframe_url()` mit 8×3s Retry-Loop
 - **Email filter**: `e != 'opensin@gmx.de'` (exact match)
-- **CUA PID Targeting**: `lsof -i :9222 -sTCP:LISTEN` ermittelt Chrome-PID → `find_cua_window(target_pid=pid)` targetet nur das richtige Fenster
+- **Chrome Tab Cleanup**: Nach 4h Batch-Rotation → 37+ Tabs → Chrome überlastet. `rotate.py` schließt ALLE non-essential Tabs (nur Dashboard + 1 GMX-Inbox bleiben)
 
-> **⚠️ WICHTIG:** allEmailAddresses iframe ist OFF-SCREEN auf `/produkte_ha`. Öffne iframe-URL in NEUEM TAB als Top-Level-Dokument. Playwright `fill()`/`click()` funktioniert dann normal.
+> **⚠️ WICHTIG:** CUA `find_cua_window` funktioniert NICHT mehr — Chrome-Tab-Titel ist leer bei programmatischen Tabs. Reiner Playwright-Ansatz für Navigation. allEmailAddresses iframe-URL in NEUEM TAB als Top-Level-Dokument öffnen.
 
 ### Fireworks Login (Playwright)
 - **Login URL**: `/login` → "Email Login" link → `/login/email?redirectURI=`
@@ -54,8 +54,8 @@
 - **Rotation**: Liest Config → `--gmx-email`, `--gmx-password`, `--password` an rotate.py
 - **Dashboard**: `/setup` Formular mit Show/Hide Toggle
 
-### Pool-Verschlüsselung (V11)
-- **macOS Keychain** `com.sinator.pool` — alle 112 API-Keys verschlüsselt
+### Pool-Verschlüsselung (V12)
+- **macOS Keychain** `com.sinator.pool` — alle 146 API-Keys verschlüsselt
 - **Pool-JSON** enthält SENTINEL-Werte (keine Keys im Klartext)
 - **`keychain_store.py`** — CRUD + Migration (Pool→Keychain)
 - **`GET /pool/reveal/{key_id}`** — hydratisiert Key aus Keychain
@@ -68,7 +68,7 @@
 - **Fallback**: `content` + `reasoning_content` (Reasoning-Modelle)
 - **Kein Streaming** — einfacher invoke Return
 
-## 🔴 KNOWN ISSUES (2026-05-25)
+## 🔴 KNOWN ISSUES (2026-05-26)
 
 ### Account Suspension (Spending Limit)
 Fireworks suspendiert Accounts wenn die $5 Credits aufgebraucht sind:
@@ -76,8 +76,20 @@ Fireworks suspendiert Accounts wenn die $5 Credits aufgebraucht sind:
 Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
 spending limit or failure to pay past invoices.
 ```
-- **Workaround:** Key via `POST /pool/report` als suspended markieren, neuen Key holen
+- **Workaround:** `POST /pool/report` meldet Key als suspended → Backend leaset Ersatz-Key **atomar** (im gleichen Lock). Proxy nutzt `report()`-Result direkt — kein extra `lease()`.
 - **Kein Recovery möglich** — Account ist tot, neuer Account nötig
+
+### Double-Key-Waste (GEFIXT V12)
+Vorher: `report()` + `lease()` = 2 Backend-Operationen → 2 Keys berührt pro Swap.
+Jetzt: `report_key()` leaset Ersatz-Key atomar. 1 Swap = 1 Key suspended + 1 Key geleased.
+
+### 429 Rate Limiting (GEFIXT V12)
+Transientes 429 → Proxy wartete intern 5s → Client Timeout/InvalidHTTPResponse.
+Jetzt: Proxy gibt SOFORT 429 an Client zurück mit `Retry-After` Header. Kein internes Warten.
+
+### Chrome Tab Overload (GEFIXT V12)
+Nach 4h Batch-Rotation → 37+ Tabs → Chrome überlastet → Playwright connect timeout.
+Jetzt: `rotate.py` räumt ALLE non-essential Tabs auf (nur Dashboard + 1 GMX-Inbox bleiben).
 
 ### Tauri WebView Fetch Blockiert
 `fetch("http://localhost:8888/...")` aus Tauri WebView → `TypeError: Load failed`
@@ -128,20 +140,23 @@ Stale Chrome-Instanz auf Port 9223 + Haupt-Instanz auf Port 9222 → `find_cua_w
 ### Best Hybrid: CUA nav + Playwright form + CUA for React-CB + Playwright verify
 ### Chat: Rust Command (nicht Frontend Fetch!)
 
-### Performance: V9→V11
-| Metric | V9 | V11 |
-|--------|:--:|:---:|
-| Pool Size | 45 | 112 |
-| Cycle Time | ~173s | ~210s |
-| Key Storage | JSON file | Keychain + JSON |
-| Credentials | Hardcoded | Config Manager |
-| Chat | N/A | Rust Command |
+### Performance: V9→V12
+| Metric | V9 | V11 | V12 |
+|--------|:--:|:---:|:---:|
+| Pool Size | 45 | 112 | 146 |
+| Cycle Time | ~173s | ~210s | ~180s |
+| Key Storage | JSON file | Keychain + JSON | Keychain + JSON |
+| Credentials | Hardcoded | Config Manager | Config Manager |
+| Chat | N/A | Rust Command | Rust Command |
+| Proxies | 1× :8888 | 1× :8888 | 3× :8888-:8890 |
+| Swap Atomicity | report+lease separat | report+lease separat | report+lease atomar |
 
 ## 🔧 VERIFIED WORKING COMMITS
 
 | Commit | Date | Status |
 |--------|------|--------|
-| `HEAD` | May 25 | ✅ **LATEST**: V11 — Config Manager, Chat, Keychain, 112 Keys |
+| `HEAD` | May 26 | ✅ **LATEST**: V12 — 3 Proxies, Shadow DOM Nav, Atomic Swap, 146 Keys |
+| V11 | May 25 | ✅ V11: Config Manager, Chat, Keychain, 112 Keys |
 | V10 | May 24 | ✅ V10: CUA PID Targeting, ~204s E2E |
 | V9 | May 23 | ✅ V9: Sleep-Reduktion + Bugfixes, 45 Keys |
 | `3ac4b30` | May 22 | ✅ V8: pulse-jaguar-899 → `fw_6rWU4KGUPts6zVnaRreu6R` (30 Keys) |
@@ -174,23 +189,34 @@ curl -s http://localhost:8000/pool/stats | python3 -m json.tool
 # Config
 curl -s http://localhost:8000/api/v1/config | python3 -m json.tool
 
-# Pool-Proxy (opencode baseURL)
-http://localhost:8888/inference/v1
-# apiKey: pool
+# Pool-Proxies (3 Instanzen)
+Mac 1: http://localhost:8888/inference/v1    → https://sinatorpool1.delqhi.com/inference/v1
+Mac 2: http://localhost:8889/inference/v1    → https://sinatorpool2.delqhi.com/inference/v1
+Mac 3: http://localhost:8890/inference/v1    → https://sinatorpool3.delqhi.com/inference/v1
+# apiKey (alle Macs): 7avN1KkfInNqcOMn2CtwLTvx
+Mac 2: http://localhost:8889/inference/v1    → https://sinatorpool2.delqhi.com/inference/v1
+Mac 3: http://localhost:8890/inference/v1    → https://sinatorpool3.delqhi.com/inference/v1
+# apiKey (alle Macs gleich): 7avN1KkfInNqcOMn2CtwLTvx
 ```
 
-## 🔧 ARCHITECTURE (V11)
+## 🔧 ARCHITECTURE (V12)
 
 ```
-SINator-fireworksai/        ← Backend (:8000) + Proxy (:8888) + Rotation
+SINator-fireworksai/        ← Backend (:8000) + 3× Proxy (:8888-:8890) + Rotation
 SINator-dashboard/          ← Next.js + Tauri v2 App (Dashboard + Chat)
 sinator-pages/              ← Landing Page (:8040)
 
 Services (LaunchAgents):
   com.sinator.backend     :8000  FastAPI
-  com.sinator.pool-proxy  :8888  aiohttp SSE + auto-swap
-  com.sinator.tunnel      —      Cloudflare Named Tunnel (sinator.delqhi.com)
+  com.sinator.pool-proxy  :8888-:8890  3× aiohttp SSE + auto-swap
+  com.sinator.tunnel      —      Cloudflare Named Tunnel (3 Subdomains)
   com.sinator.pages       :8040  Landing Page
   com.sinator.chrome      :9222  Chrome Profile 901
   com.sinator.cua-driver  —      CUA AX-Daemon
+
+Tunnel Subdomains:
+  sinatorpool1.delqhi.com  → :8888 (Mac 1)
+  sinatorpool2.delqhi.com  → :8889 (Mac 2)
+  sinatorpool3.delqhi.com  → :8890 (Mac 3)
+  sinator.delqhi.com       → :8000 + :8040
 ```

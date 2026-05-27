@@ -30,10 +30,11 @@ Miner MacBook                              SINator Server (macOS)
 ┌────────────────────────────┐            ┌─────────────────────────────┐
 │  opencode / aider / ...    │            │  Pool API :8000             │
 │    ↓ baseURL               │            │    /api/v1/pool/lease       │
-│    localhost:8888          │            │    /api/v1/pool/use         │
+│    localhost:8888-8890     │            │    /api/v1/pool/use         │
 │         ↓                  │            │    /api/v1/pool/report     │
 │  ┌─────────────────────┐   │   HTTPS    │    /api/v1/pool/return     │
-│  │  Pool Proxy :8888   │───┼──→──────── │    /api/v1/pool/stats     │
+│  │  Pool-Proxies       │───┼──→──────── │    /api/v1/pool/stats     │
+│  │  :8888-8890         │   │            │                             │
 │  │                     │   │            │                             │
 │  │  - SSE streaming    │   │            │  Cloudflare Tunnel          │
 │  │  - lease keys       │   │            │  https://xxx.trycloudflare  │
@@ -119,8 +120,8 @@ Der Proxy injected den echten Key IMMER auf Request-Ebene.
 ## Request Flow (Revised)
 
 ```
-1. CLI sends: POST http://localhost:8888/inference/v1/chat/completions
-   Headers: Authorization: Bearer pool  (DUMMY — proxy replaces it)
+1. CLI sends: POST https://sinatorpool1.delqhi.com/inference/v1/chat/completions
+   Headers: Authorization: Bearer 7avN1KkfInNqcOMn2CtwLTvx
 
 2. Proxy:
    a. Check local cache → has a leased key? → use it
@@ -263,7 +264,7 @@ The old proxy missed 401, 412 which are also key-death signals.
       "npm": "@ai-sdk/fireworks",
       "name": "Fireworks AI (Pool)",
       "options": {
-        "baseURL": "http://localhost:8888/inference/v1"
+        "baseURL": "https://sinatorpool1.delqhi.com/inference/v1"
       },
       "models": { ... }
     }
@@ -277,7 +278,7 @@ Auth key can be anything (e.g. "pool") — proxy replaces it with leased key.
 ### aider
 
 ```bash
-export OPENAI_API_BASE=http://localhost:8888/inference/v1
+export OPENAI_API_BASE=https://sinatorpool1.delqhi.com/inference/v1
 export OPENAI_API_KEY=pool
 ```
 
