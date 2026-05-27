@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-SIN-Hermes Pool Router
+SIN-Hermes Pool Router v2
 
 Lokaler Mini-Proxy der Requests an sinatorpool1/2/3 weiterleitet.
-Bei 429/412/5xx automatischer Failover zum naechsten Pool.
+Bei 429/412/5xx automatischer Failover zum naechsten Pool MIT Cooldown.
+
+Fix v2 (2026-05-28):
+  - pool_failures mit Timestamp-Tracking -> 60s Cooldown statt permanent dead
+  - Pool-skip nur wenn 3 failures INNERHALB 60s
+  - Health endpoint GET /health
+  - Besseres Logging mit Pool-Namen + Status
 
 Usage:
     python3 pool-router.py &
@@ -11,9 +17,9 @@ Usage:
     #   base_url: http://localhost:9998/inference/v1
 
 Pools (Reihenfolge = Prioritaet):
-    1. https://sinatorpool1.delqhi.com/inference/v1
-    2. https://sinatorpool2.delqhi.com/inference/v1
-    3. https://sinatorpool3.delqhi.com/inference/v1
+    1. https://sinatorpool1.delqhi.com
+    2. https://sinatorpool2.delqhi.com
+    3. https://sinatorpool3.delqhi.com
 """
 
 import http.server
@@ -23,6 +29,8 @@ import urllib.error
 import json
 import sys
 import os
+import time
+import threading
 
 POOLS = [
     "https://sinatorpool1.delqhi.com",
@@ -32,10 +40,57 @@ POOLS = [
 
 PORT = int(os.environ.get("POOL_ROUTER_PORT", "9998"))
 TIMEOUT = int(os.environ.get("POOL_ROUTER_TIMEOUT", "30"))
+COOLDOWN_SECONDS = int(os.environ.get("POOL_ROUTER_COOLDOWN", "60"))
+MAX_FAILURES = int(os.environ.get("POOL_ROUTER_MAX_FAILURES", "3"))
 
-# Health tracking
-pool_failures = {i: 0 for i in range(len(POOLS))}
-MAX_FAILURES = 3
+# Timestamp-based failure tracking: {pool_idx: [timestamp, timestamp, ...]}
+_pool_failure_timestamps = {i: [] for i in range(len(POOLS))}
+_lock = threading.Lock()
+
+
+def _get_recent_failures(idx):
+    """Return number of failures in the last COOLDOWN_SECONDS window."""
+    now = time.time()
+    cutoff = now - COOLDOWN_SECONDS
+    with _lock:
+        ts_list = _pool_failure_timestamps[idx]
+        # Remove expired entries
+        fresh = [t for t in ts_list if t > cutoff]
+        _pool_failure_timestamps[idx] = fresh
+        return len(fresh)
+
+
+def _record_failure(idx):
+    """Record a failure timestamp for the pool."""
+    with _lock:
+        _pool_failure_timestamps[idx].append(time.time())
+
+
+def _record_success(idx):
+    """Remove one failure (oldest) on success."""
+    with _lock:
+        ts_list = _pool_failure_timestamps[idx]
+        if ts_list:
+            ts_list.pop(0)
+
+
+def _is_pool_available(idx):
+    """Check if pool can be tried (less than MAX_FAILURES in window)."""
+    return _get_recent_failures(idx) < MAX_FAILURES
+
+
+def _pool_status():
+    """Return human-readable pool status for health endpoint."""
+    status = {}
+    for idx, base in enumerate(POOLS):
+        recent = _get_recent_failures(idx)
+        status[f"pool_{idx+1}"] = {
+            "url": base,
+            "recent_failures": recent,
+            "max_failures": MAX_FAILURES,
+            "available": recent < MAX_FAILURES,
+        }
+    return status
 
 
 class PoolHandler(http.server.BaseHTTPRequestHandler):
@@ -44,15 +99,20 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
 
     def _try_pools(self, method, path, body=None, headers=None):
         """Try each pool in order. Return (response_body, status, headers) or raise."""
+        last_error = None
         for idx, base in enumerate(POOLS):
-            if pool_failures[idx] >= MAX_FAILURES:
-                print(f"[PoolRouter] Pool {idx+1} skipped (too many failures)", flush=True)
+            if not _is_pool_available(idx):
+                recent = _get_recent_failures(idx)
+                print(
+                    f"[PoolRouter] Pool {idx+1} SKIPPED "
+                    f"({recent} failures in {COOLDOWN_SECONDS}s window)",
+                    flush=True,
+                )
                 continue
 
             url = base + path
             req = urllib.request.Request(url, method=method)
 
-            # Copy headers from client, replace Host
             if headers:
                 for k, v in headers.items():
                     if k.lower() not in ("host", "content-length"):
@@ -62,27 +122,54 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
                 req.add_header("Content-Length", str(len(body)))
                 req.data = body
 
+            print(f"[PoolRouter] Trying Pool {idx+1}: {url}", flush=True)
+
             try:
                 with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-                    pool_failures[idx] = max(0, pool_failures[idx] - 1)
+                    _record_success(idx)
+                    print(f"[PoolRouter] Pool {idx+1} OK ({resp.status})", flush=True)
                     return (resp.read(), resp.status, dict(resp.headers))
 
             except urllib.error.HTTPError as e:
-                # Retry-triggering status codes
+                last_error = e
                 if e.code in (429, 412, 500, 502, 503, 504):
-                    pool_failures[idx] += 1
-                    print(f"[PoolRouter] Pool {idx+1} returned {e.code} (failures: {pool_failures[idx]})", flush=True)
+                    _record_failure(idx)
+                    recent = _get_recent_failures(idx)
+                    print(
+                        f"[PoolRouter] Pool {idx+1} returned {e.code} "
+                        f"(recent failures: {recent}/{MAX_FAILURES})",
+                        flush=True,
+                    )
                     continue
-                # Non-retryable: re-raise
                 raise
+
             except Exception as e:
-                pool_failures[idx] += 1
-                print(f"[PoolRouter] Pool {idx+1} error: {e} (failures: {pool_failures[idx]})", flush=True)
+                last_error = e
+                _record_failure(idx)
+                recent = _get_recent_failures(idx)
+                print(
+                    f"[PoolRouter] Pool {idx+1} error: {e} "
+                    f"(recent failures: {recent}/{MAX_FAILURES})",
+                    flush=True,
+                )
                 continue
 
-        raise RuntimeError("All pools exhausted")
+        err_msg = f"All pools exhausted. Last error: {last_error}"
+        raise RuntimeError(err_msg)
 
     def do_GET(self):
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            status = {
+                "status": "ok",
+                "cooldown_seconds": COOLDOWN_SECONDS,
+                "max_failures": MAX_FAILURES,
+                "pools": _pool_status(),
+            }
+            self.wfile.write(json.dumps(status).encode())
+            return
         self._proxy("GET")
 
     def do_POST(self):
@@ -99,7 +186,6 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else None
 
-        # Capture headers
         headers = {k: v for k, v in self.headers.items()}
 
         try:
@@ -127,10 +213,11 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    print(f"[PoolRouter] Starting on port {PORT}")
+    print(f"[PoolRouter v2] Starting on port {PORT}")
     print(f"[PoolRouter] Pools: {POOLS}")
     print(f"[PoolRouter] Retry on: 429, 412, 500, 502, 503, 504")
-    print(f"[PoolRouter] Max failures before skip: {MAX_FAILURES}")
+    print(f"[PoolRouter] Max failures: {MAX_FAILURES} per {COOLDOWN_SECONDS}s window")
+    print(f"[PoolRouter] Health: http://localhost:{PORT}/health")
 
     with socketserver.TCPServer(("", PORT), PoolHandler) as httpd:
         try:
