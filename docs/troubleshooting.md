@@ -46,7 +46,7 @@ Wenn nicht: Patch manuell anwenden siehe `docs/412-retry-fix.md`.
 Raw-URLs brauchen das `main` Branch-Suffix korrekt:
 
 ```
-https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install-pool1.sh
+https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install.sh
                                                                      ^^^^^^
 ```
 
@@ -68,11 +68,12 @@ grep "status_code == 412" ~/.hermes/hermes-agent/agent/error_classifier.py
 ls ~/.hermes/hermes-agent/_ua_patch.py
 grep "import _ua_patch" ~/.hermes/hermes-agent/run_agent.py
 
-# 5. max_turns?
-grep max_turns ~/.hermes/config.yaml
+# 6. Router Service?
+launchctl list | grep com.sinhermes.poolrouter
+pgrep -f pool-router.py
 ```
 
-Alle 5 Checks müssen grün sein.
+Alle 6 Checks müssen grün sein.
 
 ## Auth-Fehler
 

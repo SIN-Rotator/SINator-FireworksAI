@@ -105,20 +105,20 @@ Beispiel:
 pgrep -f pool-router.py
 
 # Router stoppen
-pkill -f pool-router.py
+launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
 
-# Router manuell starten (z.B. nach Reboot)
-python3 ~/.hermes/scripts/pool-router.py &
+# Router starten
+launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
 
 # Logs
-ls -la ~/.hermes/logs/pool-router.log
+tail -f ~/.hermes/logs/pool-router.log
 ```
 
 ## Einschränkungen
 
 - **Kein Load-Balancing** — Es gibt keinen Round-Robin. Pool 1 ist bevorzugt solange er geht.
 - **Kein Health-Check** — Der Router weiß nicht ob ein Pool "langsam" ist, nur ob er Fehler wirft.
-- **Ein Prozess pro Maschine** — Der Router bindet Port 9998. Auf derselben Maschine kann nur einer laufen.
+- **Ein Prozess pro Maschine** — Der Router bindet Port 9998. Auf derselben Maschine kann nur einer laufen (launchd managed).
 
 ## Alternative: Direkte Pools (kein Router)
 

@@ -15,7 +15,7 @@ Aber manchmal willst du manuell eingreifen:
 
 ```bash
 # 1. Router stoppen
-pkill -f pool-router.py
+launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
 
 # 2. Config auf direkten Pool ändern
 # ~/.hermes/config.yaml:
@@ -32,7 +32,7 @@ pkill -f pool-router.py
 #   base_url: http://localhost:9998/inference/v1
 
 # 2. Router starten
-python3 ~/.hermes/scripts/pool-router.py &
+launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
 ```
 
 ## Ohne Router (direkte Pools)

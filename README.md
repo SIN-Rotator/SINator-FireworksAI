@@ -31,7 +31,7 @@ springt der Router automatisch zum naechsten Pool.
 ## Was der Installer macht
 
 1. **Pool Router Config** — `~/.hermes/config.yaml` mit `localhost:9998`
-2. **Pool Router Daemon** — `pool-router.py` im Hintergrund starten
+2. **Pool Router Daemon** — `pool-router.py` via launchd (auto-start on login, restart on crash)
 3. **412 Retry Patch** — `error_classifier.py`: 412 + "suspended" -> `billing` + retryable
 4. **UA-Spoof Patch** — `_ua_patch.py` + `import _ua_patch` in `run_agent.py`
 5. **Unlimited max_turns** — `999999` (kein Iterations-Limit)
@@ -39,17 +39,17 @@ springt der Router automatisch zum naechsten Pool.
 ## Management
 
 ```bash
-# Router laeuft?
+# Router läuft?
 pgrep -f pool-router.py
 
 # Router stoppen
-pkill -f pool-router.py
+launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
 
-# Router Logs
+# Router starten
+launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+
+# Logs
 tail -f ~/.hermes/logs/pool-router.log
-
-# Router manuell starten
-python3 ~/.hermes/scripts/pool-router.py &
 ```
 
 ## Inhalt
@@ -59,6 +59,7 @@ python3 ~/.hermes/scripts/pool-router.py &
 | `config/fireworks-router.yaml` | Hermes Config fuer lokalen Pool-Router |
 | `config/fireworks-pool{1,2,3}.yaml` | Einzelne Pool-Configs (Referenz, nicht fuer Installation) |
 | `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover |
+| `scripts/pool-router.plist` | macOS launchd Service (auto-start, restart on crash) |
 | `patches/error_classifier_412.patch` | 412-Retry-Fix |
 | `_ua_patch.py` | User-Agent Spoof fuer OpenAI SDK |
 | `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
@@ -74,7 +75,8 @@ python3 ~/.hermes/scripts/pool-router.py &
 ├── patches/
 │   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── scripts/
-│   └── pool-router.py                  # Lokaler Proxy
+│   ├── pool-router.py                  # Lokaler Proxy
+│   └── pool-router.plist               # macOS launchd Service (auto-start)
 ├── docs/
 │   ├── 412-retry-fix.md                # 412 Fix Doku
 │   ├── ua-spoof.md                     # UA-Spoof Doku
