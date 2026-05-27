@@ -1,22 +1,25 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-25 (V11 — 112 Keys, ~210s avg)
+> Letzte Aktualisierung: 2026-05-26 (V12 — 146 Keys, ~180s avg)
 
 ---
 
-## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-25)
+## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-26)
 
-**Pool:** 112 Keys (60 verfügbar, 44 gesperrt, 8 verbraucht)
-**Cycle Time:** ~210s average (Strecke: 198-224s)
+**Pool:** 146 Keys (59 verfügbar, 10 used, 77 suspended)
+**Cycle Time:** ~180s average
 **E2E Single Command:** `python tools/rotate.py`
 **Config:** GMX/Fireworks Credentials aus `data/config.json` (nicht mehr hardcodiert!)
+**Proxies:** 3 Instanzen (:8888, :8889, :8890) mit Subdomains `sinatorpool1/2/3.delqhi.com`
+**API Key (alle Macs):** `7avN1KkfInNqcOMn2CtwLTvx`
 
 ### WAS IMMER VERWENDET WERDEN MUSS
 
 | ✅ ERLAUBT | Für was |
 |-----------|---------|
-| **CUA `click`** | React-Checkbox, Dialog-OK, Navigation-Links, PopUpButton |
+| **Playwright shadow DOM** | GMX Navigation: `ACCOUNT-AVATAR-NAVIGATOR` → "E-Mail Einstellungen" → iframe |
+| **CUA `click`** | React-Checkbox, Dialog-OK, PopUpButton (NICHT mehr für GMX Navigation!) |
 | **CUA `type_text`** | Names (First/Last), beliebige Textfelder (OS-Level, React-kompatibel) |
 | **CUA `get_window_state`** | AX-Tree scannen (vor/nach JEDEM Klick!) |
 | **Playwright `fill()`** | Form-Inputs (email, password, alias name) auf New-Tab allEmailAddresses |
@@ -279,4 +282,4 @@ Account ist tot, kein Recovery möglich.
 
 ---
 
-*Letzte Aktualisierung: 2026-05-25 (V11)*
+*Letzte Aktualisierung: 2026-05-26 (V12)*

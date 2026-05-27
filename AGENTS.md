@@ -1,21 +1,22 @@
-# AGENTS.md — SINator Fireworks AI Rotator V11 (2026-05-25, updated 2026-05-26)
+# AGENTS.md — SINator Fireworks AI Rotator V12 (2026-05-26)
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-24
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-26
 
 **Full automated flow in ONE command:**
 ```bash
 python tools/rotate.py
-# → GMX Login (built-in, Step 0) → Alias Rotation (~63s) → Fireworks Signup
+# → GMX Login (built-in, Step 0) → Alias Rotation (~180s) → Fireworks Signup
 # → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
 ```
 
-**Pool:** 112 Keys (60 verfügbar, 44 gesperrt, 8 verbraucht)
-**Cycle Time:** ~210s average (Strecke: 198-224s)
-**Pool Proxy V2:** läuft auf :8888 (aiohttp SSE + auto-swap), Dashboard SSE live
-**Services:** com.sinator.backend (:8000), com.sinator.pool-proxy (:8888), com.sinator.tunnel, com.sinator.pages (:8040)
-**opencode config:** baseURL: http://localhost:8888/inference/v1, apiKey: pool
+**Pool:** 146 Keys (59 verfügbar, 10 used, 77 suspended)
+**Cycle Time:** ~180s average
+**Pool Proxies:** 3 dedizierte Instanzen (aiohttp SSE + auto-swap)
+**Tunnel Subdomains:** `sinatorpool1.delqhi.com`, `sinatorpool2.delqhi.com`, `sinatorpool3.delqhi.com`
+**API Key (alle Macs gleich):** `7avN1KkfInNqcOMn2CtwLTvx`
+**Services:** com.sinator.backend (:8000), 3× Pool-Proxy (:8888-:8890), Tunnel, Pages (:8040)
 
-## 🔧 V11 CHANGES (2026-05-25)
+## 🔧 V12 CHANGES (2026-05-26)
 
 ### Config Manager — GMX + Fireworks Credentials
 **Neue Dateien:**
@@ -65,27 +66,49 @@ python tools/rotate.py
 - `chat_send` Command registriert in `invoke_handler`
 - Clipboard-Plugin bleibt
 
-## 🔧 V10 FIX — CUA PID TARGETING (2026-05-24)
+## 🔧 V12 FIXES (2026-05-26)
 
-**Problem:** `allEmailAddresses iframe not found` — CUA `find_cua_window` fand das falsche GMX-Fenster.
-Mehrere Chrome-Instanzen liefen gleichzeitig (stale Instanz auf Port 9223 + Haupt-Instanz auf Port 9222).
-`find_cua_window(title_keywords=["GMX","FreeMail","E-Mail","Postfach"])` matched das erste on-screen GMX-Fenster
-— das konnte die stale Einstellungen-Seite auf dem falschen PID sein.
+### 3 Pool-Proxies + Tunnel Subdomains
+**Problem:** Ein Proxy für alle Macs → Contention, 429s, cascade failures.
+**Fix:** 3 dedizierte Proxy-Instanzen (`:8888`, `:8889`, `:8890`), je mit eigener Subdomain:
+- `sinatorpool1.delqhi.com` → `:8888` (Mac 1)
+- `sinatorpool2.delqhi.com` → `:8889` (Mac 2)
+- `sinatorpool3.delqhi.com` → `:8890` (Mac 3)
 
-**Fix:**
-1. `lsof -i :9222 -sTCP:LISTEN` ermittelt den Chrome-PID der Haupt-Instanz
-2. `find_cua_window(title_keywords=["FreeMail"], target_pid=_chrome_pid)` targetet nur das richtige Fenster
-3. Keywords eingeschränkt auf `"FreeMail"` (Inbox-Titel = "GMX FreeMail", nicht "GMX - Einstellungen")
-4. `rotate.py` setzt `SINATOR_CHROME_PID` env var beim Start
-5. Tab-Cleanup erweitert: `chrome://newtab`, `chrome://new-tab`, `mail_settings` URLs
-6. AppleScript: Dashboard links (0-960), neues Fenster rechts (960-1920)
+**Start:** `proxy/start-multi.sh` — startet alle 3 + killt alte Instanzen.
 
-**Dateien:**
-- `agent_toolbox/core/gmx_service.py` — `lsof` PID-Ermittlung + `target_pid` an `find_cua_window`
-- `tools/rotate.py` — `SINATOR_CHROME_PID` env var + erweitertes Tab-Cleanup
-- `agent_toolbox/api/routes/rotation.py` — AppleScript side-by-side Fenster-Positionierung
+### GMX Navigation V12 — Playwright Shadow DOM
+**Problem:** CUA `find_cua_window` findet Chrome-Tab mit leerem Titel (programmatische Tabs haben keinen Titel). `allEmailAddresses` iframe nicht erreichbar.
+**Fix:** Reiner Playwright-Ansatz — kein CUA für Navigation mehr nötig:
+1. Playwright connect zu Chrome über CDP
+2. `ACCOUNT-AVATAR-NAVIGATOR` Custom Element → JS `.click()` + `dispatchEvent(mouseenter)`
+3. Shadow DOM traversal → `"E-Mail Einstellungen"` Link klicken
+4. Settings-Seite lädt `signature/settings` iframe
+5. In iframe: `"E-Mail-Adressen"` Link klicken → `allEmailAddresses` iframe erscheint
+6. 20×1s Polling bis iframe gefunden
 
-## 🐛 BEKANNTE PROBLEME (2026-05-23)
+**Dateien:** `agent_toolbox/core/gmx_service.py` — `_navigate_to_all_email_addresses()` komplett Playwright-basiert.
+
+### Double-Key-Waste Fix (Atomic Report+Lease)
+**Problem:** Proxy `_swap_key()` rief `report()` + `lease()` separat auf → 2 Backend-Operationen, race-condition-risk, manchmal 2 Keys berührt.
+**Fix:** `pool_manager.report_key()` leaset Ersatz-Key jetzt **atomar** (im gleichen Lock wie suspend). Proxy nutzt `report()`-Result direkt — kein extra `lease()`.
+
+**Backend:** `report_key(api_key, key_id, reason, leased_to, ttl_seconds)`
+**Proxy:** `_swap_key()` prüft `report_result.get("new_key")` → nutzt direkt.
+
+### 429 Handling — Client Return statt Intern Retry
+**Problem:** Transientes 429 → Proxy wartete intern 5s → retry → Client bekam Timeout/InvalidHTTPResponse.
+**Fix:** Transientes 429 wird SOFORT an Client zurückgegeben mit `Retry-After` Header. Kein internes Warten mehr.
+
+### Chrome Tab Cleanup
+**Problem:** Nach 4h Batch-Rotation → 37 Tabs offen → Chrome überlastet → `connect_over_cdp` Timeout.
+**Fix:** `rotate.py` schließt jetzt ALLE non-essential Tabs (nicht nur GMX/Fireworks). Nur Dashboard + 1 GMX-Inbox bleiben.
+
+### CDP Target Selection — Inbox bevorzugen
+**Problem:** `get_page_target()` bevorzugte `www.gmx.net` (Homepage) statt `navigator.gmx.net` (Inbox). Homepage hat keinen "Einstellungen"-Button.
+**Fix:** `get_page_target()` priorisiert jetzt `navigator.gmx.net` URLs über `www.gmx.net`.
+
+## 🐛 BEKANNTE PROBLEME (2026-05-26)
 
 ### Fireworks Account Suspension (Spending Limit)
 Accounts werden gesperrt wenn das monatliche Spending Limit erreicht ist:
@@ -97,10 +120,10 @@ spending limit or failure to pay past invoices.
 - Betroffene Keys müssen als `used` markiert werden
 - Workaround: `POST /pool/report` oder `POST /pool/use` für suspended Keys
 
-### E2E Steps (proven working, ~204s total)
+### E2E Steps (proven working, ~180s total)
 0. **GMX Login (built-in)**: `rotate.py` Step 0 — Playwright-Login `opensin@gmx.de`, speichert frische Cookies
-1. **GMX Session**: IAC-Tabs cleanup → `www.gmx.net` → "E-Mail" click → 15s SID-Polling
-2. **GMX Rotation**: Playwright iframe delete + create (~28s)
+1. **GMX Session**: Tab cleanup → `www.gmx.net` → "E-Mail" click → 15s SID-Polling
+2. **GMX Rotation**: Playwright shadow DOM navigation → allEmailAddresses iframe → delete + create (~41s)
 3. **Fireworks Logout**: CDP `Network.deleteCookies` + `clearBrowserCookies` (nur Fireworks-Domain!)
 4. **Signup**: `/signup` → `input[name="email"]` → 2x password → Create Account
 5. **OTP Poll**: GMX MailCheck extension → CDP OOPIF mailbody-ui.de → extract URL
@@ -116,75 +139,95 @@ spending limit or failure to pay past invoices.
 
 | Layer | Tool | Purpose |
 |-------|------|---------|
-| Navigation (CUA) | CUA | Inbox → Einstellungen AXButton |
-| Navigation (JS) | CDP evaluate | Hidden nav-menu click → `produkte_ha` page with allEmailAddresses iframe |
+| Navigation | Playwright | ACCOUNT-AVATAR shadow DOM → "E-Mail Einstellungen" → settings iframe → "E-Mail-Adressen" |
 | Alias operations | Playwright new-tab | Open iframe URL in fresh tab → `fill()`, `click()` on top-level document |
 | React checkboxes | CUA | `AXPress` — Playwright `check()` ignoriert React |
 | Names input | CUA | `type_text` — real macOS keystrokes React can't ignore |
 | API Key dialog | Playwright | PopUpButton force-click → menuitem → fill → Generate |
 | OTP email | CDP | MailCheck Extension → click email → mailbody-ui.de OOPIF → extract URL |
 | Cookie management | CDP | `Network.deleteCookies` + `clearBrowserCookies` für Fireworks |
+| GMX Login | Playwright | `input[name="email"]`, `input[type="password"]`, button text matching |
 
-### 🔧 V8 GMX NAVIGATION FIX (2026-05-22 → 2026-05-23)
+### 🔧 V12 GMX NAVIGATION FIX (2026-05-26)
 
-**Problem (Original):** GMX geändert — Direkte Navigation zu `/mail_settings/email_addresses?sid=...` redirected immer zu `/mail_settings/mail`. CDP `Page.navigate` triggert IAC Anti-Automation → "Einstellungen" AXButton nicht im AX-Tree. allEmailAddresses iframe off-screen (`rect=(-2400, -1742)`) → Playwright kann nicht interagieren (Trusted-Events + Viewport).
+**Problem:** CUA `find_cua_window` fand Chrome-Tab mit leerem Titel (programmatische Tabs haben keinen Titel). `allEmailAddresses` iframe nicht erreichbar. Nach 4h Batch-Rotation → 37 Tabs → Chrome überlastet → Playwright connect timeout.
 
-**Problem (2026-05-23, gefixt):** Nach Chrome-Neustart + GMX Login wurde die `allEmailAddresses`-Iframe nie geladen. Der JS `.click()` auf versteckte Nav-Buttons (`#nav-menu`) wurde von GMX React/Wicket ignoriert (prüft `isTrusted`). Zusätzlich: CDP `Input.dispatchMouseEvent` erzeugt zwar trusted Events, aber die Nav-Buttons sind via CSS `display:none` ausgeblendet → keine Koordinaten.
-
-**Lösung — 3-Schritt Flow (replaces the broken JS nav-click):**
+**Lösung — Reiner Playwright-Ansatz (CUA nicht mehr für Navigation nötig):**
 
 ```python
-# STEP 1: CUA click "Einstellungen" AXButton from inbox → navigiert 
-# zu mail_settings/mail_settings (dies öffnet einen NEUEN Tab!)
-cua_click(find_element("Einstellungen", "AXButton"))  # element [148]
+# STEP 1: Redirect from bap to normal navigator (falls nötig)
+for _pg in _b.contexts[0].pages:
+    if 'bap.navigator.gmx.net' in _pg.url:
+        _sid_m = _re.search(r'sid=([^&\s]+)', _pg.url)
+        if _sid_m:
+            await _pg.goto(f"https://navigator.gmx.net/mail?sid={_sid_m.group(1)}")
 
-# STEP 2: Playwright Frame-Scanning — die mail_settings/mail_settings Seite 
-# lädt die allEmailAddresses Iframe AUTOMATISCH (kein JS nav-click nötig!)
-# URL: https://3c.gmx.net/mail/client/settings/allEmailAddresses;jsessionid=...
-for _poll in range(8):
-    for __pg in pages:
-        for __f in __pg.frames:
-            if 'allEmailAddresses' in __f.url:
-                return __f.url
+# STEP 2: Click ACCOUNT-AVATAR-NAVIGATOR to open dropdown
+await _inbox_pg.evaluate("""
+    var avatar = document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+    if(avatar){
+        avatar.click();
+        avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
+    }
+""")
 
-# STEP 3: Open URL in new Playwright tab (3c.gmx.net, NICHT 3c-bap!)
-# Direct goto funktioniert, behält Session
-new_page = await browser.new_page()
-await new_page.goto(iframe_url)
+# STEP 3: Click "E-Mail Einstellungen" in shadow DOM
+await _inbox_pg.evaluate("""
+    var avatar = document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
+    var links = avatar.shadowRoot.querySelectorAll('a');
+    for(var i=0;i<links.length;i++){
+        var txt = links[i].textContent.trim().toLowerCase();
+        if(txt.includes('e-mail') && txt.includes('einstellung')){
+            links[i].click(); break;
+        }
+    }
+""")
+
+# STEP 4: Settings page loads with signature/settings iframe
+# In iframe, click "E-Mail-Adressen" → allEmailAddresses iframe appears
+for _f in _settings_pg.frames:
+    if '3c.gmx.net' in _f.url and 'settings' in _f.url:
+        await _f.evaluate("""
+            var links = document.querySelectorAll('a');
+            for(var i=0;i<links.length;i++){
+                if(links[i].textContent.trim().toLowerCase() === 'e-mail-adressen'){
+                    links[i].click(); break;
+                }
+            }
+        """)
+
+# STEP 5: Poll for allEmailAddresses iframe (20×1s)
+for _poll in range(20):
+    for _ctx in _b.contexts:
+        for _pg in _ctx.pages:
+            for _f in _pg.frames:
+                if 'allEmailAddresses' in _f.url:
+                    return _f.url
+    await asyncio.sleep(1)
 ```
 
 **Wichtige Erkenntnisse:**
-- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation, `3c-bap.gmx.net` nicht
-- Die JSESSIONID aus der allEmailAddresses Iframe-URL ist gültig für direkten Zugriff
-- Die GMX Nav-Buttons (`#nav-menu`) sind tot — React/Wicket ignoriert alle programmatischen Klicks
-- CUA Klick auf "Einstellungen" (AXButton [148]) öffnet `mail_settings/mail_settings?sid=...`
+- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation
 - Der Einstellungen-Button ist NUR im Postfach sichtbar, nicht auf der GMX-Startseite
+- Chrome Tab cleanup ist KRITISCH — nach jeder Rotation ALLE non-essential Tabs schließen
+- `get_page_target()` MUSS `navigator.gmx.net` (Inbox) bevorzugen, nicht `www.gmx.net` (Homepage)
 
-**Code-Änderungen in `gmx_service.py` (2026-05-23):**
-- `_navigate_to_all_email_addresses`: JS nav-menu click ENTFERNT. Stattdessen: CUA Einstellungen klicken → mail_settings/mail_settings → Playwright Polling bis allEmailAddresses Iframe gefunden (8×3s). Fallback: direkte Playwright-Navigation zu `mail_settings/mail_settings?sid=...`
-- `_get_iframe_url`: Unverändert (scan bereits alle Pages/Frames via Playwright)
-- `cua_helper`-Import: Von `from cua_helper import ...` auf `from agent_toolbox.core.cua_helper import ...` geändert (PYTHONPATH Bugfix)
-- `_delete_alias_via_playwright`: Unverändert — funktioniert sobald die iframe URL gefunden wird
+**Code-Änderungen in `gmx_service.py` (2026-05-26):**
+- `_navigate_to_all_email_addresses`: Komplett Playwright-basiert — CUA entfernt
+- `_navigate_to_inbox_for_cua`: `timeout=30000` statt 15000 für langsame GMX-Ladezeiten
+- `get_page_target()`: Priorisiert `navigator.gmx.net` über `www.gmx.net`
+- `rotate.py`: Aggressives Tab cleanup (schließt alle non-essential Tabs)
 
 **Anti-Pattern (NIEMALS):**
 ```python
-# FALSCH — CDP navigate triggert IAC, Einstellungen nicht im AX tree:
+# FALSCH — CDP navigate triggert IAC:
 await client.send_to_session(sid, "Page.navigate", {"url": ".../email_addresses?sid=..."})
 
-# FALSCH — Off-screen iframe → evaluate click().failed (isTrusted=false):
-await frame.locator('button').evaluate("el => el.click()")
-```
+# FALSCH — CUA auf leeren Chrome-Tab-Titel:
+find_cua_window(title_keywords=["FreeMail"])  # Tab-Titel ist LEER!
 
-**Korrektes Pattern:**
-```python
-# RICHTIG — Playwright navigate (kein IAC):
-for btn in await pg.locator('button').all():
-    if 'Zum Postfach' in (await btn.text_content() or ''): await btn.click()
-
-# RICHTIG — New tab → top-level document → normal Playwright click:
-new_pg = await browser.new_page()
-await new_pg.goto(iframe_url)
-await new_pg.locator('button:has-text("Hinzufügen")').first.click()
+# FALSCH — 37 Tabs offen lassen → Chrome überlastet:
+# rotate.py muss ALLE non-essential Tabs schließen
 ```
 
 ### 🔑 CRITICAL PATTERNS (MANDATORY)
