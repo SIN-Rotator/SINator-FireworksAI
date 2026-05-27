@@ -54,7 +54,6 @@ def _get_recent_failures(idx):
     cutoff = now - COOLDOWN_SECONDS
     with _lock:
         ts_list = _pool_failure_timestamps[idx]
-        # Remove expired entries
         fresh = [t for t in ts_list if t > cutoff]
         _pool_failure_timestamps[idx] = fresh
         return len(fresh)
@@ -98,8 +97,14 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         print(f"[PoolRouter] {format % args}", flush=True)
 
     def _try_pools(self, method, path, body=None, headers=None):
-        """Try each pool in order. Return (response_body, status, headers) or raise."""
+        """Try each pool in order. Return (response_body, status, headers) or raise.
+
+        If all pools fail with the SAME error, pass it through — indicates
+        an upstream API issue (e.g. 413 Payload Too Large), not a pool failure.
+        Only raise 'All pools exhausted' when pools fail differently.
+        """
         last_error = None
+        pool_errors = []  # (pool_idx, error_body, status_code)
         for idx, base in enumerate(POOLS):
             if not _is_pool_available(idx):
                 recent = _get_recent_failures(idx)
@@ -132,8 +137,9 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
 
             except urllib.error.HTTPError as e:
                 last_error = e
+                err_body = e.read().decode(errors="replace")[:200]
+                pool_errors.append((idx, err_body, e.code))
                 if e.code in (429, 412, 500, 502, 503, 504):
-                    _record_failure(idx)
                     recent = _get_recent_failures(idx)
                     print(
                         f"[PoolRouter] Pool {idx+1} returned {e.code} "
@@ -145,7 +151,7 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
 
             except Exception as e:
                 last_error = e
-                _record_failure(idx)
+                pool_errors.append((idx, str(e)[:200], 0))
                 recent = _get_recent_failures(idx)
                 print(
                     f"[PoolRouter] Pool {idx+1} error: {e} "
@@ -153,6 +159,17 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
                     flush=True,
                 )
                 continue
+
+        # All pools failed — check if they all failed identically
+        if pool_errors and len(set((body, code) for _, body, code in pool_errors)) <= 2:
+            # All pools returned same/similar error — upstream API issue, pass through
+            _, err_body, status_code = pool_errors[-1]
+            print(
+                f"[PoolRouter] All pools returned same error → passing through "
+                f"(status {status_code})",
+                flush=True,
+            )
+            return (err_body.encode(), status_code or 500, {"Content-Type": "application/json"})
 
         err_msg = f"All pools exhausted. Last error: {last_error}"
         raise RuntimeError(err_msg)
