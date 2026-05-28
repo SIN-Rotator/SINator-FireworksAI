@@ -98,22 +98,6 @@ tail -f /tmp/pool-router-launchd.log
 | `_ua_patch.py` | User-Agent Spoof + max_retries=0 fuer OpenAI SDK |
 | `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
 
-## Struktur
-
-```
-├── agent_toolbox/
-│   └── core/
-│       ├── gmx_service.py              # GMX Session + Alias-Rotation + OTP
-│       ├── fireworks_service.py        # Fireworks Registration + API-Key
-│       ├── cdp_client.py               # Chrome DevTools Protocol Client
-│       └── pool_manager.py             # API-Key Pool-Manager
-├── config/
-│   ├── fireworks-router.yaml           # localhost:9998 -> auto-failover
-│   ├── fireworks-pool1.yaml            # Referenz: localhost:8888
-│   ├── fireworks-pool2.yaml            # Referenz: localhost:8889
-│   └── fireworks-pool3.yaml            # Referenz: localhost:8890
-├── patches/
-│   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── proxy/
 │   ├── __init__.py                     # Spiegel von ~/.sin-pool/
 │   ├── config.py

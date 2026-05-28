@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SINator Dashboard</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; padding: 20px; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { font-size: 24px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
+    .token-bar { background: #1e293b; padding: 10px 16px; border-radius: 8px; font-family: monospace; font-size: 13px; display: flex; align-items: center; gap: 12px; margin-bottom: 24px; border: 1px solid #334155; }
+    .token-bar .label { color: #94a3b8; white-space: nowrap; }
+    .token-bar .token { color: #a855f7; word-break: break-all; }
+    .token-bar .btn { background: #334155; border: none; color: #e2e8f0; padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+    .token-bar .btn:hover { background: #475569; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .stat-card { background: #1e293b; border-radius: 8px; padding: 20px; border: 1px solid #334155; }
+    .stat-card .value { font-size: 32px; font-weight: 700; margin-bottom: 4px; }
+    .stat-card .label { color: #94a3b8; font-size: 14px; }
+    .stat-card.credits .value { color: #22c55e; }
+    .card { background: #1e293b; border-radius: 8px; padding: 20px; border: 1px solid #334155; margin-bottom: 24px; }
+    .card h2 { font-size: 16px; margin-bottom: 12px; color: #94a3b8; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; padding: 8px 12px; color: #64748b; border-bottom: 1px solid #334155; font-weight: 600; }
+    td { padding: 8px 12px; border-bottom: 1px solid #1e293b; }
+    tr:hover td { background: #0f172a40; }
+    .status-healthy { color: #22c55e; }
+    .status-suspended { color: #ef4444; }
+    .status-used { color: #f59e0b; }
+    .status-leased { color: #3b82f6; }
+    .stat-card.leased .value { color: #3b82f6; }
+    .active-key-card { background: #1e293b; border-radius: 8px; padding: 16px 20px; border: 1px solid #3b82f6; margin-bottom: 24px; display: flex; align-items: center; gap: 16px; }
+    .active-key-card .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .active-key-card .dot.green { background: #22c55e; box-shadow: 0 0 8px #22c55e80; }
+    .active-key-card .dot.yellow { background: #f59e0b; box-shadow: 0 0 8px #f59e0b80; animation: pulse 1s ease-in-out infinite; }
+    .active-key-card .dot.red { background: #ef4444; box-shadow: 0 0 8px #ef444480; }
+    .active-key-card .info { flex: 1; }
+    .active-key-card .info .label { color: #94a3b8; font-size: 12px; }
+    .active-key-card .info .detail { font-size: 14px; margin-top: 2px; }
+    .active-key-card .info .detail code { font-family: monospace; color: #3b82f6; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .evt-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-right: 4px; }
+    .evt-badge.leased { background: #3b82f620; color: #3b82f6; }
+    .evt-badge.swapped { background: #ef444420; color: #ef4444; }
+    .evt-badge.returned { background: #22c55e20; color: #22c55e; }
+    .key-cell { display: flex; align-items: center; gap: 6px; }
+    .key-text { font-family: monospace; font-size: 11px; color: #94a3b8; background: #0f172a; padding: 2px 6px; border-radius: 4px; }
+    .btn-copy { background: #334155; border: none; color: #e2e8f0; padding: 2px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+    .btn-copy:hover { background: #475569; }
+    .log-box { background: #0f172a; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+    .log-box div { padding: 2px 0; }
+    .log-box .info { color: #94a3b8; }
+    .log-box .success { color: #22c55e; }
+    .log-box .error { color: #ef4444; }
+    .actions { display: flex; gap: 8px; margin-bottom: 20px; }
+    .btn { display: inline-flex; align-items: center; gap: 6px; background: #7c3aed; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+    .btn:hover { background: #6d28d9; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-sm { font-size: 13px; padding: 6px 12px; }
+    .hidden { display: none !important; }
+    .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="#a855f7"><rect x="2" y="2" width="8" height="8" rx="2"/><rect x="14" y="2" width="8" height="8" rx="2" fill="#7c3aed"/><rect x="2" y="14" width="8" height="8" rx="2" fill="#6366f1"/><rect x="14" y="14" width="8" height="8" rx="2" fill="#8b5cf6"/></svg>
+    SINator Dashboard
+  </h1>
+
+  <div class="token-bar" id="token-bar">
+    <span class="label">Auth Token:</span>
+    <span class="token" id="auth-token-display">__AUTH_TOKEN__</span>
+    <button class="btn" onclick="copyToken()">Kopieren</button>
+    <button class="btn" onclick="refreshToken()">Neu einlesen</button>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><div class="value" id="stat-total">—</div><div class="label">Total Keys</div></div>
+    <div class="stat-card"><div class="value" id="stat-available">—</div><div class="label">Available</div></div>
+    <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used / Suspended</div></div>
+    <div class="stat-card leased"><div class="value" id="stat-leased">—</div><div class="label">Leased</div></div>
+    <div class="stat-card credits"><div class="value" id="stat-credits">—</div><div class="label">Credits</div></div>
+  </div>
+
+  <div class="active-key-card" id="active-key-card" style="display:none">
+    <div class="dot green" id="active-key-dot"></div>
+    <div class="info">
+      <div class="label">Active Proxy Key</div>
+      <div class="detail" id="active-key-detail">—</div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button class="btn" onclick="loadDashboard()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+      Refresh
+    </button>
+    <button class="btn" onclick="runHealthCheck()">Health Check</button>
+    <button class="btn" onclick="startRotation()">Key holen</button>
+    <button class="btn btn-sm" onclick="createGmxAlias()">GMX Alias</button>
+    <button class="btn btn-sm" onclick="deleteGmxAlias()">Alias löschen</button>
+  </div>
+
+  <div class="card">
+    <h2>API Keys</h2>
+    <table>
+      <thead><tr><th>Alias</th><th>Status</th><th>Lease</th><th>Credits</th><th>API Key</th></tr></thead>
+      <tbody id="key-table"><tr><td colspan="4" style="color:#64748b;text-align:center;padding:20px;">Lade...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div class="log-box" id="log"><div class="info">Bereit.</div></div>
+  </div>
+
+  <div style="text-align:center;margin-top:32px;color:#64748b;font-size:12px;">
+    <a href="/docs" style="color:#7c3aed;">Swagger UI</a> &middot;
+    <a href="/redoc" style="color:#7c3aed;">ReDoc</a>
+  </div>
+</div>
+
+<script>
+const API = '/api/v1';
+let token = '__AUTH_TOKEN__';
+let evtSource = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('sinator_token');
+  if (saved) token = saved;
+  document.getElementById('auth-token-display').textContent = token;
+  loadDashboard();
+  connectSSE();
+});
+
+function connectSSE() {
+  if (evtSource) { evtSource.close(); }
+  try {
+    evtSource = new EventSource(API + '/pool/events');
+    evtSource.addEventListener('key_leased', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge leased">LEASED</span> ' + (d.key_id || '').slice(0, 8) + '... → ' + (d.leased_to || '?'), 'info');
+      loadDashboard();
+    });
+    evtSource.addEventListener('key_swapped', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge swapped">SWAPPED</span> ' + (d.old_key_id || '').slice(0, 8) + '... (' + (d.reason || '?') + ')', 'error');
+      loadDashboard();
+    });
+    evtSource.addEventListener('key_returned', (e) => {
+      const d = JSON.parse(e.data);
+      log('<span class="evt-badge returned">RETURNED</span> ' + (d.key_id || '').slice(0, 8) + '...', 'success');
+      loadDashboard();
+    });
+    evtSource.addEventListener('stats', (e) => {
+      const d = JSON.parse(e.data);
+      document.getElementById('stat-total').textContent = d.total || 0;
+      document.getElementById('stat-available').textContent = d.available || 0;
+      document.getElementById('stat-used').textContent = d.used || 0;
+      document.getElementById('stat-leased').textContent = d.leased || 0;
+    });
+    evtSource.onerror = () => { /* auto-reconnect */ };
+  } catch (e) { /* SSE not available */ }
+}
+
+function copyToken() {
+  navigator.clipboard.writeText(token);
+  document.getElementById('log').innerHTML += '<div class="info">Token kopiert.</div>';
+}
+
+function refreshToken() {
+  const t = prompt('Auth Token eingeben:');
+  if (t && t.trim()) {
+    token = t.trim();
+    localStorage.setItem('sinator_token', token);
+    document.getElementById('auth-token-display').textContent = token;
+    loadDashboard();
+  }
+}
+
+async function api(method, path, body) {
+  const r = await fetch(API + path, {
+    method,
+    headers: { 'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  let data;
+  try {
+    data = await r.json();
+  } catch(e) {
+    throw new Error('HTTP ' + r.status + ': nicht-JSON Response');
+  }
+  if (!r.ok) {
+    throw new Error(data.detail || data.message || 'HTTP ' + r.status);
+  }
+  return data;
+}
+
+function log(msg, cls = 'info') {
+  const el = document.getElementById('log');
+  const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  el.innerHTML += `<div class="${cls}">${t} &middot; ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+async function loadDashboard() {
+  try {
+    const stats = await api('GET', '/pool/stats');
+    document.getElementById('stat-total').textContent = stats.total || 0;
+    document.getElementById('stat-available').textContent = stats.available || 0;
+    document.getElementById('stat-used').textContent = stats.used || 0;
+    document.getElementById('stat-leased').textContent = stats.leased || 0;
+    document.getElementById('stat-credits').textContent = '—';
+    updateActiveKeyCard(stats.keys || []);
+    renderKeys(stats.keys || []);
+  } catch (e) {
+    log('Fehler: ' + e.message, 'error');
+  }
+}
+
+function updateActiveKeyCard(keys) {
+  const card = document.getElementById('active-key-card');
+  const dot = document.getElementById('active-key-dot');
+  const detail = document.getElementById('active-key-detail');
+  const leased = keys.filter(k => k.leased);
+  if (leased.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = 'flex';
+  const k = leased[0];
+  const keyTail = (k.api_key || '').slice(-6) || '???';
+  dot.className = 'dot green';
+  detail.innerHTML = '<code>fw_...' + keyTail + '</code> &middot; ' + (k.alias_email || '?') + ' &middot; <span style="color:#94a3b8">leased to ' + (k.leased_to || '?') + '</span>';
+}
+
+function copyKey(apiKey) {
+  if (!apiKey) {
+    log('Kein Key zum Kopieren', 'error');
+    return;
+  }
+  navigator.clipboard.writeText(apiKey).then(() => {
+    log('Key kopiert!', 'success');
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = apiKey;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    log('Key kopiert!', 'success');
+  });
+}
+
+function renderKeys(keys) {
+  const tbody = document.getElementById('key-table');
+  if (!keys.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="color:#64748b;text-align:center;padding:20px;">Keine Keys</td></tr>';
+    return;
+  }
+  tbody.innerHTML = keys.map((k, idx) => {
+    const status = k.status || (k.used ? 'used' : k.leased ? 'leased' : 'available');
+    const cls = status === 'healthy' ? 'status-healthy' : status === 'suspended' ? 'status-suspended' : status === 'leased' ? 'status-leased' : 'status-used';
+    const credits = k.credits_remaining != null ? '$' + k.credits_remaining.toFixed(1) : '—';
+    const leaseInfo = k.leased ? '<span style="color:#3b82f6">' + (k.leased_to || '?') + '</span>' : '—';
+    return '<tr><td>' + (k.alias_email || k.email || '?').split('@')[0] + '</td>' +
+      '<td class="' + cls + '">' + status + '</td>' +
+      '<td>' + leaseInfo + '</td>' +
+      '<td>' + credits + '</td>' +
+      '<td class="key-cell"><code class="key-text">' + (k.api_key || '').slice(0, 30) + '...</code>' +
+      ' <button class="btn-copy" data-idx="' + idx + '" title="Key kopieren">📋</button></td></tr>';
+  }).join('');
+
+  tbody.querySelectorAll('.btn-copy').forEach(btn => {
+    const idx = parseInt(btn.dataset.idx, 10);
+    btn.addEventListener('click', () => copyKey(keys[idx].api_key || ''));
+  });
+}
+
+async function runHealthCheck() {
+  try {
+    const r = await api('GET', '/pool/health?deep_check=false');
+    log('Health: ' + r.healthy + '/' + r.total + ' Keys OK, $' + (r.total_credits_remaining || 0).toFixed(1) + ' Credits', 'success');
+    renderKeys(r.checked || []);
+    document.getElementById('stat-credits').textContent = '$' + (r.total_credits_remaining || 0).toFixed(1);
+  } catch (e) {
+    log('Health fehlgeschlagen: ' + e.message, 'error');
+  }
+}
+
+async function startRotation() {
+  const btn = document.querySelector('.actions .btn:nth-child(3)');
+  const origText = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Rotation läuft...'; }
+
+  log('Starte Rotation in separatem Chrome-Fenster...', 'info');
+  try {
+    const r = await api('POST', '/rotation/full', { fireworks_password: 'ZOE.jerry2024', save_to_pool: true });
+    if (r.status === 'success') log('✅ Rotation erfolgreich! Key: ' + (r.api_key || '?'), 'success');
+    else if (r.status === 'partial') log('⚠️ Teil-Erfolg — Alias: ' + (r.gmx_alias || '?') + ', Key fehlt', 'error');
+    else log('❌ Status: ' + r.status + ' — ' + (r.error || ''), 'error');
+    if (r.gmx_alias) log('Alias: ' + r.gmx_alias);
+    if (r.api_key) log('Key: ' + r.api_key);
+    if (r.execution_time) log('Dauer: ' + r.execution_time);
+    loadDashboard();
+  } catch (e) {
+    log('❌ Fehler: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = origText; }
+  }
+}
+
+async function createGmxAlias() {
+  log('Erstelle GMX Alias...', 'info');
+  try {
+    const r = await api('POST', '/gmx/alias/create');
+    if (r.status === 'success') {
+      log('✅ GMX Alias erstellt: ' + r.alias_email, 'success');
+    } else {
+      log('❌ Fehler: ' + (r.error || r.status), 'error');
+    }
+    if (r.execution_time) log('Dauer: ' + r.execution_time);
+  } catch (e) {
+    log('Fehler: ' + e.message, 'error');
+  }
+}
+
+async function deleteGmxAlias() {
+  log('Lösche GMX Alias...', 'info');
+  try {
+    const r = await api('POST', '/gmx/alias/delete');
+    if (r.status === 'success') {
+      log('✅ Alias gelöscht: ' + (r.alias || 'keiner vorhanden'), 'success');
+    } else if (r.status === 'no_alias') {
+      log('ℹ️ Kein Alias vorhanden', 'info');
+    } else {
+      log('❌ Fehler: ' + (r.error || r.status), 'error');
+    }
+    if (r.execution_time) log('Dauer: ' + r.execution_time);
+  } catch (e) {
+    log('Fehler: ' + e.message, 'error');
+  }
+}
+</script>
+</body>
+</html>

@@ -21,7 +21,7 @@ from agent_toolbox.core.cdp_client import CDPClient, get_browser_ws_endpoint, ge
 logger = logging.getLogger(__name__)
 
 FIREWORKS_SIGNUP_URL = "https://app.fireworks.ai/signup"
-FIREWORKS_API_KEYS_URL = "https://" + "app.fireworks.ai" + "/api-keys"
+FIREWORKS_API_KEYS_URL = "https://app.fireworks.ai/api-keys"
 
 
 class FireworksService:
@@ -167,3 +167,50 @@ def get_fireworks_service() -> FireworksService:
     if _fireworks_service is None:
         _fireworks_service = FireworksService()
     return _fireworks_service
+
+
+# ── Kompatibilitäts-Wrapper für rotate.py ──
+
+async def signup_fireworks(email: str, password: str, cdp_port: int = 9222) -> Dict[str, Any]:
+    """Legacy-Kompatibilität: Fireworks Signup + OTP-Verify in einem Aufruf."""
+    svc = get_fireworks_service()
+    result = await svc.signup(email=email, password=password, cdp_port=cdp_port)
+    if result.get("status") == "success":
+        # OTP aus GMX lesen und confirm-URL aufrufen
+        try:
+            from gmx_service import get_gmx_service
+        except ImportError:
+            from agent_toolbox.core.gmx_service import get_gmx_service
+        gmx = get_gmx_service()
+        otp_result = await gmx.read_otp(sender_filter="fireworks", max_retries=12, cdp_port=cdp_port)
+        if otp_result.get("status") == "success":
+            confirm_url = otp_result.get("otp_url")
+            if confirm_url:
+                # Confirm-URL im Browser öffnen
+                client = None
+                try:
+                    try:
+                        from cdp_client import get_browser_ws_endpoint, get_page_target, CDPClient
+                    except ImportError:
+                        from agent_toolbox.core.cdp_client import get_browser_ws_endpoint, get_page_target, CDPClient
+                    ws_url = await get_browser_ws_endpoint(cdp_port)
+                    client = CDPClient(ws_url)
+                    await client.connect()
+                    target = await get_page_target(client)
+                    if target:
+                        session_id = await client.attach_to_target(target["targetId"])
+                        await client.navigate(session_id, confirm_url)
+                        await asyncio.sleep(5)
+                except Exception:
+                    pass
+                finally:
+                    if client:
+                        await client.disconnect()
+                return {"status": "success", "email": email, "confirmed": True}
+    return result
+
+
+async def create_api_key_fireworks(key_name: str = "sinator-key", cdp_port: int = 9222) -> Dict[str, Any]:
+    """Legacy-Kompatibilität: API Key erstellen."""
+    svc = get_fireworks_service()
+    return await svc.create_api_key(key_name=key_name, cdp_port=cdp_port)

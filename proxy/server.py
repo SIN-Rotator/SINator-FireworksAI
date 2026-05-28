@@ -13,6 +13,9 @@ Usage:
   python -m proxy.server
   SIN_PROXY_PORT=8888 python -m proxy.server
 """
+=======
+import os
+>>>>>>> upstream/main
 import sys
 import asyncio
 import logging
@@ -43,6 +46,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pool-proxy")
 
+<<<<<<< HEAD
 DEAD_KEY_CODES = {401, 402, 403}
 SWAP_REASONS = {
     401: "unauthorized",
@@ -208,6 +212,9 @@ class PoolProxy:
 
         headers = self._build_forward_headers(request, key_info)
         is_sse = self._is_streaming_request(request, fw_url)
+=======
+        consecutive_swaps = 0
+>>>>>>> upstream/main
 
         for attempt in range(self.max_retries):
             try:
@@ -217,6 +224,7 @@ class PoolProxy:
                     status = fw_resp.status
 
                     if status in DEAD_KEY_CODES:
+<<<<<<< HEAD
                         reason = SWAP_REASONS.get(status, "unknown")
                         logger.warning(f"Dead key: {status} ({reason}), swapping (attempt {attempt+1})...")
                         new_key = await self._swap_key(reason)
@@ -355,6 +363,31 @@ class PoolProxy:
             "request_count": self.cache.request_count,
         })
 
+=======
+    async def _lease_key(self, request: web.Request) -> web.Response:
+        """Lease a single API key from the pool."""
+        try:
+            leased_to = request.query.get("leased_to", f"app-{time.time():.0f}")
+            result = await self.pool_client.lease(leased_to=leased_to)
+            if not result:
+                return web.json_response(
+                    {"error": "no_keys", "message": "No API keys available"},
+                    status=503,
+                )
+            return web.json_response({
+                "api_key": result["api_key"],
+                "key_name": result.get("key_name", ""),
+                "alias_email": result.get("alias_email", ""),
+                "key_id": result.get("key_id", ""),
+            })
+        except Exception as e:
+            logger.error(f"Lease key error: {e}")
+            return web.json_response(
+                {"error": "lease_failed", "message": str(e)},
+                status=500,
+            )
+
+>>>>>>> upstream/main
     async def _pool_status(self, request: web.Request) -> web.Response:
         stats = await self.pool_client.stats()
         cache_status = self.cache.status()
@@ -366,6 +399,7 @@ class PoolProxy:
 
 
 def main():
+<<<<<<< HEAD
     proxy = PoolProxy()
     app = proxy.create_app()
     web.run_app(app, host="0.0.0.0", port=proxy.port, print=logger.info)
