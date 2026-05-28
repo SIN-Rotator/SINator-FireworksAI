@@ -35,7 +35,7 @@ plist = f'''<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <plist version=\"1.0\">
 <dict>
     <key>Label</key>
-    <string>com.sinhermes.poolrouter</string>
+    <string>com.sinator.pool-router</string>
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/python3</string>
@@ -53,14 +53,15 @@ plist = f'''<?xml version=\"1.0\" encoding=\"UTF-8\"?>
     <integer>5</integer>
 </dict>
 </plist>'''
-with open(os.path.expanduser('~/Library/LaunchAgents/com.sinhermes.poolrouter.plist'), 'w') as f:
+with open(os.path.expanduser('~/Library/LaunchAgents/com.sinator.pool-router.plist'), 'w') as f:
     f.write(plist)
 print('Plist written')
 "
 
-# Unload old if exists, load new
+# Unload old (beide Namen für Migration) if exists, load new
 launchctl unload "$LAUNCH_AGENTS/com.sinhermes.poolrouter.plist" 2>/dev/null || true
-launchctl load "$LAUNCH_AGENTS/com.sinhermes.poolrouter.plist" 2>/dev/null || true
+launchctl unload "$LAUNCH_AGENTS/com.sinator.pool-router.plist" 2>/dev/null || true
+launchctl load "$LAUNCH_AGENTS/com.sinator.pool-router.plist" 2>/dev/null || true
 
 # Wait a moment for router to start
 sleep 1
@@ -110,8 +111,8 @@ echo "Next step:"
 echo "  hermes auth add custom:fireworks --type api-key --api-key \"\$FIREWORKS_AI_API_KEY\""
 echo ""
 echo "Manage service:"
-echo "  launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist  # stop"
-echo "  launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist    # start"
+echo "  launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist  # stop"
+echo "  launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist    # start"
 echo "  pgrep -f pool-router.py                                                  # check"
 echo "  tail -f ~/.hermes/logs/pool-router.log                                   # logs"
 echo ""
