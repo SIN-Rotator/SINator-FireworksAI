@@ -3,16 +3,16 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.sinhermes.poolrouter</string>
+    <string>com.sinator.pool-router</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
-        <string>/Users/jeremyschulze/.hermes/scripts/pool-router.py</string>
+        <string>/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python</string>
+        <string>/Users/jeremy/.hermes/scripts/pool-router.py</string>
     </array>
     <key>StandardOutPath</key>
-    <string>/Users/jeremyschulze/.hermes/logs/pool-router.log</string>
+    <string>/tmp/pool-router-launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/jeremyschulze/.hermes/logs/pool-router.log</string>
+    <string>/tmp/pool-router-launchd.err</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>

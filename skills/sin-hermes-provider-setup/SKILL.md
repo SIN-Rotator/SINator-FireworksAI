@@ -55,8 +55,9 @@ hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY
 ```bash
 echo "=== Verifizierung ===" && \
 pgrep -f pool-router.py >/dev/null && echo "[OK] Router laeuft" || echo "[FAIL] Router nicht laeuft" && \
-launchctl list | grep -q sinhermes && echo "[OK] launchd geladen" || echo "[FAIL] launchd nicht geladen" && \
+launchctl list | grep -q pool-router && echo "[OK] launchd geladen" || echo "[FAIL] launchd nicht geladen" && \
 grep -q "base_url.*localhost:9998" ~/.hermes/config.yaml && echo "[OK] Config auf localhost:9998" || echo "[FAIL] Config falsch" && \
+grep -q "silent swap" ~/.sin-pool/server.py && echo "[OK] 412/429 silent swap" || echo "[FAIL] 412/429 silent swap fehlt" && \
 grep -q "status_code == 412" ~/.hermes/hermes-agent/agent/error_classifier.py && echo "[OK] 412 Patch" || echo "[FAIL] 412 Patch fehlt" && \
 ls ~/.hermes/hermes-agent/_ua_patch.py >/dev/null 2>&1 && echo "[OK] UA-Spoof" || echo "[FAIL] UA-Spoof fehlt" && \
 grep -q "max_turns: 999999" ~/.hermes/config.yaml && echo "[OK] Unlimited max_turns" || echo "[FAIL] max_turns nicht gesetzt"
@@ -75,7 +76,7 @@ curl -s http://localhost:9998/v1/models 2>&1 | head -5 || echo "Router nicht err
 | Fehler | Loesung |
 |--------|---------|
 | "Patch may already be applied" | Ignorieren -- Patch war schon drauf |
-| Router startet nicht | `launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist` |
+| Router startet nicht | `launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist` |
 | 412 Patch fehlt | Siehe `docs/412-retry-fix.md` im Bundle |
 | UA-Spoof fehlt | Siehe `docs/ua-spoof.md` im Bundle |
 | SDK macht 429-Retries trotz Router | UA-Spoof-Patch setzt `max_retries=0` -- pruefen ob Patch geladen |
@@ -87,10 +88,10 @@ curl -s http://localhost:9998/v1/models 2>&1 | head -5 || echo "Router nicht err
 pgrep -f pool-router.py
 
 # Stoppen
-launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
 # Starten
-launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
 # Logs
 tail -f ~/.hermes/logs/pool-router.log

@@ -75,7 +75,7 @@ pgrep -f pool-router.py
 # 7. Proxy charset? (optional, nur bei charset-Fehlern)
 # Symptom: "ValueError: Content-Type contains parameter charset=utf-8"
 # Fix: ~/.sin-pool/server.py strippt charset vor aiohttp-Response
-# Status: Alle 3 Proxies (8888/8889/8890) haben den Fix
+# Status: Alle 10 Proxies (8888-8897) haben den Fix
 ```
 
 Alle 7 Checks müssen grün sein.
