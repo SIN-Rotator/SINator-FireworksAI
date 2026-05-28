@@ -139,7 +139,7 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
                 last_error = e
                 err_body = e.read().decode(errors="replace")[:200]
                 pool_errors.append((idx, err_body, e.code))
-                if e.code in (429, 412, 500, 502, 503, 504):
+                if e.code in (413, 429, 412, 500, 502, 503, 504):
                     recent = _get_recent_failures(idx)
                     print(
                         f"[PoolRouter] Pool {idx+1} returned {e.code} "
