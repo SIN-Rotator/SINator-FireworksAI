@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-SIN-Hermes Pool Router v2
+SIN-Hermes Pool Router v3
 
 Lokaler Mini-Proxy der Requests an sinatorpool1/2/3 weiterleitet.
-Bei 429/412/5xx automatischer Failover zum naechsten Pool MIT Cooldown.
+Bei 413/429/412/5xx automatischer Failover zum naechsten Pool MIT Cooldown.
 
-Fix v2 (2026-05-28):
+Fix v3 (2026-05-28):
+  - 413 zur Retry-Liste hinzugefuegt (vorher: sofortiger raise -> 500)
+  - 413/429/412/5xx: alle Pools probieren, gleichen Fehler durchreichen
   - pool_failures mit Timestamp-Tracking -> 60s Cooldown statt permanent dead
   - Pool-skip nur wenn 3 failures INNERHALB 60s
   - Health endpoint GET /health
