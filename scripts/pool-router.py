@@ -2,7 +2,7 @@
 """
 SIN-Hermes Pool Router v3
 
-Lokaler Mini-Proxy der Requests an sinatorpool1/2/3 weiterleitet.
+Lokaler Mini-Proxy der Requests an sinatorpool-router weiterleitet.
 Bei 413/429/412/5xx automatischer Failover zum naechsten Pool MIT Cooldown.
 
 Fix v3 (2026-05-28):
@@ -19,9 +19,11 @@ Usage:
     #   base_url: http://localhost:9998/inference/v1
 
 Pools (Reihenfolge = Prioritaet):
-    1. https://sinatorpool1.delqhi.com
-    2. https://sinatorpool2.delqhi.com
-    3. https://sinatorpool3.delqhi.com
+    1. http://localhost:8888
+    2. http://localhost:8889
+    3. http://localhost:8890
+    ...
+    10. http://localhost:8897
 """
 
 import http.server

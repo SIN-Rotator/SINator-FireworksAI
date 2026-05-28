@@ -17,7 +17,7 @@ trigger:
 Installiert das [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle) auf einem neuen Mac.
 
 Enthaelt:
-- Pool-Router (localhost:9998) mit Auto-Failover ueber sinatorpool1/2/3
+- Pool-Router (localhost:9998) mit Auto-Failover ueber 10 Proxys
 - 412 PRECONDITION_FAILED Retry-Patch
 - User-Agent Spoof-Patch (max_retries=0 fuer Router-Retry)
 - Hermes Config mit `max_turns=999999`
