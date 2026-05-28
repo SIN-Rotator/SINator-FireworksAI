@@ -2363,7 +2363,40 @@ https://app.fireworks.ai/signup/confirm?client_id=sueas7prsfrdp16nantbeqcjv&user
 **Key Takeaway:** Mail-Panel Extension → `mailbody-ui.de` OOPIF ist der EINZIGE Weg.
 NIEMALS `3c.gmx.net` direkt, NIEMALS `lightmailer-bs.gmx.net`, NIEMALS CDP DOM API.
 
-**Letzte Aktualisierung: 2026-05-26 (V12 — lease_backup Fix + Dashboard Cross-References)**
+---
+
+## 🔧 V13 CHANGES (2026-05-29) — Fireworks Model Discovery + Hermes custom:* Provider
+
+### Pool-Proxy `/v1/models` Handler
+**Neuer Handler** in `proxy/server.py: `_handle_v1_models()`:
+- Liest `~/.hermes/models_dev_cache.json` → extrahiert `fireworks-ai` Modelle
+- Gibt ALLE Fireworks Modelle + Router zurück (12 aktuell, inkl. `kimi-k2p6-turbo`, `glm-5p1-fast`)
+- Fallback auf hardcoded Liste wenn Cache nicht lesbar
+- Routen: `/v1/models` + `/inference/v1/models` (beide vor Catch-All registriert)
+- `PUBLIC_PROXY_PATHS` um `/v1/models` erweitert
+
+### Hermes V15 Patch — `custom:*` provider_model_ids
+**Neue Datei** `patches/hermes_cli/models.py`:
+- `provider_model_ids()` behandelt jetzt `normalized.startswith("custom:")`
+- Lädt `custom_providers` aus config.yaml → findet passenden Eintrag
+- Probt `/v1/models` live über `fetch_api_models()`
+- Model-Picker zeigt jetzt Fireworks-Modelle (vorher: 0, jetzt: 12)
+- Router wie `kimi-k2p6-turbo` werden akzeptiert (`accepted=True, recognized=True`)
+
+**Repos:**
+- `SIN-Rotator/SIN-Hermes-V15-Patches`: `patches/hermes_cli/models.py` + `patch.sh`
+- `SINator-fireworksai/proxy/server.py`: `_handle_v1_models()` + Routes + PUBLIC_PROXY_PATHS
+
+### Architektur: Model-Discovery
+```
+Hermes provider_model_ids('custom:fireworks')
+  → load_config() → custom_providers entry
+  → fetch_api_models(api_key, "http://localhost:9998/inference/v1/models")
+  → Pool-Proxy `_handle_v1_models()` 
+  → ~/.hermes/models_dev_cache.json → 12 FW models
+```
+
+**Letzte Aktualisierung: 2026-05-29 (V13 — Fireworks Model Discovery)
 
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
