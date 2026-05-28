@@ -2365,6 +2365,32 @@ NIEMALS `3c.gmx.net` direkt, NIEMALS `lightmailer-bs.gmx.net`, NIEMALS CDP DOM A
 
 ---
 
+## 🔧 V14 CHANGES (2026-05-29) — JSON Scope Fix + Model Name Normalization
+
+### conversation_loop.py — Lokales `import json` entfernt
+**Problem:** Der tool_search Patch fügte `import json` innerhalb der `run_conversation`-Funktion in `conversation_loop.py:3873` ein. In Python 3.12+ macht dies `json` zur lokalen Variable für den gesamten Funktionsscope — aber `json.loads()`/`json.dumps()` wurden bereits vor dieser Zeile genutzt (Z. 1043, 3432).
+
+**Fix:** Lokales `import json` entfernt — das Modul ist bereits global auf Zeile 19 importiert.
+
+### Proxy — Model Name Normalisierung
+**Problem:** Hermes sendet Kurznamen wie `glm-5p1-fast`, aber Fireworks erwartet volle Pfade wie `accounts/fireworks/routers/glm-5p1-fast`.
+
+**Fix:** Pool-Proxy `server.py` — neues `_normalize_request_body()` expandiert Kurznamen via `models_dev_cache.json`:
+```python
+"glm-5p1-fast" → "accounts/fireworks/routers/glm-5p1-fast"
+"deepseek-v4-flash" → "accounts/fireworks/models/deepseek-v4-flash"
+```
+Volle Pfade mit `/` bleiben unverändert. Refactored: `_handle_v1_models()` und Normalisierung teilen sich `_load_all_model_ids()` + `_build_model_alias_map()`.
+
+**Dateien:**
+- `~/.hermes/hermes-agent/agent/conversation_loop.py:3873` — lokales `import json` entfernt
+- `~/dev/SINator-fireworksai/proxy/server.py` — `_normalize_request_body()`, `_load_all_model_ids()`, `_build_model_alias_map()`
+
+**Wichtig:** Oneshot (`-z`) MUSS vor dem Subcommand stehen:
+```bash
+hermes -z "PROMPT" chat -m "glm-5p1-fast" --yolo
+```
+
 ## 🔧 V13 CHANGES (2026-05-29) — Fireworks Model Discovery + Hermes custom:* Provider
 
 ### Pool-Proxy `/v1/models` Handler
@@ -2396,7 +2422,7 @@ Hermes provider_model_ids('custom:fireworks')
   → ~/.hermes/models_dev_cache.json → 12 FW models
 ```
 
-**Letzte Aktualisierung: 2026-05-29 (V13 — Fireworks Model Discovery)
+**Letzte Aktualisierung: 2026-05-29 (V14 — JSON Scope Fix + Model Normalization)
 
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 

@@ -279,6 +279,62 @@ class PoolProxy:
         fw_url = f"{self.fireworks_base}/{path}"
         return await self._do_proxy(request, fw_url)
 
+    MODEL_CACHE_PATH = Path.home() / ".hermes" / "models_dev_cache.json"
+
+    @staticmethod
+    def _load_all_model_ids() -> list[str]:
+        """Load all Fireworks model IDs from the models.dev cache (or fallback)."""
+        try:
+            raw = PoolProxy.MODEL_CACHE_PATH.read_text()
+            registry = json.loads(raw)
+            fw = registry.get("fireworks-ai", {})
+            return list(fw.get("models", {}).keys())
+        except Exception:
+            return [
+                "accounts/fireworks/models/deepseek-v4-flash",
+                "accounts/fireworks/models/deepseek-v4-pro",
+                "accounts/fireworks/models/glm-5p1",
+                "accounts/fireworks/models/gpt-oss-120b",
+                "accounts/fireworks/models/gpt-oss-20b",
+                "accounts/fireworks/models/kimi-k2p5",
+                "accounts/fireworks/models/kimi-k2p6",
+                "accounts/fireworks/models/minimax-m2p5",
+                "accounts/fireworks/models/minimax-m2p7",
+                "accounts/fireworks/models/qwen3p6-plus",
+                "accounts/fireworks/routers/glm-5p1-fast",
+                "accounts/fireworks/routers/kimi-k2p6-turbo",
+            ]
+
+    @staticmethod
+    def _build_model_alias_map(model_ids: list[str]) -> dict[str, str]:
+        """Build short_name → full_path lookup for all model IDs."""
+        m = {}
+        for mid in model_ids:
+            parts = mid.split("/")
+            short = parts[-1]  # e.g. "glm-5p1-fast", "deepseek-v4-flash"
+            m[short] = mid
+        return m
+
+    async def _normalize_request_body(self, body: Optional[bytes]) -> Optional[bytes]:
+        """Normalize model name in request body — expand short names to full paths."""
+        if not body:
+            return body
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            return body
+        model = parsed.get("model", "")
+        if not model or "/" in model:
+            return body
+        model_ids = self._load_all_model_ids()
+        alias_map = self._build_model_alias_map(model_ids)
+        full = alias_map.get(model)
+        if full and full != model:
+            parsed["model"] = full
+            logger.debug(f"Normalized model: {model} → {full}")
+            return json.dumps(parsed).encode()
+        return body
+
     async def _handle_v1_models(self, request: web.Request) -> web.Response:
         """Return all Fireworks models from the models.dev cache.
 
@@ -289,28 +345,7 @@ class PoolProxy:
 
         Falls back to a curated subset if the cache is unavailable.
         """
-        cache_path = Path.home() / ".hermes" / "models_dev_cache.json"
-        try:
-            raw = cache_path.read_text()
-            registry = json.loads(raw)
-            fw_provider = registry.get("fireworks-ai", {})
-            model_ids = list(fw_provider.get("models", {}).keys())
-        except Exception:
-            model_ids = [
-                "accounts/fireworks/models/deepseek-v4-flash",
-                "accounts/fireworks/models/deepseek-v4-pro",
-                "accounts/fireworks/models/gpt-oss-120b",
-                "accounts/fireworks/models/gpt-oss-20b",
-                "accounts/fireworks/models/kimi-k2p5",
-                "accounts/fireworks/models/kimi-k2p6",
-                "accounts/fireworks/models/minimax-m2p5",
-                "accounts/fireworks/models/minimax-m2p7",
-                "accounts/fireworks/models/qwen3p6-plus",
-                "accounts/fireworks/models/glm-5p1",
-                "accounts/fireworks/routers/kimi-k2p6-turbo",
-                "accounts/fireworks/routers/glm-5p1-fast",
-            ]
-
+        model_ids = self._load_all_model_ids()
         now = int(time.time())
         data = [
             {"id": m, "object": "model", "created": now, "owned_by": "fireworks"}
@@ -333,6 +368,7 @@ class PoolProxy:
         for attempt in range(self.max_retries):
             try:
                 req_body = await request.read() if request.method in ("POST", "PUT", "PATCH") else None
+                req_body = await self._normalize_request_body(req_body)
 
                 async with self._make_fw_request(request.method, fw_url, headers, req_body, request.query) as fw_resp:
                     status = fw_resp.status
