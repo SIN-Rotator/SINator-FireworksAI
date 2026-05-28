@@ -58,6 +58,7 @@ pgrep -f pool-router.py >/dev/null && echo "[OK] Router laeuft" || echo "[FAIL] 
 launchctl list | grep -q pool-router && echo "[OK] launchd geladen" || echo "[FAIL] launchd nicht geladen" && \
 grep -q "base_url.*localhost:9998" ~/.hermes/config.yaml && echo "[OK] Config auf localhost:9998" || echo "[FAIL] Config falsch" && \
 grep -q "silent swap" ~/.sin-pool/server.py && echo "[OK] 412/429 silent swap" || echo "[FAIL] 412/429 silent swap fehlt" && \
+grep -q "silent swap" ~/dev/SINator-fireworksai/proxy/server.py && echo "[OK] Repo-Copy sync" || echo "[WARN] Repo-Copy diverged" && \
 grep -q "status_code == 412" ~/.hermes/hermes-agent/agent/error_classifier.py && echo "[OK] 412 Patch" || echo "[FAIL] 412 Patch fehlt" && \
 ls ~/.hermes/hermes-agent/_ua_patch.py >/dev/null 2>&1 && echo "[OK] UA-Spoof" || echo "[FAIL] UA-Spoof fehlt" && \
 grep -q "max_turns: 999999" ~/.hermes/config.yaml && echo "[OK] Unlimited max_turns" || echo "[FAIL] max_turns nicht gesetzt"

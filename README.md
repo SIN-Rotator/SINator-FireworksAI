@@ -94,6 +94,7 @@ tail -f /tmp/pool-router-launchd.log
 | `agent_toolbox/core/fireworks_service.py` | Fireworks Registration + API-Key-Management |
 | `agent_toolbox/core/cdp_client.py` | Chrome DevTools Protocol Client |
 | `agent_toolbox/core/pool_manager.py` | API-Key Pool-Manager (Lease/Return) |
+| `proxy/` | Pool-Proxy-Source (Spiegel von `~/.sin-pool/`) — server.py mit silent swap |
 | `_ua_patch.py` | User-Agent Spoof + max_retries=0 fuer OpenAI SDK |
 | `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
 
@@ -113,6 +114,12 @@ tail -f /tmp/pool-router-launchd.log
 │   └── fireworks-pool3.yaml            # Referenz: localhost:8890
 ├── patches/
 │   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
+├── proxy/
+│   ├── __init__.py                     # Spiegel von ~/.sin-pool/
+│   ├── config.py
+│   ├── key_cache.py
+│   ├── pool_client.py
+│   └── server.py                       # silent swap Fix (412/429)
 ├── scripts/
 │   ├── pool-router.py                  # Lokaler Proxy (v3: 413 pass-through)
 │   └── pool-router.plist               # macOS launchd Service (auto-start)
