@@ -1,116 +1,146 @@
-# AGENTS.md — SINator Fireworks AI Rotator V12 (2026-05-26)
+# AGENTS.md — SINator Fireworks AI Rotator V14 (2026-05-29)
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-26
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-29
 
-**Full automated flow in ONE command:**
 ```bash
 python tools/rotate.py
-# → GMX Login (built-in, Step 0) → Alias Rotation (~180s) → Fireworks Signup
-# → OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
+# → GMX Login (Step 0) → Alias Rotation (~37s) → Fireworks Signup
+# → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
 **Pool:** 218 Keys (94 verfügbar, 10 used, 114 suspended)
-**Cycle Time:** ~180s average
-**Pool Proxies:** 10 Instanzen (aiohttp SSE + silent swap) hinter Pool-Router :9998
-**Pool-Router URL:** `sinatorpool-router.delqhi.com` (single endpoint, auto-failover)
+**Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
+**Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
+**Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
 **API Key (alle Macs gleich):** `<DEIN_API_KEY>`
 **Services:** com.sinator.backend (:8000), com.sinator.pool-router (:9998), 10× pool-proxy (:8888-:8897), Pages (:8040)
+
+---
+
+## 🔧 V14 CHANGES (2026-05-29) — Playwright-native Migration
+
+### fireworks_service.py — V6 Restored (Playwright+CUA Hybrid)
+**Vorher:** 3103 Zeilen CDP-only (V5), dann 216 Zeilen CDP-only (V7), dann broken
+**Jetzt:** 655 Zeilen — bewährter V6 Code (Playwright + CUA Hybrid)
+
+**Funktionen:**
+- `signup_fireworks(email, password)` — Signup + OTP + Verify
+- `login_fireworks(email, password)` — Login + Onboarding (CUA + Playwright Fallback)
+- `create_api_key(key_name)` — API Key erstellen via Playwright
+- `verify_account(verify_url)` — Verify URL öffnen
+- `_fireworks_playwright_onboarding(page)` — Playwright-Onboarding-Fallback
+- `_generate_and_poll_key(pg, key_name)` — Generate-Button + Key-Polling
+
+**OTP Polling:** 25 Versuche × 8s = 200s max. Fallback: `partial` status wenn OTP nicht kommt (Account ist unverified aber oft loginbar).
+
+### rotate.py — V7 Playwright-native (108 Zeilen)
+**Vorher:** 157 Zeilen mit CDP-Login, Onboarding, API Key (alles CDP)
+**Jetzt:** 108 Zeilen — nutzt nur `fireworks_service.py` Funktionen
+
+```python
+# rotate.py flow:
+1. GmxService.login() → Playwright
+2. GmxService.rotate_alias() → Playwright
+3. signup_fireworks(alias, password) → Playwright
+4. login_fireworks(alias, password) → Playwright + CUA
+5. create_api_key(key_name) → Playwright
+6. PoolManager.add_key() → JSON
+```
+
+**Kein CDP mehr im rotate.py!** Alles über Playwright-API-Calls.
+
+### gmx_service.py — Playwright-native (910 Zeilen)
+**Vorher:** Mix aus CDP + CUA + Playwright
+**Jetzt:** Playwright-native für alle Operationen
+
+- `_navigate_to_all_email_addresses()` — Playwright shadow DOM traversal
+- `_login()` — Playwright form fill
+- `_delete_alias()` — Playwright iframe interaction
+- `_create_alias()` — Playwright iframe interaction
+- `read_otp()` — CDP-basiert (MailCheck Extension + OOPIF), unverändert — bewährt
+
+---
+
+## 🔧 V13 CHANGES (2026-05-29) — Fireworks Model Discovery
+
+### Pool-Proxy `/v1/models` Handler
+- `proxy/server.py` — `_handle_v1_models()` liest `~/.hermes/models_dev_cache.json`
+- Gibt ALLE Fireworks Modelle + Router zurück (12 aktuell)
+- Routen: `/v1/models` + `/inference/v1/models` (vor Catch-All registriert)
+- `PUBLIC_PROXY_PATHS` um `/v1/models` erweitert
+
+### Hermes `custom:*` Provider Support
+- `patches/hermes_cli/models.py` — `provider_model_ids()` behandelt `custom:` prefix
+- Probt `/v1/models` live über Pool-Proxy
+- Model-Picker zeigt Fireworks-Modelle (vorher: 0, jetzt: 12)
+
+---
 
 ## 🔧 V12 CHANGES (2026-05-26)
 
 ### Config Manager — GMX + Fireworks Credentials
-**Neue Dateien:**
-- `agent_toolbox/core/config_manager.py` — speichert GMX Email/Passwort + Fireworks Passwort in `data/config.json`
-- `agent_toolbox/api/routes/config.py` — `GET /api/v1/config` + `POST /api/v1/config` (public, kein Auth)
-
-**Config-Objekt:**
-```json
-{
-  "gmx_email": "opensin@gmx.de",
-  "gmx_password": "ZOE.jerry2024",
-  "fireworks_password": "ZOE.jerry2024!"
-}
-```
-
-**Rotation nutzt Config:**
-- `rotation.py` liest `get_config()` → übergibt `--gmx-email` + `--gmx-password` + `--password` an `rotate.py`
-- `rotate.py` hat neue Args: `--gmx-email` (default: opensin@gmx.de), `--gmx-password` (default: ZOE.jerry2024)
-- GMX Login nutzt `args.gmx_email` + `args.gmx_password` (nicht mehr hardcodiert!)
+- `agent_toolbox/core/config_manager.py` — speichert in `data/config.json`
+- API: `GET /api/v1/config` + `POST /api/v1/config` (public, kein Auth)
+- `rotate.py` liest Config → übergibt `--gmx-email` + `--gmx-password` + `--password`
 
 ### Setup-Seite (Dashboard)
 - `/setup` — Formular für GMX Email, GMX Passwort, Fireworks Passwort
-- Show/Hide Toggle auf Passwort-Feldern (Eye/EyeOff Icon)
-- Speichert via `POST /api/v1/config`
-- Lädt aktuelle Werte beim Öffnen
+- Show/Hide Toggle auf Passwort-Feldern
 
 ### Pool-Stats: `leased` entfernt
-- `available = total - used - suspended` (geleastete Keys zählen als verfügbar)
-- `leased` Feld entfernt aus: `PoolStatsResponse` Schema, `pool.py` Route, `pool_manager.py` Stats
-- Dashboard zeigt nur: Gesamt / Verfügbar / Verbraucht
+- `available = total - used - suspended`
+- `leased` Feld entfernt aus Schema, Route, Pool Manager
 
 ### Chat-Assistent (Dashboard /hilfe)
-- Rust-Command `chat_send` ruft Pool-Proxy (`localhost:8888`) auf
-- Modell: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M input, billigstes)
-- System-Prompt in `src-tauri/chat-system-prompt.txt` (include_str!)
-- Live-Pool-Stats + Backend-Health werden in Rust geholt und in den System-Prompt injiziert
-- `content` + `reasoning_content` Fallback (Reasoning-Modelle)
-- Kein Streaming (einfacher invoke), kein Tauri-Event-ACL-Problem
-- Keine Next.js API Route nötig (statischer Export reicht)
+- Rust-Command `chat_send` → Pool-Router (`localhost:9998`)
+- Modell: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M input)
+- System-Prompt in `src-tauri/chat-system-prompt.txt`
+- Live-Pool-Stats + Backend-Health im System-Prompt
 
 ### CORS + Auth
-- `/api/v1/config` zu `public_prefixes` hinzugefügt (kein Auth-Token nötig)
+- `/api/v1/config` zu `public_prefixes` hinzugefügt
 - CORS Origins: `https://tauri.localhost`, `tauri://localhost`, `http://localhost:3000`, `http://localhost:8000`
 
 ### Tauri Build
-- Neue Dependencies: `reqwest` (HTTP), `tokio` (async), `futures-util` (stream)
-- `chat_send` Command registriert in `invoke_handler`
-- Clipboard-Plugin bleibt
+- Neue Dependencies: `reqwest`, `tokio`, `futures-util`
+- `chat_send` Command registriert
+
+---
 
 ## 🔧 V12 FIXES (2026-05-26)
 
 ### Pool-Router + 10 Proxys
-**Fix:** EIN Pool-Router (`:9998`) verteilt auf 10 Proxy-Instanzen (`:8888`-`:8897`):
-- Keine einzelnen Subdomains mehr — nur `sinatorpool-router.delqhi.com`
-- Router macht Auto-Failover bei 413/429/412/5xx
+- EIN Pool-Router (:9998) verteilt auf 10 Proxy-Instanzen (:8888-:8897)
+- Auto-Failover bei 413/429/412/5xx
 - Cooldown nach 3 Fehlern (60s Pause)
+- Start: `proxy/start-multi.sh`
 
-**Start:** `proxy/start-multi.sh` — startet alle 3 + killt alte Instanzen.
-
-### GMX Navigation V12 — Playwright Shadow DOM
-**Problem:** CUA `find_cua_window` findet Chrome-Tab mit leerem Titel (programmatische Tabs haben keinen Titel). `allEmailAddresses` iframe nicht erreichbar.
-**Fix:** Reiner Playwright-Ansatz — kein CUA für Navigation mehr nötig:
-1. Playwright connect zu Chrome über CDP
-2. `ACCOUNT-AVATAR-NAVIGATOR` Custom Element → JS `.click()` + `dispatchEvent(mouseenter)`
-3. Shadow DOM traversal → `"E-Mail Einstellungen"` Link klicken
-4. Settings-Seite lädt `signature/settings` iframe
-5. In iframe: `"E-Mail-Adressen"` Link klicken → `allEmailAddresses` iframe erscheint
-6. 20×1s Polling bis iframe gefunden
-
-**Dateien:** `agent_toolbox/core/gmx_service.py` — `_navigate_to_all_email_addresses()` komplett Playwright-basiert.
+### GMX Navigation — Playwright Shadow DOM
+- Reiner Playwright-Ansatz — kein CUA für Navigation
+- `ACCOUNT-AVATAR-NAVIGATOR` Custom Element → JS `.click()` + `dispatchEvent(mouseenter)`
+- Shadow DOM traversal → "E-Mail Einstellungen" → settings iframe → "E-Mail-Adressen"
+- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation
 
 ### Double-Key-Waste Fix (Atomic Report+Lease)
-**Problem:** Proxy `_swap_key()` rief `report()` + `lease()` separat auf → 2 Backend-Operationen, race-condition-risk, manchmal 2 Keys berührt.
-**Fix:** `pool_manager.report_key()` leaset Ersatz-Key jetzt **atomar** (im gleichen Lock wie suspend). Proxy nutzt `report()`-Result direkt — kein extra `lease()`.
+- `pool_manager.report_key()` leaset Ersatz-Key atomar (im gleichen Lock wie suspend)
+- Proxy `_swap_key()` nutzt `report()`-Result direkt — kein extra `lease()`
 
-**Backend:** `report_key(api_key, key_id, reason, leased_to, ttl_seconds)`
-**Proxy:** `_swap_key()` prüft `report_result.get("new_key")` → nutzt direkt.
-
-### 429 Handling — Client Return statt Intern Retry
-**Problem:** Transientes 429 → Proxy wartete intern 5s → retry → Client bekam Timeout/InvalidHTTPResponse.
-**Fix:** Transientes 429 wird SOFORT an Client zurückgegeben mit `Retry-After` Header. Kein internes Warten mehr.
+### 429 Handling — Client Return
+- Transientes 429 → SOFORT an Client zurück mit `Retry-After` Header
+- Kein internes Warten mehr
 
 ### Chrome Tab Cleanup
-**Problem:** Nach 4h Batch-Rotation → 37 Tabs offen → Chrome überlastet → `connect_over_cdp` Timeout.
-**Fix:** `rotate.py` schließt jetzt ALLE non-essential Tabs (nicht nur GMX/Fireworks). Nur Dashboard + 1 GMX-Inbox bleiben.
+- `rotate.py` schließt ALLE non-essential Tabs nach jeder Rotation
+- Nur Dashboard + 1 GMX-Inbox bleiben
 
 ### CDP Target Selection — Inbox bevorzugen
-**Problem:** `get_page_target()` bevorzugte `www.gmx.net` (Homepage) statt `navigator.gmx.net` (Inbox). Homepage hat keinen "Einstellungen"-Button.
-**Fix:** `get_page_target()` priorisiert jetzt `navigator.gmx.net` URLs über `www.gmx.net`.
+- `get_page_target()` priorisiert `navigator.gmx.net` über `www.gmx.net`
 
-## 🐛 BEKANNTE PROBLEME (2026-05-26)
+---
+
+## 🐛 BEKANNTE PROBLEME (2026-05-29)
 
 ### Fireworks Account Suspension (Spending Limit)
-Accounts werden gesperrt wenn das monatliche Spending Limit erreicht ist:
 ```
 Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
 spending limit or failure to pay past invoices.
@@ -119,2312 +149,111 @@ spending limit or failure to pay past invoices.
 - Betroffene Keys müssen als `used` markiert werden
 - Workaround: `POST /pool/report` oder `POST /pool/use` für suspended Keys
 
-### E2E Steps (proven working, ~180s total)
-0. **GMX Login (built-in)**: `rotate.py` Step 0 — Playwright-Login `opensin@gmx.de`, speichert frische Cookies
-1. **GMX Session**: Tab cleanup → `www.gmx.net` → "E-Mail" click → 15s SID-Polling
-2. **GMX Rotation**: Playwright shadow DOM navigation → allEmailAddresses iframe → delete + create (~41s)
-3. **Fireworks Logout**: CDP `Network.deleteCookies` + `clearBrowserCookies` (nur Fireworks-Domain!)
-4. **Signup**: `/signup` → `input[name="email"]` → 2x password → Create Account
-5. **OTP Poll**: GMX MailCheck extension → CDP OOPIF mailbody-ui.de → extract URL
-6. **Verify**: `Target.createTarget(verify_url)` → account confirmed
-7. **Login**: `/login` → "Email Login" → `input[name="email"]` + password → Next
-8. **Onboarding**: CUA "First" + "Last" (NOT "Name"!) → Terms checkbox → Continue
-9. **Playwright-Onboarding-Fallback**: Falls CUA Submit keinen Redirect triggert → Playwright füllt Formular + Submit
-10. **Use-Cases**: CUA dynamic scan text-based → checkboxes → Submit
-11. **API Key**: `/settings/users/api-keys` → Create API Key PopUpButton → menuitem → Generate (mit `disabled`-Wait + DOM-Polling)
-12. **Pool**: Auto-save to `data/fireworksai-pool.json`
+### OTP-Email Verzögerung
+- Fireworks Verify-Email kann bis zu 180s brauchen
+- Fix: 25×8s = 200s Polling in `signup_fireworks()`
+- Fallback: `partial` status — Account ist unverified aber oft loginbar
 
-### Architecture: Playwright + CUA Hybrid
+### Unverified Account = API Key Blocked
+- Account erstellt, aber unverified → API Key Seite redirected zu `/login`
+- Fix: Verify-URL muss geöffnet werden (oder Account ist verified)
+- Workaround: Nach `partial` signup → `login_fireworks()` versucht trotzdem
 
-| Layer | Tool | Purpose |
-|-------|------|---------|
-| Navigation | Playwright | ACCOUNT-AVATAR shadow DOM → "E-Mail Einstellungen" → settings iframe → "E-Mail-Adressen" |
-| Alias operations | Playwright new-tab | Open iframe URL in fresh tab → `fill()`, `click()` on top-level document |
-| React checkboxes | CUA | `AXPress` — Playwright `check()` ignoriert React |
-| Names input | CUA | `type_text` — real macOS keystrokes React can't ignore |
-| API Key dialog | Playwright | PopUpButton force-click → menuitem → fill → Generate |
-| OTP email | CDP | MailCheck Extension → click email → mailbody-ui.de OOPIF → extract URL |
-| Cookie management | CDP | `Network.deleteCookies` + `clearBrowserCookies` für Fireworks |
-| GMX Login | Playwright | `input[name="email"]`, `input[type="password"]`, button text matching |
+---
 
-### 🔧 V12 GMX NAVIGATION FIX (2026-05-26)
+## 🔑 CRITICAL PATTERNS (MANDATORY)
 
-**Problem:** CUA `find_cua_window` fand Chrome-Tab mit leerem Titel (programmatische Tabs haben keinen Titel). `allEmailAddresses` iframe nicht erreichbar. Nach 4h Batch-Rotation → 37 Tabs → Chrome überlastet → Playwright connect timeout.
-
-**Lösung — Reiner Playwright-Ansatz (CUA nicht mehr für Navigation nötig):**
-
+### Playwright Form Interaction
 ```python
-# STEP 1: Redirect from bap to normal navigator (falls nötig)
-for _pg in _b.contexts[0].pages:
-    if 'bap.navigator.gmx.net' in _pg.url:
-        _sid_m = _re.search(r'sid=([^&\s]+)', _pg.url)
-        if _sid_m:
-            await _pg.goto(f"https://navigator.gmx.net/mail?sid={_sid_m.group(1)}")
-
-# STEP 2: Click ACCOUNT-AVATAR-NAVIGATOR to open dropdown
-await _inbox_pg.evaluate("""
-    var avatar = document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
-    if(avatar){
-        avatar.click();
-        avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
-    }
-""")
-
-# STEP 3: Click "E-Mail Einstellungen" in shadow DOM
-await _inbox_pg.evaluate("""
-    var avatar = document.querySelector('ACCOUNT-AVATAR-NAVIGATOR');
-    var links = avatar.shadowRoot.querySelectorAll('a');
-    for(var i=0;i<links.length;i++){
-        var txt = links[i].textContent.trim().toLowerCase();
-        if(txt.includes('e-mail') && txt.includes('einstellung')){
-            links[i].click(); break;
-        }
-    }
-""")
-
-# STEP 4: Settings page loads with signature/settings iframe
-# In iframe, click "E-Mail-Adressen" → allEmailAddresses iframe appears
-for _f in _settings_pg.frames:
-    if '3c.gmx.net' in _f.url and 'settings' in _f.url:
-        await _f.evaluate("""
-            var links = document.querySelectorAll('a');
-            for(var i=0;i<links.length;i++){
-                if(links[i].textContent.trim().toLowerCase() === 'e-mail-adressen'){
-                    links[i].click(); break;
-                }
-            }
-        """)
-
-# STEP 5: Poll for allEmailAddresses iframe (20×1s)
-for _poll in range(20):
-    for _ctx in _b.contexts:
-        for _pg in _ctx.pages:
-            for _f in _pg.frames:
-                if 'allEmailAddresses' in _f.url:
-                    return _f.url
-    await asyncio.sleep(1)
-```
-
-**Wichtige Erkenntnisse:**
-- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation
-- Der Einstellungen-Button ist NUR im Postfach sichtbar, nicht auf der GMX-Startseite
-- Chrome Tab cleanup ist KRITISCH — nach jeder Rotation ALLE non-essential Tabs schließen
-- `get_page_target()` MUSS `navigator.gmx.net` (Inbox) bevorzugen, nicht `www.gmx.net` (Homepage)
-
-**Code-Änderungen in `gmx_service.py` (2026-05-26):**
-- `_navigate_to_all_email_addresses`: Komplett Playwright-basiert — CUA entfernt
-- `_navigate_to_inbox_for_cua`: `timeout=30000` statt 15000 für langsame GMX-Ladezeiten
-- `get_page_target()`: Priorisiert `navigator.gmx.net` über `www.gmx.net`
-- `rotate.py`: Aggressives Tab cleanup (schließt alle non-essential Tabs)
-
-**Anti-Pattern (NIEMALS):**
-```python
-# FALSCH — CDP navigate triggert IAC:
-await client.send_to_session(sid, "Page.navigate", {"url": ".../email_addresses?sid=..."})
-
-# FALSCH — CUA auf leeren Chrome-Tab-Titel:
-find_cua_window(title_keywords=["FreeMail"])  # Tab-Titel ist LEER!
-
-# FALSCH — 37 Tabs offen lassen → Chrome überlastet:
-# rotate.py muss ALLE non-essential Tabs schließen
-```
-
-### 🔑 CRITICAL PATTERNS (MANDATORY)
-
-```python
-# 1. `_re` import in JEDER function die CUA scanning nutzt
-import re as _re  # NIEMALS nur global! In jeder Funktion!
-
-# 2. CUA Names: "First"+"Last" suchen, NICHT "Name"
-el = _find_element("First", "AXTextField")  # richtig
-# el = _find_element("Name", "AXTextField")  # FALSCH! matcht "Company Name"
-
-# 3. CUA Scan + Click + Scan (REPEAT THIS EXACTLY)
-def _cua_scan():
-    r = subprocess.run(["cua-driver", "call", "get_window_state"],
-        capture_output=True, text=True, timeout=15,
-        input=json.dumps({"pid": pid, "window_id": wid}))
-    return json.loads(r.stdout).get('tree_markdown', '')
-
-def _find_element(text, el_type="AXButton"):
-    for line in _cua_scan().split('\n'):
-        s = line.strip()
-        if text in s and el_type in s:
-            m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
-            if m: return int(m.group(1))
-    return None
-
-# 4. Playwright form interaction
-page.locator('input[name="email"]').first.fill(email)  # KEIN type-Attribut!
+# Email/Password
+page.locator('input[name="email"]').first.fill(email)
 page.locator('input[name="password"]').first.fill(password)
-# Button matching via text content:
+
+# Button matching via text content
 for btn in await page.locator('button[type="submit"]').all():
     if 'Next' in (await btn.text_content() or ''):
         await btn.click(force=True); break
 
-# 5. GMX Alias Delete (Playwright iframe)
-frame = [f for f in page.frames if 'allEmailAddresses' in f.url][0]
-frame.locator(f'text={alias_email}').first.hover()
-frame.locator('[title*="löschen"]').first.click(force=True)
-# → CUA click OK in confirmation dialog
-
-# 6. GMX Alias Create (Playwright iframe)
-inp = frame.locator('input[type="text"]').first
-await inp.fill("name-123")
-btn = frame.locator('button:has-text("Hinzufügen")').first
-await btn.click(force=True)
-# verify: inp.input_value() == '' = success
-
-# 7. API Key (Playwright) — V6 mit disabled-Wait + DOM-Polling
-await page.goto("https://app.fireworks.ai/settings/users/api-keys")
-for btn in await page.locator('button').all():
-    if 'Create API Key' == (await btn.text_content() or '').strip():
-        await btn.click(force=True); break
-await page.locator('[role="menuitem"]:has-text("API Key")').first.click(force=True)
-for inp in await page.locator('input').all():
-    if 'name' in (await inp.get_attribute('name') or '').lower():
-        await inp.fill(key_name); break
-await asyncio.sleep(1)  # Wait für React Re-Render
-# Wait for disabled → enabled transition
+# API Key (Playwright) — disabled-Wait + DOM-Polling
 for _ in range(15):
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Generate' == txt and not await btn.is_disabled():
             await btn.click(force=True); break
-    else: await asyncio.sleep(0.5); continue
-    break
-# Poll für API Key im DOM (max 10s)
-api_key = None
-for _ in range(10):
-    body = await page.evaluate("document.body.innerText")
-    m = _re.search(r'fw_[a-zA-Z0-9]{20,}', body)
-    if m: api_key = m.group(0); break
-    await asyncio.sleep(1)
-if not api_key:
-    raise RuntimeError("API Key not generated")
 ```
 
-**API Key Error Handling:**
+### GMX Alias Delete (Playwright iframe)
 ```python
-# "Missing API Key Name!" Modal erkennen + schließen
-body = await page.evaluate("document.body.innerText")
-if 'Missing' in body and 'Name' in body:
-    for btn in await page.locator('button').all():
-        if 'Close' in (await btn.text_content() or ''):
-            await btn.click(force=True); break
-    await asyncio.sleep(1)
-    # Retry: fill + Generate
-```
-
-### 🏗️ Project Structure
-```
-SINator-fireworksai/
-├── agent_toolbox/
-│   ├── start_toolbox.py                  FastAPI Entrypoint
-│   ├── core/
-│   │   ├── cdp_client.py                Raw CDP Websocket Client
-│   │   ├── gmx_service.py               GMX: Session, Alias (Playwright+CUA+CDP), OTP
-│   │   ├── fireworks_service.py          V6: Playwright+CUA + Playwright-Onboarding-Fallback
-│   │   ├── browser_manager.py           Browser Lifecycle
-│   │   ├── pool_manager.py              API-Key Pool CRUD (available = total - used - suspended)
-│   │   ├── config_manager.py            GMX + Fireworks Credentials (data/config.json)
-│   │   ├── keychain_store.py            macOS Keychain CRUD + Migration
-│   │   └── cookie_manager.py            Cookie Management (legacy)
-│   └── api/
-│       ├── schemas.py                   Pydantic Models (PoolStatsResponse ohne leased)
-│       └── routes/
-│           ├── rotation.py              POST /rotation/full (liest config für credentials)
-│           ├── config.py                GET/POST /api/v1/config (GMX+FW credentials)
-│           ├── gmx.py                   GMX Alias Endpoints
-│           ├── fireworks.py             Fireworks Endpoints
-│           ├── browser.py               Browser Start/Stop/Status
-│           ├── cookies.py               Cookie Extract/Inject/Recover
-│           └── pool.py                  Pool Stats/Key/Get/Reveal/Health
-├── proxy/                               3× Pool-Proxy V12 (aiohttp SSE + auto-swap)
-├── tools/
-│   ├── rotate.py                        Single-command E2E (--gmx-email, --gmx-password, --password)
-│   └── gmx_alias_tool.py                CLI tool (rotates alias standalone)
-├── data/
-│   ├── fireworksai-pool.json            API-Key Pool (STORED_IN_KEYCHAIN Sentinel)
-│   └── config.json                       GMX + Fireworks Credentials
-├── AGENTS.md                            ← DIESE DATEI
-├── banned.md                            Verbotene Methoden
-├── sinrules.md                          Absolute Regeln
-├── plan.md                              BUILDING PLAN
-├── README.md                            Projekt-README
-└── plans/
-    ├── knowledge-base.md                Lessons Learned
-    └── 2026-05-21-fix-alias-creation.md Fix Plan
-```
-
-### 🔧 Chrome Configuration (IMMUTABLE)
-```bash
-# Chrome STARTEN (OHNE --force-renderer-accessibility!)
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 &
-sleep 6 && curl -s http://127.0.0.1:9222/json/version
-
-# Chrome BEENDEN (SIGTERM, not SIGKILL!)
-kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
-```
-
-**⚠️ NIEMALS `--force-renderer-accessibility` verwenden!**
-- MIT Flag: GMX zeigt "Barrierefreies Postfach" (Email-Rows NICHT klickbar!)
-- OHNE Flag: GMX funktioniert normal + CUA-Driver AX-Tree funktioniert trotzdem
-
-**⚠️ NIEMALS `pkill -9 -f "Google Chrome"`!** Killt User-Chrome → Session tot.
-
-### 🚫 BANNED METHODS (V9 — 2026-05-23)
-
-| ❌ Verboten | Grund |
-|------------|-------|
-| `GET /pool/health` ruft `mark_used()` auf | Destruktiver Side-Effect! 7 Keys auf einmal killed am 2026-05-23 — **FIXED: health ist jetzt read-only** |
-| `Dashboard.html` ruft `/pool/health` in `loadDashboard()` | Überschreibt pool/stats Anzeige mit health-Daten als used-count — **FIXED: entfernt** |
-| `PoolManager` ohne `reload()` vor public Methoden | Singleton hält stale State — liest nie von Disk. **FIXED: `reload()` in allen public Methoden** |
-| `_purge_gmx_cookies()` löscht Master-Backup | Löscht `backup/session/gmx-cookies-master.json` — **FIXED** |
-| `update_credits()` hat NULL Callers | Credits werden nie gezogen — alle Keys zeigen `credits_remaining=6.0` egal ob used oder nicht |
-
-### 🚫 BANNED METHODS (V8 — legacy)
-| ❌ Verboten | Grund |
-|------------|-------|
-| CDP `DOM.performSearch` + `getBoxModel` | Node-IDs stale (0) in 3c.gmx.net Cross-Origin-Iframes |
-| Playwright `check()` auf React-Checkbox | "Clicking did not change state" |
-| JS `.click()` auf React-Button | dispatchEvent ignoriert |
-| `input[type="email"]` auf Fireworks | Input hat KEIN `type`-Attribut! → `input[name="email"]` |
-| `/settings/workspace/api-keys` | 404 → `/settings/users/api-keys` |
-| `text=CREATE` als Button-Selector | Matcht Cookie-Banner |
-| Direkte Navigation zu `3c.gmx.net` | Triggert IAC Anti-Automation, Session tot |
-| Hardcodierte CUA element_index | React re-renders → alle Indizes ändern sich |
-| CUA `"Name"` statt `"First"` + `"Last"` | Matcht "Company Name" zuerst → falsches Feld |
-| `_re` import NUR global | Wird in inner function scope nicht gefunden |
-| `Network.clearBrowserCookies` global | Killt GMX-Session — nur für Fireworks Domain |
-| `page.goto()` zu iframe-URL | Triggert IAC restart, Session expired |
-| CUA Submit-Klick bei Onboarding | Triggert keinen Redirect → Playwright-Fallback nötig |
-| `ERR_BLOCKED_BY_RESPONSE` ignorieren | GMX Rate-Limiting → Cookies löschen + Chrome restart |
-| JS `.click()` auf `#nav-menu` Buttons (Wunsch-Mail) | GMX React/Wicket ignoriert programmatische Klicks (isTrusted=false) — ersetzt durch CUA Einstellungen → `mail_settings/mail_settings` |
-| CDP `Input.dispatchMouseEvent` auf versteckte Nav-Buttons | Button hat CSS `display:none` auf grandparent → Koordinaten (0,0) — auch nach force-CSS funktioniert GMX SPA nicht |
-| Direkte Navigation zu `3c-bap.gmx.net` | Session expired — `3c.gmx.net` (ohne -bap) funktioniert stattdessen |
-
----
-
-## ⬇️ ARCHIVED: V3/V4 CDP Documentation (2026-05-10 to 2026-05-21)
-
-**The following sections document the OLD CDP-based approach that was replaced by the V5 Playwright+CUA hybrid. They are kept for historical reference only. DO NOT use these methods for new development.**
-
-### V4 Playwright Flow — Verified 2026-05-21
-
-**Verification:** `neon-hawk-042@gmx.de` successfully created + verified.
-**Approach:** CUA for navigation, Playwright for form interaction, CDP DOM not used for form.
-
-### Alias Delete Flow (Playwright + CUA)
-
-```python
-# 1. Find allEmailAddresses iframe in mail_settings page
 frame = [f for f in page.frames if 'allEmailAddresses' in f.url][0]
-
-# 2. Mouseover alias email → delete icon appears  
 frame.locator(f'text={alias_email}').first.hover()
-await asyncio.sleep(1)
-
-# 3. Click delete icon (force=True — icon only visible after hover)
 frame.locator('[title*="löschen"]').first.click(force=True)
-await asyncio.sleep(2)
-
-# 4. CUA click OK in confirmation dialog
-cua-driver call click '{"pid": PID, "window_id": WID, "element_index": OK_INDEX}'
-await asyncio.sleep(3)
-
-# 5. Verify: alias_email not in frame.content()
 ```
 
-### Alias Create Flow (Playwright — iframe URL direkt)
-
+### GMX Alias Create (Playwright iframe)
 ```python
-# 1. Open allEmailAddresses iframe URL in new tab (bessere Wicket-Interaktion)
-new_page = await browser.new_page()
-await new_page.goto(iframe_url)  # z.B. https://3c-bap.gmx.net/.../allEmailAddresses;jsessionid=...
-
-# 2. Fill input + click Hinzufügen
-inp = new_page.locator('input[type="text"]').first
+inp = frame.locator('input[type="text"]').first
 await inp.fill("name-123")
-btn = new_page.locator('button:has-text("Hinzufügen")').first
+btn = frame.locator('button:has-text("Hinzufügen")').first
 await btn.click(force=True)
-await asyncio.sleep(5)
-
-# 3. Verify: input cleared = success
-if not await inp.input_value():
-    print("✅ Created!")
+# verify: inp.input_value() == '' = success
 ```
 
-### Session Refresh (wenn nötig)
-
+### CUA Onboarding (Fallback)
 ```python
-# Click "E-Mail" link → redirects to inbox with fresh SID
-gmx_page.get_by_role("link", name="E-Mail", exact=True).first.click()
-# Oder via CUA:
-cua-driver call click '{"pid": P, "wid": W, "element_index": 29}'
-```
-**Verification:** `python tools/gmx_alias_tool.py rotate` → ✅ success in ~15s
+# Names: "First" + "Last" suchen, NICHT "Name"
+el = _find_element("First", "AXTextField")  # richtig
+# el = _find_element("Name", "AXTextField")  # FALSCH!
 
-### ⚡ (ARCHIVED) MANDATORY PREFLIGHT — WURDE ENTFERNT
-
-**Note:** `preflight.py` was deleted in the V5 cleanup (2026-05-22). These instructions are historical only.
-
-```bash
-# This tool no longer exists — use manual verification instead:
-python tools/gmx_alias_tool.py rotate
+# Use-cases
+for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
+    el = _find_element(uc_text, "AXCheckBox")
+    if el: _cua_click(el)
 ```
 
-### ⚡ WAS FUNKTIONIERT (Ground Truth)
-
-```
-=== GMX Alias Rotation ===
-   Target: AUTO-GENERATED
-✅ Rotation
-   Status: success
-   Created: shadow-tiger-983@gmx.de
-   Deleted: echo-tiger-831@gmx.de
-   Steps OK: navigated_to_addresses → alias_deleted → input_found
-              → form_filled → add_button_clicked → alias_created
-   Time: 11.35s
-```
-
-### 🔒 GESCHÜTZTE METHODEN — TOD BEI ÄNDERUNG
-
-| Methode | Datei | Warum geschützt |
-|---------|-------|----------------|
-| `_navigate_to_all_email_addresses` | `gmx_service.py:441` | v3 CDP/JS-Navigation. CUA-Version ist TOT. |
-| `_resolve_gmx_oopif` | `gmx_service.py:619` | Navigiert zu `navigator.gmx.net/navigator/jump/to/mail_settings`. Nicht `bap.navigator.gmx.net`! |
-| `_find_hinzufuegen_button_coords` | `gmx_service.py:1283` | Button aus FORM des ERSTEN `localPart`-Inputs. NICHT Fun-Domain! |
-| `_click_button_via_cdp` | `gmx_service.py:1323` | CDP `Input.dispatchMouseEvent`. `form.submit()` triggert IAC! |
-| `_cdp_click` | `gmx_service.py:835` | CDP `Input.dispatchMouseEvent` (mouseMoved+pressed+released). JS dispatchEvent IGNORED! |
-| `_cua_click_ok_button` | `gmx_service.py:900` | Regex: `-\s*\[(\d+)\]\s*AXButton\s*"OK"`. CUA Markdown-Format! |
-| `_fill_alias_input_via_cdp` | `gmx_service.py:1394` | `nativeInputValueSetter`. `dispatchKeyEvent` IGNORED! |
-| `_verify_alias_in_iframe` | `gmx_service.py:1353` | JS `innerText.indexOf()`. `dom_search` HÄNGT! |
-| `_find_alias_input_via_cdp` | `gmx_service.py:1196` | Selectors: `name*='localPart'`, `placeholder*='ihr-name'`. Nicht `alias`! |
-| `_find_delete_icon_coords` | `gmx_service.py:848` | JS evaluate. `dom_search` HÄNGT! |
-| `_find_alias_coords_in_iframe` | `gmx_service.py:721` | JS evaluate. `dom_search` HÄNGT! |
-
-### ☠️ VERBOTENE ANSÄTZE (ausprobiert, ALLE fehlgeschlagen)
-
-| Ansatz | Warum gescheitert |
-|--------|------------------|
-| CDP `DOM.performSearch` + `getSearchResults` | Hängt auf `3c.gmx.net` (kein Response) |
-| CDP `DOM.getBoxModel` nach `performSearch` | Stale NodeIds, parentId=None |
-| JS `.click()` auf Delete-Icon | Wicket ignoriert `.click()` |
-| JS `dispatchEvent(MouseEvent)` auf Delete-Icon | Wicket prüft `isTrusted` (immer false) |
-| `form.submit()` für Hinzufügen-Button | Triggert `iac/restart` Anti-Automation |
-| CDP `Input.dispatchKeyEvent` für Input-Füllung | GMX React-Inputs ignorieren KeyEvents |
-| CDP `Input.dispatchMouseEvent` für Navigation | GMX ignoriert CDP-Level Maus-Events für Nav |
-| `bap.navigator.gmx.net/mail_settings` Navigation | Zeigt nur Shell, Content in Cross-Origin-Iframes |
-| CUA für Navigation | Produziert URLs ohne `sid=`, Session geht verloren |
-
-### 🧪 VOR JEDER ÄNDERUNG: VERIFICATION
-
-```bash
-# Nur dieser eine Befehl — NIEMALS mit && oder anderen Commands verketten!
-python tools/gmx_alias_tool.py rotate
-```
-
-Bei Fehler: `git checkout v3-working -- agent_toolbox/core/gmx_service.py`
-
-### ⚡ OTP/EMAIL — GMX MAILCHECK EXTENSION (PERMANENT, 2026-05-12)
-
-Extension ID: `camnampocfohlcgbajligmemmabnljcm`
-Methode: `_read_otp_via_extension()` in gmx_service.py
-
-Extension-Popup öffnen → Firefox-Email per sender_filter finden → klicken → GMX Mail öffnet Email → iframe navigieren → OTP-URL extrahieren.
-
-**☠️ BANNED für OTP:** HTTP mailbody API (403), CDP DOM API (hängt), Shadow DOM Traversal
-
----
-
-## ⚠️ GMX ALIAS BUG-FIX (2026-05-11 v2) — DIRECT NAVIGATION STATT OOPIF
-
-**Ursprüngliches Problem (Bug-Report):**
-> Alias-Formular liegt in Cross-Origin-Iframe. CDP DOM.getBoxModel crasht,
-> Input.dispatchMouseEvent mit hartcodierten Koordinaten (350, 340) klickt ins Leere.
-
-**Erste Diagnose (v1 — FALSCH):**
-> `3c.gmx.net` ist ein OOPIF. Wir müssen `Target.getTargets` nutzen, das
-> iframe-Target finden, eine separate child_session attachen, und dort
-> DOM-Operationen ausführen.
-
-**Echte Ursache (User-Diagnose 2026-05-11):**
-1. `3c.gmx.net` (Iframe 4) ist der **Mail-Client (Inbox)**, NICHT die Alias-Settings!
-   Dieser Iframe ist offscreen bei `rect=(-2400, -1742)`.
-2. Der aktive Alias-Settings-Iframe ist `navigator.gmx.net/navigator/jump/to/mail_settings`
-   (Iframe 7) mit `rect=(0, 80)` und `class app-stack__children--active`.
-3. **KEINER der Content-Iframes erscheint als CDP iframe-Target** — Chrome isoliert
-   sie NICHT als OOPIF. `Target.getTargets` liefert nur den Top-Level-Page-Target.
-4. **Direkte Navigation zu der Iframe-URL funktioniert:**
-   `https://bap.navigator.gmx.net/mail_settings?sid=...` zeigt die Settings-Seite
-   als vollständiges Dokument (kein Iframe nötig).
-
-**Fix v2 — DIRECT NAVIGATION:**
-`_resolve_gmx_oopif` wurde komplett umgebaut:
-- Statt `Target.getTargets` + iframe-attach → **direkte Navigation** zu
-  `bap.navigator.gmx.net/mail_settings?sid={session_id}`
-- Der "Iframe-Inhalt" ist jetzt der **Top-Frame** — keine OOPIF-Transformation nötig
-- `OopifContext` wird weiterhin für API-Kompatibilität genutzt, aber:
-  - `child_session_id = parent_session_id` (gleiche Session)
-  - `offset_x = offset_y = 0` (kein Transform)
-- `dom_search`, `node_content_box` etc. laufen direkt auf dem Top-Frame
-
-**Anti-Pattern — NIEMALS:**
+### OTP Polling (read_otp)
 ```python
-# FALSCH — Chrome isoliert GMX-Iframes NICHT als CDP-Targets:
-iframe = await client.find_iframe_target("3c.gmx.net")  # → None!
-
-# FALSCH — falscher Iframe (3c.gmx.net = Mail-Client, NICHT Alias-Settings):
-url_substring="3c.gmx.net"  # → Inbox, nicht Settings!
-
-# FALSCH — hartcodierte Klick-Koords:
-return {"x": 350, "y": 340}
-```
-
-**Korrektes Pattern:**
-```python
-# Direct Navigation — navigiere zur Settings-URL und arbeite auf Top-Frame
-oopif = await self._resolve_gmx_oopif(client, top_session)
-if not oopif: return None  # Nicht eingeloggt
-# oopif.child_session_id == oopif.parent_session_id (gleiche Session!)
-# oopif.offset_x == oopif.offset_y == 0 (kein Transform)
-node_ids = await client.dom_search(oopif.child_session_id, "@gmx.de")
-# Koordinaten sind direkt Top-Viewport-Koords (kein to_top nötig)
-```
-
-**Diagnose-Tool (aktualisiert für v2, DELETED in V5 cleanup):**
-**Note:** `tools/diagnose_oopif.py` was deleted in the V5 cleanup (2026-05-22).
-
-**Verifikations-Status:** v2-Fix gepusht auf `main`. User muss testen mit:
-```bash
-git pull origin main
-python tools/diagnose_oopif.py
-python tools/gmx_alias_tool.py status
-python tools/gmx_alias_tool.py rotate
+# 25 attempts × 8s = 200s max
+for attempt in range(25):
+    await asyncio.sleep(8)
+    otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=1, retry_delay=3)
+    if otp_result.get("status") == "success":
+        verify_url = otp_result.get("url") or otp_result.get("otp_url")
+        if verify_url: break
 ```
 
 ---
 
-## 🎯 ALIAS DELETE FLOW (Stand 2026-05-11 v2, Direct Navigation)
-
-**HYBRID: CDP DOM auf Top-Frame + Input.dispatchMouseEvent + CUA**
-
-Nach der direkten Navigation zu `bap.navigator.gmx.net/mail_settings?sid=...`
-ist der Alias-Content im **Top-Frame** (nicht mehr in einem Iframe).
-`child_session_id == parent_session_id`, `offset_x/y = 0`.
-
-```
-1. _resolve_gmx_oopif → navigiert zu mail_settings, returnt OopifContext
-   (child_session = parent_session, offset = 0)
-2. dom_search(session, "@gmx.de") → Text-Node-Treffer direkt im Top-Frame
-3. node_content_box(session, nid) → Koords sind bereits Top-Viewport
-4. Input.dispatchMouseEvent mouseMoved → HOVER → Delete-Icon rendert
-5. dom_search("löschen") → Delete-Icon Koords
-6. Input.dispatchMouseEvent pressed+released → Klick auf Delete-Icon
-7. CUA get_window_state → "OK"-Button im macOS-Dialog → CUA click "OK"
-8. _verify_alias_in_iframe(alias_email, present=False) → Server-Verifikation
-```
-
-**Implementation:** `agent_toolbox/core/gmx_service.py` Methoden
-`_resolve_gmx_oopif`, `_find_alias_coords_in_iframe`, `_cdp_hover`,
-`_find_delete_icon_coords`, `_cdp_click`, `_cua_click_ok_button`,
-`_verify_alias_in_iframe`, `delete_existing_alias`.
-
-## 🎯 ALIAS CREATE FLOW (Stand 2026-05-11 v2, Direct Navigation)
-
-**HYBRID: CDP DOM auf Top-Frame + Input.dispatchKeyEvent + CUA-Fallback**
-
-```
-1. _resolve_gmx_oopif → navigiert zu mail_settings, returnt OopifContext
-2. _find_alias_input_via_cdp → CSS-Selektoren (input[name*='alias'], type='email')
-   Koords sind direkt Top-Viewport (kein Transform). Falls kein CDP-Match:
-   CUA-AXTextField-Click als Fallback.
-3. CDP Input.dispatchMouseEvent → click auf Input
-4. CDP Input.dispatchKeyEvent type="char" → Zeichen tippen
-5. _find_hinzufuegen_button_coords mit input_y → dom_search("Hinzufügen")
-6. CDP Input.dispatchMouseEvent → Klick Hinzufügen
-7. _verify_alias_in_iframe(alias_email, present=True) → Server-Verifikation
-```
-
-**Implementation:** `agent_toolbox/core/gmx_service.py` Methoden
-`_resolve_gmx_oopif`, `_find_alias_input_coords`, `_find_alias_input_via_cdp`,
-`_fill_alias_input_via_cdp`, `_find_hinzufuegen_button_coords`,
-`_click_button_via_cdp`, `_verify_alias_in_iframe`, `create_alias`, `rotate_alias`.
-
-## 🚨 MANDATORY SCAN PROTOCOL (PERMANENT)
-niemals wieder machst du auch nurrrr eine kleine aktion bevor du nicht gesamten mac alle elemente gescannt hast vor und nach JEDEM klick
-
-## 🛠️ BROWSER WAIT COMMAND
-/browser-wait-element — warte auf selector element, timeout 15s, return: gefunden/nicht gefunden
-
-## ⚠️ EINFACHE REGEL — AX ELEMENT CLICK:
-Bei jedem Scan: Speichere VOLLSTÄNDIGEN PFAD + TEXT:
-```python
-elements = []
-for i, line in enumerate(lines):
-    stripped = line.strip()
-    if 'AXCheckBox' in stripped or 'AXButton' in stripped:
-        # Extrahiere den TEXT im element
-        text_match = re.search(r'AXButton "(.*?)"|AXCheckBox "(.*?)"', stripped)
-        if text_match:
-            text = text_match.group(1) or text_match.group(2)
-            # Extrahiere secondary ID (DIE RICHTIGE!)
-            parts = stripped.split('] - [')
-            sec_id = parts[1].split(']')[0]
-            
-            # Speichere: text + id
-            elements.append({
-                'text': text,
-                'element_index': int(sec_id),  # <-- DIESE ID, nicht tree_line!
-                'line': i
-            })
-```
-
-**Vor dem Click:** Rescan prüfen ob gespeicherter text IM AX-tree noch existiert:
-```python
-current_tree = get_ax_tree()
-if gesuchter_text in current_tree:
-    cua-driver click element_id
-else:
-    # RESCAN nötig! Element verschoben/geändert
-```
-
-**Regel:**
-> MATCH text + MATCH parent + MATCH id = CLICK
-> MATCH text + MISSING id = RESCAN
-
-## 🎯 PROJECT VISION
-
-**Ziel:** Automatisierte Erstellung von Fireworks AI API-Keys via GMX Alias → Fireworks Account → OTP Verification → API-Key Pool.
-
-**Endprodukt:** `POST /rotation/full` liefert einen `fw-...` API-Key. Jeder Key = ein neuer GMX Alias + ein neuer Fireworks Account + $5 Credits.
-
-**Stack:** Python + FastAPI + **CUA-DRIVER** (Native macOS AX, NOT CDP!)
-
-**Start:** `python agent_toolbox/start_toolbox.py` → `http://localhost:8000/docs`
-
----
-
-## 🚨 PROZESS-REGELN (aus Fehlschlägen gelernt)
-
-### REGEL 1: DELETE WRONG IMMEDIATELY
-Nach einem Fehlschlag: **SOFORT** Dateien/Ordner löschen die den failed approach enthalten.
-NIE: "vielleicht brauch ich das später" — es kostet nur Zeit beim nächsten Versuch.
-
-### REGEL 2: ONCE VERIFIED = READ-ONLY
-Ein funktionierender Code-Abschnitt wird NICHT mehr angefasst. NUR Änderungen für:
-Bug-Fix, Performance-Issue, neuer Use-Case. Bei Unsicherheit: NEUE Datei, nicht existierende ändern.
-
-### REGEL 3: FÜTTERE AGENTS.MD NACH JEDEM ERFOLG
-Neue Learnings → SOFORT in AGENTS.md. Prozedur:
-- Erfolg → AGENTS.md updaten (bewiesene Fixes, Koordinaten, Data Models)
-- Fehlschlag → banned.md updaten (verbotene Methode + warum)
-- Learnings NIE nur im Chat lassen
-
----
-
-## 🚨 ABSOLUTE REGELN — NIEMALS ÜBERTRETEN
-
-| VERBOTEN | WARUM |
-|---|---|
-| `git checkout -- .` / `git reset --hard` | Zerstört alle Arbeitsfortschritte |
-| `pkill -9 -f "Google Chrome"` | Zerstört unflushed SQLite → GMX Session tot |
-| Profil 901 nach /tmp kopieren | Cookies an Original-Pfad gebunden (macOS Keychain) → Session unbrauchbar |
-| `--user-data-dir=/tmp/...` | GMX-Session geht verloren |
-| `waitForNavigation()` bei GMX | GMX ist SPA — keine Page-Reloads → hängt ewig |
-
----
-
-## 🏗️ SYSTEM CONFIGURATION (IMMUTABLE)
-
-```
-Chrome Binary:     /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-User Data Dir:     /Users/jeremy/Library/Application Support/Google Chrome
-Profile:           Profile 901 ("SINator (Fireworks AI)")
-CDP Port:          9222
-Chrome User:       simoneschulze (macOS login profile)
-CDP Endpoint:      ws://127.0.0.1:9222/devtools/browser/...
-```
-
-**Chrome Start (DER EINZIG RICHTIGE WEG) — OHNE accessibility flag:**
-```bash
-# Chrome BEENDEN
-kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
-
-# Chrome STARTEN (OHNE --force-renderer-accessibility!)
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 &
-
-sleep 6 && curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; print('Chrome OK')"
-```
-
-**⚠️ WICHTIG: NIEMALS `--force-renderer-accessibility` verwenden!**
-- Mit dem Flag: GMX zeigt "Barrierefreies Postfach" (Email-Rows NICHT klickbar!)
-- Ohne dem Flag: GMX funktioniert normal + CUA-Driver AX-Tree funktioniert trotzdem
-
-**Chrome Beenden (SIGTERM, nicht SIGKILL):**
-```bash
-kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1)
-```
-
----
-
-## 🔧 CUA-DRIVER — NATIVE MACOS AX (NOT CDP!)
-
-**ENTDECKUNG:** 2026-05-10 — GMX erkennt CDP als Bot! HTTP requests return 413/302/403. 
-**LÖSUNG:** `cua-driver` nutzt native macOS Accessibility (AX) API — NICHT detectierbar!
-
-### CUA-DRIVER SETUP
-
-```bash
-# Start cua-driver daemon
-nohup cua-driver serve > /tmp/cua-driver.log 2>&1 &
-sleep 3 && cua-driver status
-
-# Ergebnis: socket: /Users/jeremy/Library/Caches/cua-driver/cua-driver.sock, pid: 87079
-```
-
-### WICHTIGE TOOLS
-
-| Tool | Beschreibung |
-|------|-------------|
-| `list_windows` | Alle Browser-Fenster mit pid, window_id, bounds |
-| `get_window_state` | AX-Tree als Markdown mit element_index |
-| `click` | AX-Press auf element_index (muss get_window_state VORHER im gleichen Turn) |
-| `press_key` | Key-Events an pid senden (cmd, shift, option, ctrl) |
-| `hotkey` | Tastenkombinationen (z.B. ["cmd", "left"]) |
-| `type_text` | Text an pid senden |
-| `screenshot` | PNG Screenshot |
-
-### GMX EMAIL WORKFLOW (HYBRID: CUA-DRIVER + CDP)
-
-**ENTDECKUNG:** GMX Email-Rows haben KEIN AXPress im AX-Tree. Email klicken funktioniert NUR via CDP JavaScript `item.click()`.
-
-```bash
-# 1. Chrome OHNE --force-renderer-accessibility starten!
-kill $(ps aux | grep "[c]hrome.*user-data-dir" | awk '{print $2}' | head -1) 2>/dev/null
-sleep 3
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run --no-default-browser-check \
-  "https://www.gmx.net" &>/dev/null &
-sleep 8
-
-# 2. Chrome Window finden
-cua-driver call list_windows '{"query": "Chrome"}'
-# → wID: 10372, pid: 96377, title: 'GMX - kostenlose E-Mail...'
-
-# 3. GMX Homepage State checken
-echo '{"pid": 96377, "window_id": 10372}' | cua-driver call get_window_state | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-lines = d['tree_markdown'].split('\n')
-print('Title:', [l for l in lines if 'AXWindow' in l][0][:80])
-for i, line in enumerate(lines[:60]):
-    if 'E-Mail' in line:
-        print(f'[{i}] {line}')
-"
-# → [28] AXLink (E-Mail)
-
-# 4. E-Mail Header Link klicken (CUA-Driver für Navigation!)
-cua-driver call click '{"pid": 96377, "window_id": 10372, "element_index": 28}'
-# → ✅ Performed AXPress on [28] AXLink ""
-
-# 5. Warten und GMX FreeMail Inbox prüfen
-sleep 5
-echo '{"pid": 96377, "window_id": 10372}' | cua-driver call get_window_state | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-lines = d['tree_markdown'].split('\n')
-print([l for l in lines if 'AXWindow' in l][0][:80])
-"
-# → "GMX FreeMail - Google Chrome"
-
-# 6. Email klicken (CDP JavaScript - CUA-Driver funktioniert NICHT!)
-# Via CDP client.evaluate():
-async def _click_fireworks_email_in_iframe(client, session_id):
-    click_result = await client.evaluate(
-        session_id,
-        """
-        (function() {
-            const selectors = [
-                '[class*="inbox-content"]',
-                '[class*="maillist"]',
-                '[class*="mail_list"]',
-                'main [class*="list"]'
-            ];
-            for (const sel of selectors) {
-                const el = document.querySelector(sel);
-                if (!el) continue;
-                const items = el.querySelectorAll('[class*="item"], [class*="row"], tr');
-                for (const item of items) {
-                    const text = item.innerText.toLowerCase();
-                    if (text.includes('fireworks') && (text.includes('verif') || text.includes('confirm'))) {
-                        item.click();
-                        return {clicked: true};
-                    }
-                }
-            }
-            return {clicked: false};
-        })()
-        """,
-        return_by_value=True
-    )
-    return click_result.get("result", {}).get("value", {}).get("clicked", False)
-```
-
-**HYBRID REGEL:**
-- **CUA-Driver** → Navigation (GMX Homepage → E-Mail Button → Inbox öffnen)
-- **CDP JavaScript** → Email klicken (GMX Email Rows haben kein AXPress!)
-
-**⚠️ KRITISCH: Chrome IMMER ohne --force-renderer-accessibility starten!**
-- MIT Flag: GMX zeigt "Barrierefreies Postfach" (NICHT klickbar!)
-- OHNE Flag: GMX zeigt normale Version (Email-Rows klickbar!)
-
-### AX-TREE STRUKTUR (GMX FREEMAIL)
-
-```
-AXApplication "Chrome"
-  - [0] AXWindow "GMX FreeMail..."
-    - [16] AXWebArea "GMX FreeMail"
-      - [28] AXButton "E-Mail"  ← Navigation
-      - [46] AXGroup (mail)
-        - [50] AXButton "E-Mail schreiben"
-        - [54] AXGroup (Posteingang 60/135)
-          - [56] AXButton "Posteingang"
-          - [192] AXGroup  ← Email Row Container
-            - [193] AXGroup  ← Star/Favorite
-            - [196] AXGroup  ← Sender
-              - [197] AXStaticText "no-reply@fireworks.ai"
-            - [198] AXGroup  ← Time
-              - [199] AXGroup (10.05.26 um 10:39 Uhr)
-            - [201] AXGroup  ← Subject
-              - [202] AXStaticText "Verify your Fireworks account"
-```
-
-### WICHTIGE FINDINGS (2026-05-10)
-
-1. **GMX zeigt accessible version** (Barrierefreies Postfach) bei `--force-renderer-accessibility`
-2. **Email rows haben KEIN AXPress** auf GMX accessible version — verified, all email rows only have AXShowMenu + AXScrollToVisible
-3. **AXLink Elements funktionieren** für externe Links (nicht für email rows!)
-4. **click_at() mit Koordinaten funktioniert NICHT** für email rows — tried y=160-210, x=400-600
-5. **double_click und right_click funktionieren NICHT** für email rows
-6. **Keyboard navigation (j, Enter) funktioniert NICHT** in GMX accessible version
-7. **JavaScript Apple Events lässt sich NICHT persistent aktivieren** — `page` tool execute_javascript fails even after enable_javascript_apple_events (Chrome relaunches but setting doesn't stick)
-8. **CDP wird als Bot erkannt** — GMX returns 413/302/403 für CDP requests
-9. **GMX FreeMail Radio Button** (element 86) navigiert zurück zu GMX mailbox
-
-### CUA-DRIVER EMAIL CLICK — BLOCKED
-
-**Problem:** GMX accessible version hat keine klickbaren email rows. Alle Elemente haben nur AXShowMenu + AXScrollToVisible, kein AXPress.
-
-**Versuchte Lösungsansätze (alle fehlgeschlagen):**
-- AXGroup time element [236] klicken → no-op
-- AXLink [223] klicken → öffnet Werbung (nicht email)
-- click_at(x=400-600, y=160-210) → keine Reaktion
-- double_click, right_click → keine Reaktion
-- Keyboard (j, Enter) → keine Reaktion
-- page tool execute_javascript → JS Apple Events deaktiviert
-
-**AX-Tree Struktur Email Row:**
-```
-[217] AXGroup (row container)
-  ├── [218] AXWebArea "generic_dach-adition" (WERBUNG!)
-  │   └── [223] AXLink (ad link - NICHT email!)
-  └── [229] AXGroup (email data - KEIN AXPress!)
-      ├── [230] AXGroup (icon "N")
-      ├── [233] AXGroup (sender)
-      │   └── [234] AXStaticText = "no-reply@fireworks.ai"
-      ├── [235] AXGroup (time)
-      │   └── [236] AXGroup (10.05.26 um 10:55 Uhr)
-      ├── [238] AXGroup (subject)
-      │   └── [239] AXStaticText = "Verify your Fireworks account"
-      └── [240] AXGroup (favorite button)
-```
-
-**Window IDs (Chrome pid 60032):**
-- GMX FreeMail: `window_id: 9790` (on screen, 1200x958 at x=367, y=76)
-
-**Nächste Versuche:**
-1. osascript direkt verwenden um JS Apple Events zu aktivieren
-2. Alternative: GMX mobile version oder andere Ansicht
-3. Direkt zu Fireworks verification URL navigieren
-4. GMX API für email access verwenden
-
-### GMX MAILCHECK CHROME EXTENSION (2026-05-10, VERIFIED 2026-05-13) — EINZIGER ERLAUBTER WEG
-
-**STATUS: ✅ VERIFIED WORKING — 2026-05-13**
-**ENTDECKUNG:** GMX MailCheck Extension in Chrome-Toolbar ist der EINZIG zuverlässige Weg für Email-Zugriff!
-
-**Warum NUR die Extension:**
-- `lightmailer-bs.gmx.net` URLs → HTTP 500
-- CDP `evaluate` im GMX Page-Kontext → wird als Bot erkannt (413/302/403)
-- Webmailer-DOM (`<webmailer-mail-list>` Shadow DOM) → `document.querySelector` findet NICHTS
-- CDP `DOM.performSearch` auf GMX DOM → hängt ewig (kein Response von 3c.gmx.net)
-
-**Extension ID:** `camnampocfohlcgbajligmemmabnljcm`
-**Popup URL:** `chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html`
-
-**Kompletter E-Mail-Lese-Workflow (VERIFIED 2026-05-13):**
-
-```python
-# 1. Extension-Popup als neuen Tab öffnen
-ext_target = await client.send("Target.createTarget", {
-    "url": "chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html"
-})
-ext_sid = await client.attach_to_target(ext_target)
-await asyncio.sleep(4)  # Extension laden lassen
-
-# 2. Email-Liste scannen (body.innerText enthält alle sichtbaren Emails)
-body = await client.evaluate(ext_sid, "document.body.innerText")
-# → "no-reply@fireworks.ai\nVerify your Fireworks account\n13:05"
-
-# 3. Email-Klick: Snapshot aller Target-IDs VOR dem Klick
-existing_ids = {t['targetId'] for t in await client.get_targets()}
-
-# 4. Email via JS klicken
-await client.evaluate(ext_sid, """
-    [...document.querySelectorAll('[data-email-id]')]
-        .find(el => el.innerText.includes('fireworks'))
-        .click()
-""")
-await asyncio.sleep(5)
-
-# 5. Neues mailbody-ui.de OOPIF-Target finden
-targets = await client.get_targets()
-mailbody = next(t for t in targets
-    if t['targetId'] not in existing_ids
-    and 'mailbody-ui.de' in t.get('url', ''))
-
-# 6. OOPIF attachen + Email-Body lesen
-mailbody_sid = await client.attach_to_target(mailbody['targetId'])
-body = await client.evaluate(mailbody_sid, "document.body.innerText")
-```
-
-**Email-Liste Struktur (Extension-DOM):**
-```html
-<a class="email" data-account="opensin@gmx.de" data-email-id="1778401259732654954">
-  <span class="email-sender">no-reply@fireworks.ai</span>
-  <span class="email-subject">Verify your Fireworks account</span>
-  <span class="email-datetime">10:20</span>
-</a>
-```
-
-**Email IDs:** Format `1778401259732654954` (18 Ziffern)
-
-**Output Example:**
-```
-MailCheck
-Aktualisieren    Logout
-124                             ← Anzahl Emails
-opensin@gmx.de
- Neue E-Mail schreiben    Öffnen / Schliessen
-no-reply@fireworks.ai
-Verify your Fireworks account    13:05
-no-reply@fireworks.ai
-Verify your Fireworks account    12:51
-Vercel
-557828 is your Vercel sign up code    10:37
-...
-```
-
-**WICHTIG:**
-- Extension zeigt Emails von `opensin@gmx.de` (Haupt-Account)
-- Alias-Emails (`phantom-beetle-xxx@gmx.de`) kommen auch hier an
-- Klick auf Email im Extension-Panel → öffnet GMX Webmail-Tab → `mailbody-ui.de` OOPIF erscheint
-- Email-Body ist NUR im `mailbody-ui.de` OOPIF lesbar (nicht im GMX-Tab selbst!)
-- Verify-URL Format: `https://app.fireworks.ai/signup/confirm?client_id=...&user_name=...&confirmation_code=...`
-- OOPIF-URL Format: `https://gmxnet.mailbody-ui.de/Mailbox/Mail/{email_id}/Body/html?target_origin=...`
-
-**Nächste Schritte:**
-1. Email-Detail-Inhalt extrahieren (Popup oder Alternative)
-2. OTP-URL aus Email-Body lesen
-3. Navigation zu Fireworks confirmation URL
-
-### SIN-CLIs/stealth-suite REPOS
-
-```bash
-# Explore SIN-CLIs/stealth-suite for cua-driver utilities
-gh repo view SIN-CLIs/stealth-suite
-# py-packages/drivers/ax_tree.py, cua_wrapper.py, cdp_client.py, apple_events.py
-```
-
----
-
-## 📂 PROJEKT-STRUKTUR
-
-```
-SINator-fireworksai/
-├── agent_toolbox/
-│   ├── start_toolbox.py           FastAPI Entrypoint (uvicorn)
-│   ├── core/
-│   │   ├── cdp_client.py          Raw CDP Websocket Client (KEIN Playwright)
-│   │   ├── gmx_service.py         GMX: Session, Alias rotate/delete/create
-│   │   ├── fireworks_service.py   Fireworks: E2E 20-Phasen Flow
-│   │   ├── browser_manager.py     Browser Lifecycle (Singleton)
-│   │   ├── pool_manager.py        API-Key Pool CRUD
-│   │   └── cookie_manager.py      Cookie Management (legacy)
-│   └── api/
-│       ├── schemas.py             Pydantic Request/Response Models
-│       └── routes/
-│           ├── rotation.py        POST /rotation/full  ← HAUPT-ENDPOINT
-│           ├── gmx.py             GMX Alias Endpoints
-│           ├── fireworks.py       Fireworks Standalone Endpoints
-│           ├── browser.py         Browser Start/Stop/Status
-│           ├── cookies.py         Cookie Extract/Inject/Recover
-│           └── pool.py            Pool Stats/Key/Get
-├── tools/
-│   └── gmx_alias_tool.py          ← VERIFIZIERTES READ-ONLY CLI-TOOL
-│                                  BEZEICHNUNG: VERIFIZIERT, NIEMALS ÄNDERN!
-├── data/
-│   └── fireworksai-pool.json      API-Key Pool (JSON)
-├── backup/session/
-│   └── gmx-cookies-master.json    Goldener Session-Backup (chmod 444, READ-ONLY!)
-├── AGENTS.md                      ← DIESE DATEI (Single Source of Truth)
-└── banned.md                      Verbotene Methoden
-```
-
-**Starten:** `python agent_toolbox/start_toolbox.py`
-**API Docs:** `http://localhost:8000/docs`
-
----
-
-## 🔄 ZUSTANDSMASCHINE — KOMPLETTER ROTATION FLOW
-
-### POST /rotation/full (HAUPT-ENDPOINT)
-
-```
-Request:
-{
-  "new_alias_name": null,           // Optional: eigener Name, sonst auto-generiert
-  "fireworks_password": "Passwort!", // Passwort für neuen FW Account (required)
-  "save_to_pool": true              // Key in Pool speichern (default: true)
-}
-
-Response:
-{
-  "status": "success|partial|failed|error",
-  "gmx_alias": "swift-hawk-842@gmx.de",
-  "fireworks_account": "swift-hawk-842@gmx.de",
-  "api_key": "fw-...",
-  "api_key_name": "swift",
-  "steps_completed": [...],
-  "steps_failed": [...],
-  "execution_time": "187.32s",
-  "error": null
-}
-```
-
----
-
-### Flow #0: GMX Login / Session Recovery (ensure_gmx_session)
-
-**Methode:** `GmxService.ensure_gmx_session(email, password, cdp_port)`
-
-```
-PRÜFUNG: Kann GMX Inbox erreicht werden?
-  → navigate(gmx.net) → click E-Mail (208, 44) → wait 5s
-  → URL enthält navigator.gmx.net/mail?sid= ?
-  → JA: Session OK → weiter zu Flow 1
-
-FALLS NICHT (Session korrupt):
-  a) JS click auf ACCOUNT-AVATAR → öffnet Shadow DOM Dropdown
-     → JS click auf Logout BUTTON (im Shadow DOM!)
-  b) JS click auf ACCOUNT-AVATAR → JS click auf Login
-     (ERSTE attempt - GMX ignoriert diesen Klick!)
-  b2) Email + Passwort eingeben und Login klicken (ignoriert)
-  c) JS click auf ACCOUNT-AVATAR → JS click auf Login
-     (ZWEITE attempt - jetzt erscheint Email-Form!)
-  d) Email: opensin@gmx.de → Click Weiter
-  e) Passwort: ZOE.jerry2024 → Click Login
-  f) Verifizieren: Click E-Mail → navigator.gmx.net/mail?sid= ?
-```
-
-**CRITICAL: Shadow DOM Handling**
-- ACCOUNT-AVATAR ist ein Custom Element mit Shadow DOM
-- CDP `click_at()` öffnet das Dropdown NICHT zuverlässig
-- `getBoundingClientRect()` gibt 0x0 für Shadow DOM Elemente zurück
-- **Lösung:** JS `.click()` auf das Custom Element + `.dispatchEvent(new Event('mouseenter'))`
-- Dann JS `.click()` auf Buttons im Shadow DOM via `avatar.shadowRoot.querySelectorAll('button')`
-- 3s Wait für Shadow DOM Rendering nötig
-
-**Login Formular:**
-- 2-Schritt Formular: Email → Weiter → Password → Login
-- Nach Login-Formular: Beide Felder (Email + Password) sichtbar
-- Buttons: "Weiter" dann "Login" (nicht "Anmelden")
-
-**Credentials:**
-- Email: `opensin@gmx.de`
-- Passwort: `ZOE.jerry2024`
-
-**WICHTIG:** Flow 0, 1, 2, 3 sind ALLE READ-ONLY! NIEMALS ÄNDERN außer bei konkretem Bug-Report!
-
-**Flow 0 Status:** ✅ VERIFIED — 54.93s durchschnittlich, 5/5 Tests erfolgreich — **READ-ONLY SINCE 2026-05-10**
-- Letzter Test: 2026-05-10, SID: 331e8dc82fec93376c05f1148c0bc2...
-- Ablauf: Logout → Login(ignoriert) → Login(funktioniert) → Email+Weiter → Passwort+Login → E-Mail Klick → SID
-- **FILE:** `agent_toolbox/core/gmx_service.py` — `_click_profile_icon_and_action()`, `_do_email_password_login()`, `ensure_gmx_session()`
-
----
-
-### ⚠️⚠️⚠️ Flow #1: GMX Alias Rotation — READ-ONLY VERIFIED (2026-05-10) ⚠️⚠️⚠️
-
-**STATUS: READ-ONLY — NIEMALS ÄNDERN!**
-
-**Breakdown-Recovery (2026-05-10):** Agent attempted "DOM exploration" to find Shadow-DOM input → rewrote `_navigate_to_all_email_addresses` with 75-line PFAD-based navigation → broke Flow #1 completely. **All 11 files reverted to commit `cf146a6`**. This proved Flow #1 works perfectly as-is — DO NOT touch.
-
-**File:** `agent_toolbox/core/gmx_service.py` (NIEMALS ändern!)
-**Verified at:** `cf146a6 fix: pool_manager dual-format support + AGENTS.md 5 factual corrections`
-**Last working:** 2026-05-09 — 29s per rotation, elron-runner-701@gmx.de created
-
-**Methode:** `GmxService.rotate_alias(new_alias_name=None, cdp_port=9222)`
-
-**Methode:** `GmxService.rotate_alias(new_alias_name=None, cdp_port=9222)`
-
-```
-Phase 1: GMX Session validieren
-         └─ _connect_to_browser(cdp_port) → client, session_id
-         └─ GMX Homepage → "E-Mail" click (coords 235, 33)
-         └─ Prüfe: bap.navigator.gmx.net/mail?sid=... → OK
-         └─ Wenn tot → Session Recovery (siehe unten)
-
-Phase 2: GMX Alias löschen (falls vorhanden)
-         └─ _navigate_to_all_email_addresses()
-           → navigate(gmx.net/mail_settings/email_addresses)
-           → Wicket SPA: Click "E-Mail-Adressen" im Header
-         └─ _delete_existing_alias()
-           → JS: .js-template.is-hidden.removeClass('is-hidden') → style.display=block
-           → Delete-Icon: a[title="E-Mail-Adresse löschen"] klicken
-           → OK-Button im Bestätigungs-Dialog
-           → Erfolg: "Ihr Eintrag wurde erfolgreich gelöscht"
-
-Phase 3: GMX Alias erstellen
-         └─ generate_alias_name() → "{adj}-{noun}-{3digits}" (z.B. "elron-vader-412")
-         └─ _fill_alias_input(client, session_id, alias_name)
-           → Input[name*="localPart"] füllen via CDP
-           → Events: input, change, blur
-         └─ _find_hinzufuegen_button() → Button finden
-         └─ _click_button_via_cdp(client, session_id, btn)
-           → CDP Input.dispatchMouseEvent (mousePressed + mouseReleased)
-         └─ _check_creation_success(client, session_id, alias_name)
-           → Alias in .table_body-row?
-           → "wurde erfolgreich angelegt"?
-           → Falls "nicht verfügbar" → neuer Name, max 3 Versuche
-         └─ Return: {status, created_alias, alias_name, steps_completed}
-
-Alias-Generator (32 Adjektive × 32 Nouns × 999 Suffix = ~1M Kombinationen):
-  ADJECTIVES: elron, dark, swift, iron, silver, golden, crystal, shadow,
-              storm, frost, blaze, thunder, cosmic, neon, cyber, quantum,
-              alpha, beta, delta, omega, zenith, nexus, vortex, pulse,
-              echo, phantom, spectra, turbo, hyper, ultra, mega, super
-  NOUNS:      vader, runner, hawk, wolf, fox, tiger, eagle, shark,
-              dragon, phoenix, falcon, panther, cobra, lynx, raven, jaguar,
-              bear, lion, whale, dolphin, puma, cheetah, otter, badger,
-              wolverine, raptor, condor, scorpion, spider, mantis, beetle
-```
-
----
-
-### Flow #2: Fireworks E2E Registry (fireworks_service.register())
-
-**Methode:** `FireworksService.register(email, password, gmx_password, cdp_port=9222)`
-
-```
-Phase 4: Fireworks Domain Cleanup (nur Fireworks-Cookies!)
-         └─ Network.getAllCookies → alle Cookies
-         └─ Network.deleteCookies für domain="app.fireworks.ai" oder "fireworks"
-         └─ GMX-Cookies BLEIBEN (shared browser, Profile 901)
-         └─ LocalStorage: fireworks.ai cleared
-
-Phase 5: Cookie Banner dismissen
-         └─ navigate("https://app.fireworks.ai/signup")
-         └─ _dismiss_cookie_banner(client, session_id):
-           → JS querySelector('.cky-btn-accept') → rect → center
-           → Falls not found → direktes JS-Query im Container
-           → Falls still not found → hardcoded fallback coords (1113.7, 805.5)
-           → CDP click_at() → mousePressed + mouseReleased
-           → Validierung: .cky-consent-container height=0 oder display=none
-           ��� Wait 2s
-
-Phase 6: Email → Next → Password → Create Account
-         └─ _fill_input(client, session_id, ['#email-display'], email)
-           → KRITISCH: nativeInputValueSetter verwenden!
-           → Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set
-           → Plus: Event('input', {bubbles: true, composed: true})
-           → KeyEvents funktionieren NICHT f��r React controlled inputs!
-         └─ _click_button(client, session_id, ['button:contains("Next")'])
-           → JS text matching: (btn.textContent||'').trim().toLowerCase() === 'next'
-           → CDP click_at() an Button-Center
-           → Wait 3s
-         └─ URL wechselt zu Step 2 (Password)
-         └─ _fill_input(client, session_id, ['input#password'], password)
-         └─ _fill_input(client, session_id, ['input#confirm-password'], password)
-         └─ _click_button(client, session_id, ['button:contains("Create Account")'])
-           → URL MUSS zu /signup/verify wechseln
-           → Wenn nicht → FAIL-HARD: return {status: "partial", steps_failed: ["account_creation_redirect_mismatch"]}
-
-Phase 7: GMX OTP Polling (30 retries × 6s = 180s)
-         └─ goto_inbox():
-           → navigate(gmx.net) → JS click "E-Mail" im Header
-           → Wait 3s → URL = bap.navigator.gmx.net/mail?sid=...
-         └─ OTP suchen im Main Frame DOM:
-           → selectors: inbox-content, maillist, mail_list, main [class*="list"]
-           → Suche nach "fireworks" + "verif" im innerText
-           → Falls Email gefunden aber kein URL → "needs_click" path
-           → Email row clicken → Email-Page scrapen für OTP URL
-           → URL Pattern: https://app.fireworks.ai/signup/verify?token=...
-         └─ Falls timeout: return {status: "partial", steps_failed: ["otp_not_found"]}
-         └─ Email-Delay kann 2-5min dauern → 180s ist nötig
-```
-
----
-
-### Flow #3: GMX OTP Email Detection (innerhalb Flow #2 — GMX OTP Polling)
-
----
-
-## 🔬 TECHNISCHE ERKENNTNISSE — Shadow DOM & Custom Elements
-
-### ACCOUNT-AVATAR Shadow DOM Struktur
-```
-ACCOUNT-AVATAR (Custom Element)
-└── #shadow-root
-    ├── .appa-user-icon
-    │   └── section.appa-user-icon__initials
-    │       └── appa-ui-lux-svg-icon (fallback icon)
-    └── #appa-account-flyout (Dropdown — wird via JS Events geöffnet)
-        ├── .appa-account-flyout__header
-        │   ├── .appa-account-flyout__avatar "JS"
-        │   ├── .appa-account-flyout__plan "FreeMail"
-        │   ├── h1 "Jerem Schulz"
-        │   └── p "opensin@gmx.de"
-        ├── section (Account Management Links)
-        │   ├── a "Account verwalten"
-        │   └── a "E-Mail Einstellungen"
-        ├── section (Action Buttons)
-        │   ├── button "Logout"           ← Y=384 (nach JS .click())
-        │   ├── button "Zum Postfach"   ← Y=432
-        │   └── button "Account wechseln" ← Y=480
-        └── section (Footer Links)
-            ├── a "Feedback"
-            └── a "Hilfe & Kontakt"
-```
-
-### Warum CDP click_at() NICHT funktioniert für Shadow DOM
-1. **getBoundingClientRect()** gibt **0×0** zurück für Shadow DOM Elemente
-2. **Custom Elements** reagieren auf interne Events, nicht auf CDP Mouse Events
-3. **ACCOUNT-AVATAR** öffnet Flyout nur bei `mouseenter` + `click` Events
-4. **Lösung:** JS `.click()` + `.dispatchEvent(new Event('mouseenter'))` auf das Custom Element
-
-### Korrekte Interaktions-Reihenfolge
-```javascript
-// 1. Avatar finden und öffnen
-var avatar = document.querySelector('ACCOUNT-AVATAR');
-avatar.click();
-avatar.dispatchEvent(new Event('mouseenter', {bubbles: true}));
-
-// 2. 3s warten für Shadow DOM Rendering
-
-// 3. Button im Shadow DOM via JS klicken
-var buttons = avatar.shadowRoot.querySelectorAll('button');
-for (var i=0; i<buttons.length; i++) {
-    if (buttons[i].textContent.trim().toLowerCase() === 'logout') {
-        buttons[i].click();
-        buttons[i].dispatchEvent(new Event('click', {bubbles: true}));
-    }
-}
-```
-
-### GMX Login Flow — Vollständige State Machine
-```
-State: LOGGED_IN
-  → ACCOUNT-AVATAR zeigt: "Zum Postfach", "Account wechseln"
-  
-State: LOGOUT (nach Klick auf "Logout")
-  → URL: https://www.gmx.net/logoutlounge
-  → Seite zeigt: "Login vorübergehend nicht möglich"
-  → Nach 3s Refresh: normale GMX Homepage
-  
-State: LOGIN_ATTEMPT_1 (erster Klick auf "Login")
-  → GMX IGNORIERT diesen Klick!
-  → URL bleibt: https://www.gmx.net/
-  → Kein Formular erscheint
-  
-State: LOGIN_ATTEMPT_2 (zweiter Klick auf "Login")
-  → Jetzt erscheint das Login-Formular!
-  → URL: https://auth.gmx.net/login?prompt=none&state=...
-  → Formular hat: Email-Input + Password-Input + "Login" Button
-  
-State: EMAIL_ENTERED
-  → Email eingeben + "Weiter" klicken
-  → URL bleibt gleich, Formular zeigt jetzt auch Password
-  
-State: PASSWORD_ENTERED  
-  → Password eingeben + "Login" klicken
-  → URL wechselt zu: https://bap.navigator.gmx.net/mail?sid=...
-  
-State: LOGGED_IN (wieder)
-  → Session OK! Weiter zu Flow 1.
-```
-
-### Element-Koordinaten (Viewport 1200×919)
-| Element | Selektor | X | Y | Typ |
-|---|---|---|---|---|
-| ACCOUNT-AVATAR | `document.querySelector('ACCOUNT-AVATAR')` | 1066 | 44 | Custom Element |
-| Logout Button | `avatar.shadowRoot.querySelectorAll('button')[0]` | 914 | 384 | BUTTON |
-| Zum Postfach | `avatar.shadowRoot.querySelectorAll('button')[1]` | 914 | 432 | BUTTON |
-| Account wechseln | `avatar.shadowRoot.querySelectorAll('button')[2]` | 914 | 480 | BUTTON |
-
----
-
-### Flow #3: GMX OTP Email Detection (innerhalb Flow #2 — GMX OTP Polling)
-
-```
-Herausforderung: GMX Emails sind im iframe (3c-bap.gmx.net/mail/client/start)
-                 Main Frame zeigt nur den Navigator-Frame mit iframe-URL
-                 OTP sucht im Main Frame → findet keine Emails
-
-Lösung: navigate(gmx.net) → JS click "E-Mail" → bap.navigator.gmx.net/mail?sid=...
-        OTP sucht im Main Frame DOM nach "fireworks" + "verif"
-        GMX Inbox URL ist: https://bap.navigator.gmx.net/mail?sid={sid}
-        Email-Liste ist im iframe aber der SID-Token reicht für HTTP-Zugriff
-
-GMX SPA Navigation (KRITISCH):
-  ❌ navigate("navigator.gmx.net/mail") → redirected zu www.gmx.net/
-  ✅ navigate("www.gmx.net/") → JS click "E-Mail" bei (235, 33) → Inbox URL erreicht
-
-Falls "needs_click":
-  → Email row finden: [class*="item"], [class*="row"], tr
-  → Row clicken → Email-Page öffnet sich
-  → Email-Page scrapen: innerHTML contains "fireworks.ai/signup/verify?token="
-```
-
----
-
-### Flow #4: Fireworks Login + Setup (Phase 6-12)
-
-```
-Phase 9:  Navigate zu /login → "Sign In" Button klicken
-         → URL: https://app.fireworks.ai/login
-         → Button "Sign In" bei coords ~(942, 398)
-
-Phase 10: "Email Login" oder "Use Email Instead" klicken
-         → Auf /login erscheint ein Email-Formular nach dem OAuth-Link
-
-Phase 11: Email + Password eingeben + "Next" klicken
-         → _fill_input() mit nativeInputValueSetter
-
-Phase 12: FirstName/LastName eingeben
-         → Aus Alias extrahieren: "swift-hawk" → Swift + Hawk
-         → nativeInputValueSetter verwenden
-
-Phase 13: Checkbox "I agree to Terms of Service" per CDP click
-         → Find via: checkbox, [type="checkbox"], label containing "Terms"
-
-Phase 14: "Continue" Button klicken
-
-Phase 15: Checkbox "Flexible capacity for production" per CDP click
-
-Phase 16: Checkbox "Conversational AI" per CDP click
-
-Phase 17: "Submit to get $5 Credits" klicken
-         → Find via: button text containing "$5 Credits"
-
-Phase 18: Credits-Aktivierung abwarten
-         → 15s initial wait
-         → 5×2s Polling: Seite scannen nach "credits" oder "activated"
-         → Falls Credits nicht aktiv: continue anyway (partial)
-
-Phase 19: Navigate zu /settings/workspace/api-keys
-         → URL: https://app.fireworks.ai/settings/workspace/api-keys
-
-Phase 20: API Key erstellen
-         → "Create API Key" Button klicken
-         → Name eingeben: alias-YYYY-MM-DD
-         → "Generate Key" Button klicken
-         → Key extrahieren: fw-[a-zA-Z0-9]{20,} Pattern
-         → Key speichern in data/fireworksai-pool.json via pool_manager.add_key()
-```
-
----
-
-## 🔧 SESSION RECOVERY PROTOKOLL
-
-### Wenn GMX Session TOT:
-
-```
-1. Browser beenden: kill $(ps aux | grep "[c]hrome.*user-data-dir" ...)
-2. Chrome neu starten (Chrome Start Befehl)
-3. GMX Homepage → "E-Mail" click → navigator.gmx.net/mail?sid=... prüfen
-```
-
-### Session Validierung (IMMER VOR JEDER OPERATION):
-
-```python
-async def _validate_gmx_session(client, session_id):
-    await client.navigate(session_id, "https://www.gmx.net/")
-    await asyncio.sleep(3)
-    await client.click_at(session_id, 235, 33)  # "E-Mail" Header
-    await asyncio.sleep(5)
-    url = await client.evaluate(session_id, "window.location.href")
-    return "navigator.gmx.net/mail?sid=" in url or "bap.navigator.gmx.net/mail?sid=" in url
-```
-
----
-
-## 🛠️ GMX ALIAS TOOL — VERIFIZIERTES INTERAKTIONS-TOOL
-
-**⚠️ READ-ONLY VERIFIED — ÄNDERN VERBOTEN!**
-Dieses Tool wurde getestet und verifiziert. Alle GMX-Operationen nutzen die
-bewiesenen GmxService-Methoden. Nächster Agent darf dieses Tool NICHT ändern.
-
-### Pfad
-```
-tools/gmx_alias_tool.py
-```
-
-### Usage
-```bash
-# Session-Status prüfen
-python tools/gmx_alias_tool.py status
-
-# Detaillierte Session-Validierung
-python tools/gmx_alias_tool.py check
-
-# Alias rotieren (delete + create, auto-generiert)
-python tools/gmx_alias_tool.py rotate
-
-# Alias rotieren mit bestimmtem Namen
-python tools/gmx_alias_tool.py rotate swift-hawk-999
-
-# Nur Alias erstellen (auto-generiert)
-python tools/gmx_alias_tool.py create
-
-# Alias mit bestimmtem Namen erstellen
-python tools/gmx_alias_tool.py create thunder-dragon-500
-
-# Alias löschen (mit Bestätigung)
-python tools/gmx_alias_tool.py delete
-```
-
-### API Alternative (FastAPI)
-```bash
-# Alias rotieren
-curl -X POST http://localhost:8000/gmx/alias/rotate
-
-# Alias mit bestimmtem Namen
-curl -X POST "http://localhost:8000/gmx/alias/rotate" \
-  -H "Content-Type: application/json" \
-  -d '{"new_alias_name": "swift-hawk-999"}'
-
-# Nur erstellen
-curl -X POST "http://localhost:8000/gmx/alias/create?alias_name=thunder-dragon-500"
-
-# Session prüfen
-curl -X POST http://localhost:8000/gmx/session/check
-
-# Alias löschen
-curl -X POST http://localhost:8000/gmx/alias/delete
-```
-
-### Output-Beispiele
-```
-=== GMX Alias Rotation ===
-   Target: swift-hawk-999
-
-✅ Rotation
-   Status: success
-   Created: swift-hawk-999@gmx.de
-   Deleted: neon-phoenix-307@gmx.de
-   Steps OK: navigated_to_addresses → alias_deleted → form_filled → add_button_clicked → alias_created
-   Time: 16.46s
-```
-
-### Intern implementiert via:
-- `GmxService.rotate_alias(new_alias_name, cdp_port)` → verifiziert ✅
-- `GmxService.create_alias(alias_name, cdp_port)` → verifiziert ✅
-- `GmxService.delete_existing_alias(cdp_port)` → verifiziert ✅
-- `GmxService.check_session(cdp_port)` → verifiziert ✅
-- `get_browser_ws_endpoint()` → urllib-basiert, funktioniert ✅
-
-### WICHTIG: Browser muss laufen!
-Vor Nutzung: `curl -X POST http://localhost:8000/browser/start`
-Falls Session tot: `curl -X POST http://localhost:8000/cookies/inject`
-
----
-
-## 🔧 BACKUP-STRUKTUR (für Session Recovery)
-
-```
-backup/session/
-└── gmx-cookies-master.json  ← Goldener Master (chmod 444, READ-ONLY!)
-```
-
----
-
-## 📁 DATENMODELL
-
-### data/fireworksai-pool.json (PoolManager)
-
-PoolManager unterstützt BEIDE Formate: Legacy `{"accounts": [...]}` und neues `[{...}]`.
-```json
-// Neues Format (empfohlen) — Plain Array
-[
-  {
-    "id": "uuid-8-stellig",
-    "api_key": "fw-Za4b8C2d1E9f0G3h...",
-    "alias_email": "swift-hawk-842@gmx.de",
-    "key_name": "swift-hawk",
-    "created_at": "2026-05-09T12:00:00Z",
-    "used": false,
-    "used_at": null
-  }
-]
-
-// Legacy Format (noch auf Disk: {"accounts": []})
-// PoolManager erkennt beide automatisch via _load()
+## 📁 ARCHITECTURE
+
+```
+agent_toolbox/
+├── core/
+│   ├── fireworks_service.py    V6: Playwright+CUA Hybrid (655 lines)
+│   ├── gmx_service.py          Playwright-native (910 lines)
+│   ├── pool_manager.py         Pool-Stats + Key-Management (518 lines)
+│   ├── config_manager.py       GMX+FW Credentials (46 lines)
+│   └── cua_helper.py           CUA Window Detection (nur für Onboarding)
+├── api/
+│   └── routes/
+│       ├── config.py           GET/POST /api/v1/config
+│       ├── pool.py             Pool-CRUD + Stats
+│       └── gmx.py              GMX Alias API
+└── start_toolbox.py            FastAPI entry point
+
+proxy/
+├── server.py                   Pool-Proxy (596 lines) + /v1/models Handler
+└── start-multi.sh              Startet Pool-Router + 10 Proxys
+
+tools/
+├── rotate.py                   V7: Playwright-native (108 lines)
+├── gmx_alias_tool.py          GMX Alias CLI (read-only verified)
+└── test_fireworks_api.py      API-Test
+
+Dashboard (Tauri):
+src-tauri/src/
+├── main.rs                     chat_send Command (reqwest → Pool-Proxy)
+└── chat-system-prompt.txt      System-Prompt für Chat-Assistent
 ```
-
-**PoolManager API:**
-- `add_key(api_key, alias_email, key_name)` → {status, key_id}
-- `get_available_key()` → {api_key, alias_email, key_name, ...} oder None
-- `mark_used(key_id)` → True/False
-- `get_stats()` → {total, used, available, keys: [...]}
-- `save()` → schreibt pool.json
-
-### data/fireworksai-pool.json
-
-API-Key Pool im Plain-Array Format:
-```json
-[
-  {
-    "id": "uuid-8-stellig",
-    "api_key": "fw-Za4b8C2d1E9f0G3h...",
-    "alias_email": "swift-hawk-842@gmx.de",
-    "key_name": "swift-hawk",
-    "created_at": "2026-05-09T12:00:00Z",
-    "used": false,
-    "used_at": null
-  }
-]
-```
-
-**PoolManager API:**
-- `add_key(api_key, alias_email, key_name)` → {status, key_id}
-- `get_available_key()` → {api_key, alias_email, key_name, ...} oder None
-- `mark_used(key_id)` → True/False
-- `get_stats()` → {total, used, available, keys: [...]}
-- `save()` → schreibt pool.json
-
----
-
-## 📡 API ENDPOINTS (VOLLSTÄNDIG)
-
-### Browser
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| POST | `/browser/start` | `{profile_name, cdp_port, headless}` | `{status, browser_info, execution_time}` |
-| POST | `/browser/stop` | — | `{status, cleanup_info, execution_time}` |
-| GET | `/browser/status` | — | `{is_running, cdp_port, page_count}` |
-
-### GMX
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| POST | `/gmx/session/check` | — | `{status, current_url, session_active}` |
-| POST | `/gmx/email-addresses` | — | `{status, current_url, title}` |
-| POST | `/gmx/alias/delete` | — | `{status, deleted, alias}` |
-| POST | `/gmx/alias/rotate` | `{new_alias_name}` | `{status, deleted_alias, created_alias, steps_completed, steps_failed}` |
-| POST | `/gmx/alias/create` | `alias_name` (query param) | `{status, alias_email, alias_name}` |
-| POST | `/gmx/inbox/open` | — | `{status, current_url}` |
-| POST | `/gmx/otp/read` | `sender_filter, max_retries` | `{status, otp_url, email_subject}` |
-
-### Fireworks
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| POST | `/fireworks/register` | `{email, password}` | `{status, account_email}` |
-| POST | `/fireworks/confirm` | `{confirm_url, email, password}` | `{status, account_confirmed}` |
-| POST | `/fireworks/apikey` | `{key_name}` | `{status, api_key, key_name}` |
-
-### Cookies
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| POST | `/cookies/extract` | `{domain_filter, save_to_file}` | `{status, cookie_count, saved_to}` |
-| POST | `/cookies/inject` | `{filename, verify_session}` | `{status, injected_count, session_active}` |
-
-### Pool
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| GET | `/pool/stats` | — | `{status, total, used, suspended, available, keys}` |
-| GET | `/pool/reveal/{key_id}` | — | `{status, api_key}` (hydratisiert aus Keychain) |
-| POST | `/pool/key/use` | `{key_id}` | `{status, key_id}` |
-| POST | `/pool/lease` | `{ttl_seconds, leased_to}` | `{status, key_id, api_key, lease_id}` |
-| POST | `/pool/return` | `{key_id, lease_id}` | `{status}` |
-| POST | `/pool/report` | `{api_key, key_id, reason}` | `{status}` |
-| POST | `/pool/add` | `{api_key, alias_email, key_name}` | `{status, key_id}` |
-
-### Config
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| GET | `/config` | — | `{gmx_email, gmx_password, fireworks_password}` |
-| POST | `/config` | `{gmx_email, gmx_password, fireworks_password}` | `{gmx_email, fireworks_password}` |
-
-### Rotation (HAUPT)
-| Methode | Endpoint | Request | Response |
-|---|---|---|---|
-| POST | `/rotation/full` | `{new_alias_name, fireworks_password, save_to_pool}` | `{status, gmx_alias, fireworks_account, api_key, api_key_name, steps_completed, steps_failed}` |
-
----
-
-## 🐛 BEKANNTE PROBLEME & FIXES (KRITISCH)
-
-### `_fill_input` React Controlled Components ← WICHTIGSTER FIX
-**Problem:** Fireworks.ai verwendet React `useState` für alle Inputs.
-`input.value = 'text'` setzt den DOM-Wert aber React-State bleibt LEER →
-"Next" klicken hat keinen Effekt, Form advance nicht.
-
-**Fix:** `nativeInputValueSetter` — exakt dieser Code:
-```javascript
-const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-nativeSetter.call(input, 'test@gmx.de');
-input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
-```
-
-**KeyEvents (`Input.dispatchKeyEvent`) funktionieren NICHT für Sonderzeichen
-(`.`, `@`, `!`). KeyEvents nur für einfache alphanumerische Strings.
-
-### Cookie Banner dismiss
-**Problem:** `_find_element()` findet `.cky-btn-accept` nicht (Shadow DOM).
-Button ist in DOM aber nicht per CDP querySelector erreichbar.
-
-**Fix:** Direktes JS-Query + Fallback auf hardcoded coords (1113.7, 805.5).
-Button rect ist BEWIESEN: top=785.5, left=1052.5, w=122.5, h=40.0.
-
-### GMX SPA Navigation
-**Problem:** `navigate("navigator.gmx.net/mail")` redirected zu `www.gmx.net/`.
-
-**Fix:** `navigate(gmx.net)` → `click_at(235, 33)` → wait → URL prüfen.
-NIEMALS `waitForNavigation()` verwenden (GMX ist SPA).
-
-### OTP Email Detection
-**Problem:** OTP Polling sucht im Main Frame DOM aber GMX Emails sind im iframe.
-
-**Fix:** navigate(gmx.net) → JS click "E-Mail" → inbox URL = bap.navigator.gmx.net/mail?sid=...
-Im Main Frame nach "fireworks" + "verif" suchen.
-"needs_click" path: Email row clicken → Email-Page scrapen → OTP URL finden.
-
-### Account Creation Redirect
-**Problem:** "Create Account" klicken aber URL wechselt nicht zu `/signup/verify`.
-
-**Fix:** FAIL-HARD. Kein `/signup/verify` in URL = `account_creation_redirect_mismatch`.
-Account wurde NICHT erstellt. Session recover und erneut versuchen.
-
-### GMX FreeMail: Nur EIN Alias
-**Problem:** GMX FreeMail erlaubt nur einen Alias gleichzeitig.
-
-**Fix:** Vor neuer Alias-Erstellung existierenden Alias löschen (Phase 2).
-Falls delete fehlschlägt → trotzdem neuen erstellen (partial success).
-
-### GMX Session bei Chrome-Neustart
-**Problem:** Nach Chrome-Neustart sind GMX-Session-Cookies weg.
-
-**Fix:** Chrome mit Profil 901 starten → GMX Session wird automatisch
-wiederhergestellt (Cookies sind im Chrome-Profil gespeichert).
-
----
-
-## 🔧 CDP CLIENT API
-
-**CDPClient** (connected mit ws_url):
-```python
-client = CDPClient("ws://127.0.0.1:9222/devtools/browser/...")
-await client.connect()
-
-# Session management
-targets = await client.get_targets()            # Alle Tabs
-session_id = await client.attach_to_target(target_id)  # An Tab attachen
-await client.disconnect()
-
-# Navigation
-await client.navigate(session_id, "https://...")        # Page.navigate
-await client.click_at(session_id, x, y)                  # Input.dispatchMouseEvent
-
-# JS Execution
-result = await client.evaluate(session_id, "document.body.innerText", return_by_value=True)
-# → {"result": {"type": "object", "value": {...actual data...}}}
-
-# Low-level CDP
-await client.send(session_id, "Page.screenshot", {"format": "png"})
-await client.send_to_session(session_id, "Network.getAllCookies")
-await client.send_to_session(session_id, "Network.deleteCookies", {"name": "...", "domain": "..."})
-
-# Helpers
-await client.screenshot(session_id, path="/tmp/screen.png")  # Full page screenshot
-await client.get_document(session_id)                          # DOM snapshot
-await client.query_selector(session_id, selector, root_id)    # Find element
-await client.get_box_model(session_id, node_id)               # Element rect
-```
-
-**CDP click_at() vs JS .click() — WICHTIGE UNTERSCHIEDE:**
-
-| Methode | Funktioniert für | Nicht für | Beispiel |
-|---|---|---|---|
-| `click_at(x, y)` | Normale DOM Elemente, Links, Buttons | Shadow DOM, Custom Elements | E-Mail Header Link |
-| JS `.click()` | Shadow DOM, Custom Elements, React controlled inputs | — | ACCOUNT-AVATAR Dropdown |
-
-**Regel:**
-- Normale Elemente → `click_at()` (echte Maus-Events)
-- Shadow DOM / Custom Elements → JS `.click()` + `.dispatchEvent()`
-- React Inputs → `nativeInputValueSetter` + `Event('input')`
-
----
-
-## 🔍 DEBUGGING COMMANDS
-
-```bash
-# Chrome Prozess?
-ps aux | grep -i "[c]hrome.*user-data-dir" | head -3
-
-# CDP Port erreichbar?
-curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['webSocketDebuggerUrl'])"
-
-# GMX Session validieren (Python)?
-python3 - << 'PYEOF'
-import asyncio, sys
-sys.path.insert(0, '/Users/jeremy/dev/SINator-fireworksai/agent_toolbox/core')
-from cdp_client import CDPClient, get_browser_ws_endpoint
-async def validate():
-    ws = await get_browser_ws_endpoint(9222)
-    c = CDPClient(ws)
-    await c.connect()
-    targets = await c.get_targets()
-    sid = await c.attach_to_target(targets[0]['targetId'])
-    await c.navigate(sid, "https://www.gmx.net/")
-    await asyncio.sleep(3)
-    await c.click_at(sid, 235, 33)
-    await asyncio.sleep(5)
-    url = await c.evaluate(sid, "window.location.href")
-    print(f"URL: {url.get('result',{}).get('value')}")
-    print(f"Session OK: {'navigator.gmx.net/mail?sid=' in url.get('result',{}).get('value','')}")
-    await c.disconnect()
-asyncio.run(validate())
-PYEOF
-
-# Cookie Banner prüfen?
-python3 - << 'PYEOF'
-# Navigate zu FW signup → evaluate: document.querySelector('.cky-btn-accept').getBoundingClientRect()
-PYEOF
-
-# Pool Stats?
-curl -s http://localhost:8000/pool/stats | python3 -m json.tool
-```
-
----
-
-## 📚 REFERENZEN
-
-| Thema | Datei | Key Methods |
-|---|---|---|
-| Verbannte Methoden | `banned.md` | — |
-| CDP Websocket Client | `agent_toolbox/core/cdp_client.py:85` | connect, navigate, click_at, evaluate, send_to_session, **get_browser_ws_endpoint (urllib)** |
-| GMX Session & Alias | `agent_toolbox/core/gmx_service.py` | **ensure_gmx_session (Flow 0)**, rotate_alias, create_alias, delete_existing_alias, check_session |
-| GMX Alias CLI Tool | `tools/gmx_alias_tool.py` | status, check, rotate, create, delete — **READ-ONLY VERIFIED, NEVER CHANGE** |
-| Fireworks E2E | `agent_toolbox/core/fireworks_service.py` | register(email, password, gmx_password) |
-| Rotation Orchestrator | `agent_toolbox/api/routes/rotation.py` | POST /rotation/full (liest config für credentials) |
-| Config Manager | `agent_toolbox/core/config_manager.py` | get_config(), Config.save(), data/config.json |
-| Config API | `agent_toolbox/api/routes/config.py` | GET /api/v1/config, POST /api/v1/config |
-| Pool Manager | `agent_toolbox/core/pool_manager.py` | add_key, get_available_key, mark_used, get_stats (available = total - used - suspended) |
-| Keychain Store | `agent_toolbox/core/keychain_store.py` | store_key, retrieve_key, delete_key, SENTINEL |
-| Browser Lifecycle | `agent_toolbox/core/browser_manager.py` | start, stop, is_running |
-| GMX API Routes | `agent_toolbox/api/routes/gmx.py` | POST /gmx/alias/rotate, /gmx/alias/create, /gmx/alias/delete |
-| Pool Routes | `agent_toolbox/api/routes/pool.py` | stats, reveal, lease, return, report, add, health |
-| API Schemas | `agent_toolbox/api/schemas.py` | RotationRequest, PoolStatsResponse (ohne leased), alle Models |
-| FastAPI Entrypoint | `agent_toolbox/start_toolbox.py` | FastAPI app, CORS, public_prefixes |
-| Chat System Prompt | `src-tauri/chat-system-prompt.txt` | SINator-Wissen für Hilfe-Assistenten |
-| E2E Rotation Script | `tools/rotate.py` | --gmx-email, --gmx-password, --password, --cdp-port |
-
----
-
-## 🏛️ INCIDENT LOG — Niemals wiederholen!
-
-### 2026-05-26: Double-Key Waste — Pool Proxy lease_backup (GEFIXT)
-
-**Was passiert ist:**
-Jeder Key-Swap im Pool-Proxy hat ZWEI Keys geleast statt einem. Der zweite Key
-(backup-backup) wurde nie genutzt, nie returned, einfach verschwendet.
-
-**Ursache:**
-Drei Defaults standen auf `True`:
-1. `proxy/config.py:8` — `SIN_LEASE_BACKUP` env default `"true"`
-2. `proxy/pool_client.py:19` — `cfg.get("lease_backup", True)`
-3. `proxy/setup.sh:43` — `'lease_backup': True` (cached config)
-
-**Ablaufkette:**
-1. `_fetch_backup()` → `pool_client.lease(lease_backup=True)`
-2. POST `/pool/lease` mit `lease_backup: true`
-3. `pool_manager.lease_key(lease_backup=True)` leased 1 Key, dann rekursiv 1 Backup-Key
-4. Result: `{api_key, backup: {api_key}}` → aber `_fetch_backup()` ignoriert `backup`!
-5. Der Backup-Backup-Key war geleast aber in keinem Cache → **verschwendet**
-
-**Symptom:** Pool verbrannte 2 Keys pro Suspension statt 1. 3 verschwendete Keys
-(mit `leased_to` endend auf `-backup-backup`) aktiv auf Disk gefunden.
-
-**Fix (3 Dateien):**
-- `proxy/pool_client.py:19`: `cfg.get("lease_backup", False)` (war True)
-- `proxy/config.py:8`: `SIN_LEASE_BACKUP` default `"false"` (war "true")
-- `proxy/setup.sh:43`: `'lease_backup': False` (war True)
-
-**3 verschwendete Keys released:** `a5d66a77`, `46980b15`, `dbd0fee9`
-(Leases gecleart, waren nicht suspended/used — nur unnötig leased)
-
-**Verhindern:**
-- `lease_backup` NIEMALS auf True setzen — der Server managed Backup selbstständig via zwei separate Lease-Calls
-- Kein rekursives Verhalten in Lease-Funktionen ohne expliziten dokumentierten Use-Case
-
-### 2026-05-11: OOPIF Cross-Origin-Iframe Bug (GEFIXT)
-
-**Was passiert ist**
-Der gmx-alias-flow für 3c.gmx.net Iframe-Operationen war jahrelang gebrochen,
-ohne dass es jemandem auffiel. Konkrete Defekte:
-
-1. `_find_alias_coords_in_iframe` machte `DOM.performSearch` auf der
-   TOP-CDP-Session — die OOPIF-DOM des 3c.gmx.net Iframe ist von dort
-   strukturell unsichtbar (Site Isolation seit Chrome 67).
-   → `resultCount` mal 0 (falsch negativ), mal > 0 mit NodeIds die nichts
-     mit dem Iframe-Inhalt zu tun haben.
-2. `DOM.getBoxModel` auf diesen NodeIds → undefined behavior, oft Müll-Koords.
-3. `_find_alias_input_coords` returnte am Ende **hartcodiertes**
-   `{"x": 350, "y": 340}` → `Input.dispatchMouseEvent` klickte ins Leere.
-4. Verifikation via `DOM.performSearch(query=alias_name)` in der Top-Session
-   nach dem Klick → self-confirming bias: fand entweder den getippten Wert
-   im Input wieder ODER fand nichts wegen Punkt 1; in beiden Fällen
-   wertlos als Server-State-Check.
-5. AGENTS.md trug "VERIFIED 2026-05-11" auf der gleichen Sektion — false
-   sense of correctness.
-
-**Wie es entdeckt wurde**
-Bug-Report aus Chat-Session: User schilderte exakt das Symptom
-("Alias-Formular liegt in 3c.gmx.net Cross-Origin-Iframe. CDP DOM.getBoxModel
-crasht weil Node-IDs stale/null sind. Input.dispatchMouseEvent mit
-hartcodierten Koordinaten klickt ins Leere.")
-
-**Wie es gefixt wurde** (siehe Sektion "⚠️ OOPIF BUG FIX" ganz oben)
-- `OopifContext` + `CDPClient.resolve_oopif()` in `cdp_client.py` → separate
-  CDP-Session pro OOPIF + Viewport-Offset-Transformation.
-- Alle vier `_find_*` Methoden in `gmx_service.py` durchgehend auf
-  OOPIF-Pipeline umgestellt; keine hartcodierten Koords mehr.
-- `_verify_alias_in_iframe()` neu — ehrliche Polling-basierte Server-State-
-  Verifikation, sucht nach voller `name@gmx.de` Adresse in child_session.
-- Diagnose-Tool `tools/diagnose_oopif.py` (deleted 2026-05-22).
-
-**Was zukünftige Agents wissen müssen**
-- "VERIFIED" in der Doku ist KEIN Freibrief. Wenn jemand schreibt
-  "VERIFIED 2026-05-11", aber der Code enthält offensichtliche Smoking-Guns
-  (hartcodierte Koords, return ohne echte Suche, Verifikation gegen den
-  eigenen Input statt gegen den Server), dann WAR ES NIE VERIFIZIERT.
-  Lieber einmal zu oft `python tools/gmx_alias_tool.py rotate` laufen lassen.
-- Cross-Origin-Iframes IMMER über `client.resolve_oopif(...)` ansprechen.
-  Niemals annehmen, dass DOM.performSearch im Top-Frame OOPIF-Inhalte sieht.
-- Input.dispatchMouseEvent läuft IMMER auf der Parent-Session mit
-  Top-Viewport-Koords. Wenn Koords aus einer child_session kommen
-  (`getBoxModel` in iframe-session), MÜSSEN sie via `oopif.to_top(...)`
-  transformiert werden, sonst klickt man verschoben oder ganz daneben.
-
-### 2026-05-10: Flow #1 Breakdown (VERHINDERT)
-
-**Was passiert ist:**
-Agent versuchte "DOM exploration" für GMX Shadow-DOM Input → rewrite `_navigate_to_all_email_addresses` mit 75-line PFAD-Navigation → Flow #1 komplett gebrochen. **11 Dateien reverted auf commit `cf146a6`.**
-
-**Files die gebrochen wurden:**
-- `agent_toolbox/core/gmx_service.py` — Rewrite mit neuer Navigation (PFAD A/B/C)
-- `agent_toolbox/core/cdp_client.py`, `browser_manager.py`, `fireworks_service.py`, `pool_manager.py`
-- `agent_toolbox/api/routes/cookies.py`, `rotation.py`
-- `tools/gmx_alias_tool.py`, `AGENTS.md`, `banned.md`
-
-**Symptom:** `gmx_alias_tool.py status` → "Playwright: No alias input found. All inputs: []"
-
-**Recovery:** `git checkout -- .` (alle 11 files reverted) → `gmx_alias_tool.py check` ✅ → `rotate` ✅ in 29s
-
-**Root Cause:** Agent verletzte "ONCE VERIFIED = READ-ONLY". Flow #1 war VERIFIED am 2026-05-09 (29s rotation, elron-runner-701@gmx.de erstellt). Agent versuchte es zu "verbessern" ohne konkreten Bug.
-
-**Verhindern:**
-1. ⚠️ Flow #1, #2, #3 sind READ-ONLY — NIEMALS ändern außer es gibt konkreten Bug-Report
-2. Debuggen JA, Umschreiben NEIN
-3. Neuer Ansatz = Neue Datei (debug/), nicht existierende Dateien ändern
-4. IMMER zuerst backup/branch erstellen bevor irgendetwas geändert wird
-
-### 2026-05-10: Flow 0 Shadow DOM Discovery (GELÖST)
-
-**Was passiert ist:**
-GMX Login Flow hat sich geändert — Dropdown ist jetzt im Shadow DOM von ACCOUNT-AVATAR.
-CDP `click_at()` funktioniert NICHT für Custom Elements mit Shadow DOM.
-
-**Lösung:**
-1. JS `.click()` + `.dispatchEvent(new Event('mouseenter'))` auf Custom Element
-2. Dann JS `.click()` auf Buttons im Shadow DOM
-3. 3s Wait für Shadow DOM Rendering
-4. Multi-Synonym Suche: `logout`, `abmelden`, `ausloggen`, `account wechseln`
-
-**Files geändert:**
-- `agent_toolbox/core/gmx_service.py` — `_click_profile_icon_and_action()` komplett neu
-- `AGENTS.md` — Shadow DOM Dokumentation, State Machine, Koordinaten
-
-**Test Ergebnis:**
-- 5/5 Tests erfolgreich
-- Durchschnitt: 54.93s
-- Letzter Test: 2026-05-10, SID: 331e8dc82fec93376c05f1148c0bc2...
-
-**Root Cause:**
-GMX hat ACCOUNT-AVATAR zu einem Web Component (Custom Element) umgebaut.
-Shadow DOM Elemente sind für CDP nicht sichtbar (`getBoundingClientRect()` → 0×0).
-Nur JS Events innerhalb des Shadow DOM können die Elemente bedienen.
-
-### 2026-05-10: GMX OTP URL Discovery (GELÖST)
-
-**Was passiert ist:**
-GMX OTP Polling failed because clicking "E-Mail" header navigates to `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail` (SPA hash URL) which shows PUBLIC GMX homepage content in headless Chrome — NOT the logged-in inbox.
-
-**Symptom:**
-- URL shows `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail` (looks logged-in)
-- But `document.body.innerText` shows "Jetzt registrieren" + "GMX E-Mail - Sicher. Smart. Made in Germany." (PUBLIC content!)
-- OTP email not found in main frame DOM (0 email items)
-- GMX mail iframe (`about:blank`) never loads actual content
-
-**Root Cause:**
-GMX uses TWO URL formats for mail navigation:
-1. **SPA hash URL** (from header click): `www.gmx.net/mail/#.pc_page.homepage.index.nav.mail`
-   - GMX SPA routes to mail component but content fails to load in headless Chrome
-   - Shows PUBLIC GMX homepage content instead of logged-in inbox
-2. **Direct navigator URL** (from login redirect): `navigator.gmx.net/mail?sid=<TOKEN>`
-   - Shows LOGGED-IN inbox with email list (accessible mailbox)
-   - Body shows "Barrierefreies Postfach" + email content
-   - SID extracted from this URL
-
-**Fix (2026-05-10) — `fireworks_service.py`:**
-1. `ensure_gmx_session()` returns `status: "success"` with `current_url: "navigator.gmx.net/mail?sid=..."` and `sid: <TOKEN>`
-2. OTP polling now navigates DIRECTLY to `https://navigator.gmx.net/mail?sid={sid}` instead of clicking "E-Mail" header
-3. `goto_inbox()` also uses direct URL navigation
-
-**Files geändert:**
-- `agent_toolbox/core/fireworks_service.py` — navigate to `navigator.gmx.net/mail?sid=` directly (lines ~1977-2030)
-
-**Test Ergebnis:**
-- Login redirects to `navigator.gmx.net/mail?sid=c1dbff3f2ef992b2870c72fe8ceb70e3a52b06abfe21567b0c5540190765f222b6d5e336705e0dce0da1212eaca41a04`
-- Body shows "Barrierefreies Postfach" (accessible mailbox) with email list
-- GMX cookies: `JSESSIONID`, `SESSION`, `iac_token`, `lps` available
-
-**WICHTIG:**
-- NIEMALS `www.gmx.net/mail/#.pc_page...` URL für OTP verwenden (zeigt PUBLIC content!)
-- IMMER `navigator.gmx.net/mail?sid=<SID>` verwenden
-- SID aus `session_result.current_url` oder `session_result.sid` extrahieren
-
-### 2026-05-11: Flow 2/3 GMX Session URL Fix
-
-**Problem:** GMX OTP Polling failed because GMX changed mail navigation from `navigator.gmx.net/mail?sid=...` (direct) to `www.gmx.net/mail/#.pc_page...` (SPA hash). SPA hash URL shows PUBLIC content in CDP headless Chrome.
-
-**Lösung:** Navigate directly to `navigator.gmx.net/mail?sid=<SID>` using the SID from `ensure_gmx_session()` return value.
-
-**Files:** `agent_toolbox/core/fireworks_service.py` (OTP polling navigation fix)
-
-### 2026-05-23: Nav-Menu JS Click Broken (GEFIXT)
-
-**Was passiert ist:**
-Nach Chrome-Neustart + Flow 0 Login wurde die allEmailAddresses Iframe nie geladen.
-Der Grund: `_navigate_to_all_email_addresses` klickte via JS `.click()` auf versteckte
-Nav-Buttons (`#nav-menu button:contains("Wunsch-Mail")`). GMX React/Wicket ignoriert
-programmatische Klicks (prüft `isTrusted`). Selbst CDP `Input.dispatchMouseEvent`
-funktionierte nicht, weil die Buttons via CSS `display:none` auf grandparent versteckt
-waren → Koordinaten (0,0).
-
-**Diagnose:**
-- `get_window_state` → Nav-Buttons haben `display:none` auf grandparent
-- `getBoundingClientRect()` → (0,0) position
-- Auch mit `scrollIntoView()` + force-CSS ignoriert GMX die Klicks
-- Der einzige Weg zur Settings-Seite: CUA Klick auf "Einstellungen" AXButton [148]
-
-**Lösung (3-Schritt):**
-1. CUA click AXButton (Einstellungen für Ihr GMX Postfach) → navigiert zu `mail_settings/mail_settings`
-2. Die allEmailAddresses Iframe wird automatisch in der neuen Page geladen
-3. Playwright Frame-Scanning findet die Iframe-URL (8×3s Polling)
-
-**Files:**
-- `agent_toolbox/core/gmx_service.py` — `_navigate_to_all_email_addresses` komplett überarbeitet
-
-**Wichtige Erkenntnisse:**
-- `3c.gmx.net` (ohne -bap) funktioniert für direkte Playwright-Navigation
-- `mail_settings/mail_settings` ist der richtige Weg (nicht `produkte_ha` + nav-menu)
-- CUA kann AXButton (Einstellungen) klicken, auch ohne AXPress in actions-Liste
-- `from agent_toolbox.core.cua_helper import ...` statt `from cua_helper import ...` (PYTHONPATH)
-
-*Letzte Aktualisierung: 2026-05-11 (GMX URL Discovery: SPA hash vs navigator direct URL)*
-
----
-
-## 🚨🚨🚨 KRITISCHE REGELN (2026-05-11) — SOFORT BEFOLGEN!
-
-### REGEL 1: CUA DRIVER IST IMMER DIE ERSTE WAHL!
-
-**CUA kann ALLES anklicken. Du musst nur fähig genug sein!**
-
-```
-✅ CUA click     → Buttons, Links, Checkboxes, MenuItems, PopUpButtons
-✅ CUA type_text → Normale Inputs (NICHT React controlled!)
-✅ CUA set_value → PopUpButton Menus nach click
-✅ CUA get_window_state → AX-Tree scannen für Elemente
-✅ CUA press_key → Keyboard Events
-```
-
-**CDP NUR ALS NOTLÖSUNG wenn du die nicht 100% korrekt erfasst hast im VORFELD!**
-
-```
-✅ CDP nur für:
-  - React controlled inputs (CUA type_text funktioniert NICHT!)
-  - Target management (neue Tabs)
-  - Cookie inspection
-  - GMX Extension Email-Zugriff
-```
-
-### REGEL 2: PRE-FLIGHT CHECK VOR JEDEM CLICK!
-
-```
-SCAN → KLICK → SCAN → Ergebnis verifizieren
-
-1. Vollständiges AX-Tree scannen (get_window_state)
-2. Element mit element_index UND Text identifizieren
-3. Element existiert IM aktuellen Tree? → KLICKEN
-4. ERNEUT scannen um Ergebnis zu verifizieren
-5. Bei Fehler: Dialog schliessen → von vorne beginnen
-```
-
-### REGEL 3: REACT INPUT FIX (CRITICAL)
-
-CUA `type_text` funktioniert NICHT für React controlled inputs!
-
-**Lösung: CDP nativeInputValueSetter**
-
-```python
-# JavaScript für React controlled inputs:
-const nativeSetter = Object.getOwnPropertyDescriptor(
-    HTMLInputElement.prototype, 'value').set;
-nativeSetter.call(input, 'mein-text');
-input.dispatchEvent(new Event('input', {bubbles: true, composed: true}));
-```
-
-### REGEL 4: GMX EXTENSION FÜR EMAIL — NICHT lightmailer!
-
-**GMX Chrome Extension (GMX MailCheck) ist der EINZIG erlaubte Weg für Email-Zugriff!**
-
-```
-✅ Extension ID: camnampocfohlcgbajligmemmabnljcm
-✅ Popup URL: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
-✅ Email IDs: 18 Ziffern (z.B. 1778454231729833464)
-```
-
-**VERBOTEN:**
-```
-❌ lightmailer-bs.gmx.net URLs (HTTP 500 errors!)
-❌ webmailer.gmx.net direkt navigieren
-❌ CDP evaluate im Page-Kontext für GMX
-```
-
-### REGEL 5: PopUpButton Menu Pattern
-
-1. Click auf PopUpButton → Menu erscheint
-2. MenuItems scannen (element_index nach dem Click!)
-3. MenuItem klicken
-
-```bash
-# Beispiel: "Create API Key" PopUpButton
-1. Click [74] AXPopUpButton "Create API Key"
-2. SCAN → MenuItems finden [129], [132]
-3. Click [129] AXMenuItem "API Key"
-```
-
-### REGEL 6: Nach jedem KLICK ERNEUT SCANNEN!
-
-```
-❌ FALSCH: Klick → langsung weiter (ohne scan)
-✅ RICHTIG:  Klick → SCAN → Ergebnis verifizieren → nächste Aktion
-```
-
-### REGEL 7: Bei Fehler Dialog schliessen und retry
-
-```
-"Missing API Key Name!" → Close button klicken → von vorne beginnen
-```
-
----
-
-## 📁 COMMAND REGISTRY
-
-**Note:** `command_registry.json` was deleted in the V5 cleanup (2026-05-22). All learnings are now in AGENTS.md, knowledge-base.md, and banned.md.
-
----
-
-## 🔧 FIREWORKS API KEY FLOW (CUA + CDP)
-
-### Schritt 1: Navigation zu API Keys
-```
-Settings → Users & Access → API Keys (CUA click Navigation)
-```
-
-### Schritt 2: Create API Key PopUpButton
-```
-Click [74] AXPopUpButton "Create API Key"
-SCAN → Menu erscheint mit [129] AXMenuItem "API Key"
-Click [129]
-SCAN → Dialog "Create API Key" mit [94] AXTextField und [96] AXButton
-```
-
-### Schritt 3: Name eingeben (CDP für React!)
-```
-CDP: nativeInputValueSetter auf TextField mit "blaze-scorpion-746"
-SCAN → "Missing ... Name!" verschwindet? → weiter
-```
-
-### Schritt 4: Generate Key (CUA)
-```
-Click [97] AXButton "Generate Key"
-SCAN → "Copy your API Key" Modal → Key finden
-```
-
-### Schritt 5: Key extrahieren
-```
-SCAN AX-Tree → finde "fw_4SyZoeCFsyn5L4hpT63LGV" in AXStaticText
-ODER: CDP evaluate für DOM Text
-```
-
----
-
-## ⚠️ WAS FUNKTIONIERT (VERIFIED 2026-05-11)
-
-✅ CUA click auf alle interaktiven Elemente
-✅ CUA MenuItems nach PopUpButton click
-✅ CUA PopUpButton mit set_value
-✅ CDP nativeInputValueSetter für React inputs
-✅ GMX Extension für Email-Zugriff
-✅ Fireworks API Key Erstellung
-
-## ❌ WAS NICHT FUNKTIONIERT
-
-❌ CUA type_text auf React controlled inputs → Wert wird nicht gesetzt
-❌ lightmailer-bs.gmx.net URLs → HTTP 500
-❌ CDP evaluate im extension context (nur Page-Kontext!)
-
----
-
-## 🚀 STANDALONE GMX ALIAS API (2026-05-12)
-
-GMX Alias-Operationen sind in ein separates Repo ausgelagert:
-**`github.com/SIN-Rotator/gmx-alias-tool`**
-
-### Architektur
-
-```
-SINator-fireworksai (Port 8000)          gmx-alias-tool (Port 8001)
-├── /rotation/full                       ├── /alias/rotate
-│   ├── gmx_alias_tool.py subprocess     ├── /alias/delete  
-│   └── Fireworks register()             ├── /alias/create
-└── /fireworks/*                         └── /session/check
-                                         └── ./start.sh → Cloudflare Tunnel
-```
-
-### Start
-
-```bash
-cd ~/dev/gmx-alias-tool
-./start.sh          # Server (8001) + Cloudflare Tunnel
-# → http://localhost:8001  (lokal)
-# → https://xxx.trycloudflare.com  (remote für Agenten)
-```
-
-### API-Endpoints
-
-| POST | `/alias/rotate` | `{"alias_name": "name-123"}` → `{"status":"success", "alias_email":"name-123@gmx.de"}` |
-| POST | `/alias/delete` | → `{"status":"success", "deleted":true, "alias":"old@gmx.de"}` |
-| POST | `/alias/create` | `{"alias_name":"name-123"}` → `{"status":"success", "alias_email":"name-123@gmx.de"}` |
-
-### SINator Integration
-
-SINator ruft `gmx_alias_tool.py rotate` als Subprozess für Alias-Rotation. Bei Fehlschlag (CUA-Delete-Dialog nicht gefunden) wird existierender Alias via `/alias/delete` ermittelt und verwendet.
-
----
-
-## ✅ OTP VERIFY URL EXTRACTION — FIXED (2026-05-12, Issue #16)
-
-### Problem
-
-Extension fand Email und öffnete sie, aber die Verify-URL wurde nicht extrahiert.
-Grund: GMX öffnet Email-Inhalt in einem **mailbody-ui.de OOPIF** (separater CDP-Target).
-Der alte Code suchte nach `#thirdPartyFrame_mail` Iframe und navigierte falsch.
-
-### Fix PRIMARY: `_read_otp_via_extension()` — Extension mailbody-ui.de OOPIF
-
-1. Extension findet Email (data-email-id)
-2. Snapshot existing target IDs VOR dem Klick
-3. Klick auf Email → neuer GMX Tab öffnet sich
-4. Target.getTargets → mailbody-ui.de OOPIF finden
-5. OOPIF attachen → document.body.innerText lesen
-6. Regex → Verify-URL extrahiert
-
-### Fix FALLBACK: `_read_otp_via_http()` — AXTree (findet AUCH gelesene Emails!)
-
-Neue GMX Webmail verwendet Shadow-DOM Web Components (`<webmailer-mail-list>`).
-`document.querySelector` findet keine Email-Rows. Lösung: CDP Accessibility API.
-
-```python
-# Accessibility.getFullAXTree durchbricht Shadow-DOM
-await client.send_to_session(sid, "Accessibility.enable")
-ax = await client.send_to_session(sid, "Accessibility.getFullAXTree", {
-    "depth": -1, "pierce": True
-})
-# → 1583 nodes inkl. "no-reply@fireworks.ai" "Verify your Fireworks account"
-
-# DOM.getContentQuads für exakte Klick-Koordinaten
-quad = await client.send_to_session(sid, "DOM.getContentQuads", {
-    "backendNodeId": backend_node_id
-})
-# → [x1,y1, x2,y2, x3,y3, x4,y4] für präzisen Klick
-```
-
-**Flow:**
-1. Navigiere zu `3c.gmx.net/mail/client/start;jsessionid=...` (webmail iframe)
-2. `Accessibility.getFullAXTree` → finde Email-Row mit "fireworks" + "verify"
-3. `DOM.getContentQuads(backendNodeId)` → Klick-Koordinaten
-4. `Input.dispatchMouseEvent` → Klick auf Email-Row
-5. `Target.getTargets` → mailbody-ui.de OOPIF
-6. OOPIF attachen → innerText/innerHTML → Verify-URL
-
-### Verify-URL Format
-```
-https://app.fireworks.ai/signup/confirm?client_id=sueas7prsfrdp16nantbeqcjv&user_name=...&confirmation_code=...
-```
-
-### Öffnen via Target.createTarget
-Phase 7 öffnet die URL in einem NEUEN Tab (`Target.createTarget`).
-Fireworks bestätigt den Account server-seitig (GET mit Query-Parametern).
-Danach Phase 8: Login mit Email/Passwort.
-
----
-
-## ⚠️ BEKANNTE PROBLEME (2026-05-12)
-
-### GMX Alias Delete Dialog (CUA)
-
-| Problem | Status |
-|---------|--------|
-| CUA findet OK-Button im Delete-Dialog nicht immer | Intermittent, abhängig von Chrome-Fenster-Fokus |
-| Workaround: `gmx_alias_tool.py rotate` returnt `partial` → existierenden Alias weiterverwenden |
-| SINator fallback: `/alias/delete` API-Call → `alias`-Feld als current alias nutzen |
-
-### _verify_alias_in_iframe Timeout
-
-| Problem | Status |
-|---------|--------|
-| Nach "Hinzufügen"-Klick erscheint Alias nicht sofort im DOM | Fix: full refresh cycle (www.gmx.net → mail_settings) |
-| `innerHTML` statt `innerText` für robustere Suche | Fixed 2026-05-12 |
-
-### Page-State nach CUA-Delete
-
-| Problem | Status |
-|---------|--------|
-| CUA-Delete hinterlässt korrupten Page-State | Fixed: separate CDP-Verbindungen für delete + create |
-| `_connect_to_browser` findet stale Target | Fixed: `reversed(targets)` — neuestes Target zuerst |
-
----
-
-### 🔬 MAIL-PANEL VERIFICATION (2026-05-13) — BESTÄTIGT
-
-**Test-Durchlauf:**
-1. Chrome CDP Port 9222 ✅
-2. `Target.createTarget` → Extension-Popup (`mail-panel.html`) geöffnet ✅
-3. `document.body.innerText` → 124 Emails sichtbar (opensin@gmx.de) ✅
-4. `[data-email-id]` selector + `.innerText.includes('fireworks')` → Email gefunden ✅
-5. JS `.click()` auf Email → GMX Webmail Tab öffnet sich ✅
-6. `Target.getTargets` → `gmxnet.mailbody-ui.de/Mailbox/Mail/{id}/Body/html` OOPIF gefunden ✅
-7. OOPIF `document.body.innerText` → Verify-URL extrahiert ✅
-8. `Target.createTarget(verify_url)` → Fireworks Account bestätigt ✅
-
-**Gefundene Verify-URL (13:05 Email):**
-```
-https://app.fireworks.ai/signup/confirm?client_id=sueas7prsfrdp16nantbeqcjv&user_name=fed77983-87d1-460a-a372-f3e9ecd4fece&confirmation_code=178814
-```
-
-**Key Takeaway:** Mail-Panel Extension → `mailbody-ui.de` OOPIF ist der EINZIGE Weg.
-NIEMALS `3c.gmx.net` direkt, NIEMALS `lightmailer-bs.gmx.net`, NIEMALS CDP DOM API.
-
----
-
-## 🔧 V14 CHANGES (2026-05-29) — JSON Scope Fix + Model Name Normalization
-
-### conversation_loop.py — Lokales `import json` entfernt
-**Problem:** Der tool_search Patch fügte `import json` innerhalb der `run_conversation`-Funktion in `conversation_loop.py:3873` ein. In Python 3.12+ macht dies `json` zur lokalen Variable für den gesamten Funktionsscope — aber `json.loads()`/`json.dumps()` wurden bereits vor dieser Zeile genutzt (Z. 1043, 3432).
-
-**Fix:** Lokales `import json` entfernt — das Modul ist bereits global auf Zeile 19 importiert.
-
-### Proxy — Model Name Normalisierung
-**Problem:** Hermes sendet Kurznamen wie `glm-5p1-fast`, aber Fireworks erwartet volle Pfade wie `accounts/fireworks/routers/glm-5p1-fast`.
-
-**Fix:** Pool-Proxy `server.py` — neues `_normalize_request_body()` expandiert Kurznamen via `models_dev_cache.json`:
-```python
-"glm-5p1-fast" → "accounts/fireworks/routers/glm-5p1-fast"
-"deepseek-v4-flash" → "accounts/fireworks/models/deepseek-v4-flash"
-```
-Volle Pfade mit `/` bleiben unverändert. Refactored: `_handle_v1_models()` und Normalisierung teilen sich `_load_all_model_ids()` + `_build_model_alias_map()`.
-
-**Dateien:**
-- `~/.hermes/hermes-agent/agent/conversation_loop.py:3873` — lokales `import json` entfernt
-- `~/dev/SINator-fireworksai/proxy/server.py` — `_normalize_request_body()`, `_load_all_model_ids()`, `_build_model_alias_map()`
-
-**Wichtig:** Oneshot (`-z`) MUSS vor dem Subcommand stehen:
-```bash
-hermes -z "PROMPT" chat -m "glm-5p1-fast" --yolo
-```
-
-## 🔧 V13 CHANGES (2026-05-29) — Fireworks Model Discovery + Hermes custom:* Provider
-
-### Pool-Proxy `/v1/models` Handler
-**Neuer Handler** in `proxy/server.py: `_handle_v1_models()`:
-- Liest `~/.hermes/models_dev_cache.json` → extrahiert `fireworks-ai` Modelle
-- Gibt ALLE Fireworks Modelle + Router zurück (12 aktuell, inkl. `kimi-k2p6-turbo`, `glm-5p1-fast`)
-- Fallback auf hardcoded Liste wenn Cache nicht lesbar
-- Routen: `/v1/models` + `/inference/v1/models` (beide vor Catch-All registriert)
-- `PUBLIC_PROXY_PATHS` um `/v1/models` erweitert
-
-### Hermes V15 Patch — `custom:*` provider_model_ids
-**Neue Datei** `patches/hermes_cli/models.py`:
-- `provider_model_ids()` behandelt jetzt `normalized.startswith("custom:")`
-- Lädt `custom_providers` aus config.yaml → findet passenden Eintrag
-- Probt `/v1/models` live über `fetch_api_models()`
-- Model-Picker zeigt jetzt Fireworks-Modelle (vorher: 0, jetzt: 12)
-- Router wie `kimi-k2p6-turbo` werden akzeptiert (`accepted=True, recognized=True`)
-
-**Repos:**
-- `SIN-Rotator/SIN-Hermes-V15-Patches`: `patches/hermes_cli/models.py` + `patch.sh`
-- `SINator-fireworksai/proxy/server.py`: `_handle_v1_models()` + Routes + PUBLIC_PROXY_PATHS
-
-### Architektur: Model-Discovery
-```
-Hermes provider_model_ids('custom:fireworks')
-  → load_config() → custom_providers entry
-  → fetch_api_models(api_key, "http://localhost:9998/inference/v1/models")
-  → Pool-Proxy `_handle_v1_models()` 
-  → ~/.hermes/models_dev_cache.json → 12 FW models
-```
-
-**Letzte Aktualisierung: 2026-05-29 (V14 — JSON Scope Fix + Model Normalization)
-
-*All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
 ---
 
@@ -2436,7 +265,12 @@ Hermes provider_model_ids('custom:fireworks')
 | **SINator-heypiggy** | `:8002` | HeyPiggy Account Generator |
 | **SINator-dashboard** | `:3000` | Tauri App, Provider-Switcher |
 
-Start: `cd ~/dev/SINator-dashboard && ./start.sh` → :8000 + :8002 + :3000 + Tauri App  
+Start: `cd ~/dev/SINator-dashboard && ./start.sh` → :8000 + :8002 + :3000 + Tauri App
 Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ⚠️ Tauri Release App ist **statisch** — jedes Code-Update erfordert `./build.sh`.
+
+---
+
+*Last Updated: 2026-05-29 (V14 — Playwright-native Migration)*
+*All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
