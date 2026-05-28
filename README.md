@@ -19,8 +19,17 @@ Das installiert alles: Pool-Router, Config, 412-Patch, UA-Spoof, unlimited max_t
 Statt einen einzelnen Proxy auszuwaehlen, laeuft ein lokaler Router auf `localhost:9998`.
 Er leitet Requests an `sinatorpool1 -> pool2 -> pool3` weiter.
 
-**Auto-Failover:** Bei 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error)
+**Auto-Failover:** Bei 413 (Payload Too Large), 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error)
 springt der Router automatisch zum naechsten Pool.
+
+**413 pass-through (v3 — 2026-05-28):** Wenn ALLE Pools denselben Fehler (z.B. 413)
+zurückgeben, wird der Status-Code durchgereicht statt in 500 gewrappt. Fix: 413 zur
+Retry-Liste hinzugefügt (vorher: sofortiger `raise` → `except Exception` → 500).
+
+**Proxy charset bug fix:** Der aiohttp-Proxy (`~/.sin-pool/server.py`) crashte bei
+`Content-Type: application/json; charset=utf-8` von Fireworks mit `ValueError`.
+Fix: charset-Parameter vor Response-Konstruktion strippen. 3 Proxy-Instanzen
+(8888/8889/8890) per launchd.
 
 | Pool | Base URL | Prioritaet |
 |------|----------|------------|
@@ -58,16 +67,26 @@ tail -f ~/.hermes/logs/pool-router.log
 |-----------|-------|
 | `config/fireworks-router.yaml` | Hermes Config fuer lokalen Pool-Router |
 | `config/fireworks-pool{1,2,3}.yaml` | Einzelne Pool-Configs (Referenz, nicht fuer Installation) |
-| `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover |
+| `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover (v3: 413 pass-through) |
 | `scripts/pool-router.plist` | macOS launchd Service (auto-start, restart on crash) |
 | `patches/error_classifier_412.patch` | 412-Retry-Fix |
 | `skills/sin-hermes-provider-setup/` | Hermes Skill — Installation auf neuem Mac |
+| `agent_toolbox/core/gmx_service.py` | GMX Session + Alias-Rotation + OTP-Read |
+| `agent_toolbox/core/fireworks_service.py` | Fireworks Registration + API-Key-Management |
+| `agent_toolbox/core/cdp_client.py` | Chrome DevTools Protocol Client |
+| `agent_toolbox/core/pool_manager.py` | API-Key Pool-Manager (Lease/Return) |
 | `_ua_patch.py` | User-Agent Spoof + max_retries=0 fuer OpenAI SDK |
 | `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
 
 ## Struktur
 
 ```
+├── agent_toolbox/
+│   └── core/
+│       ├── gmx_service.py              # GMX Session + Alias-Rotation + OTP
+│       ├── fireworks_service.py        # Fireworks Registration + API-Key
+│       ├── cdp_client.py               # Chrome DevTools Protocol Client
+│       └── pool_manager.py             # API-Key Pool-Manager
 ├── config/
 │   ├── fireworks-router.yaml           # localhost:9998 -> auto-failover
 │   ├── fireworks-pool1.yaml            # Referenz: sinatorpool1
@@ -76,13 +95,13 @@ tail -f ~/.hermes/logs/pool-router.log
 ├── patches/
 │   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── scripts/
-│   ├── pool-router.py                  # Lokaler Proxy
+│   ├── pool-router.py                  # Lokaler Proxy (v3: 413 pass-through)
 │   └── pool-router.plist               # macOS launchd Service (auto-start)
 ├── docs/
 │   ├── 412-retry-fix.md                # 412 Fix Doku
 │   ├── ua-spoof.md                     # UA-Spoof Doku
-│   ├── pool-switching.md                 # Pool-Wechsel Anleitung
-│   ├── troubleshooting.md                # Fehlerbehebung
+│   ├── pool-switching.md               # Pool-Wechsel Anleitung
+│   ├── troubleshooting.md              # Fehlerbehebung
 │   └── router.md                       # Pool-Router Doku
 ├── skills/
 │   └── sin-hermes-provider-setup/      # Hermes Skill fuer Installation
