@@ -91,7 +91,7 @@ class KeyCache:
             self.request_count = 0
             self.last_used_at = time.time()
             self._save()
-            logger.info(f"Promoted backup -> primary: {self.primary.get('key_id', '?')[:8]}...")
+            logger.info(f"Promoted backup → primary: {self.primary.get('key_id', '?')[:8]}...")
             return self.primary
         return None
 

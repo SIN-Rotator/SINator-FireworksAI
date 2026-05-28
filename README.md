@@ -1,33 +1,20 @@
-# SIN-Hermes-Provider-Bundle
+# SINator — Fireworks AI Key Pool
 
-**Hermes-native Provider-Konfiguration fuer Survey Automation.**
+Automated GMX alias rotation → Fireworks AI account → API key pool.
+OpenAI-compatible proxy with automatic key rotation on rate-limits.
 
-Fireworks-AI-Setup, 412-Retry-Fix, UA-Spoof-Patch, und Pool-Router mit Auto-Failover.
+**Backend Port:** `8000` | **Dashboard Repo:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | **HeyPiggy Repo:** [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy)
 
-Fuer Browser-Skills siehe [SIN-Hermes-Browser-Skills-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Browser-Skills-Bundle).
+## EINE Base-URL — Pool-Router mit Auto-Failover
 
-## Quick Start
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/install.sh | bash
-```
-
-Das installiert alles: Pool-Router, Config, 412-Patch, UA-Spoof, unlimited max_turns.
-
-## Pool-Router — EINE Base-URL, 10 Proxys, Auto-Failover
-
-**NUR EINE einzige URL** — kein manuelles Pool-Wechseln mehr.
-
-Clients nutzen den Pool-Router als Base-URL. Der Router verteilt Requests automatisch auf 10 lokale Proxys (8888-8897), jeder mit eigenem API-Key aus dem Pool. Bei 413/429/412/5xx springt der Router zum nächsten Proxy — kein gegenseitiges Blockieren, kein Single-Point-of-Failure.
+**Es gibt nur EINEN Endpunkt.** Der Pool-Router verteilt Requests automatisch auf 10 lokale Proxys (8888-8897), jeder mit eigenem API-Key aus dem Pool. Bei 413/429/412/5xx springt der Router zum nächsten Proxy.
 
 | Zugriff | Base URL |
 |---------|----------|
 | **Lokal (dieser Mac)** | `http://localhost:9998/inference/v1` |
 | **Remote (andere Macs / Clients)** | `https://sinatorpool-router.delqhi.com/inference/v1` |
 
-### Backend: 10 Proxys (lokal, 8888-8897)
-
-Jeder Proxy ist eine eigene aiohttp-Instanz mit charset-Fix, eigenem API-Key aus dem Pool (218 Keys), und launchd-Autostart.
+**Kein manuelles Pool-Wechseln mehr.** Der Router macht alles automatisch.
 
 ### Auto-Failover
 
@@ -40,17 +27,126 @@ Jeder Proxy ist eine eigene aiohttp-Instanz mit charset-Fix, eigenem API-Key aus
 | Alle Pools gleicher Fehler | Status-Code durchreichen (pass-through) |
 | Proxy 3 Fehler in 60s | Cooldown — 60s Pause |
 
-### Threading Fix (2026-05-28)
+### Backend: 10 Proxys (lokal, 8888-8897)
 
-`socketserver.TCPServer` → `ThreadingMixIn + TCPServer`. Vorher blockierte eine offene Verbindung alle anderen Requests.
+Jeder Proxy ist eine eigene aiohttp-Instanz mit charset-Fix, eigenem API-Key aus dem Pool (218 Keys), und launchd-Autostart.
 
-### 413 pass-through (v3)
+## Quick Start
 
-Wenn ALLE Pools denselben Fehler zurückgeben, wird der Status-Code durchgereicht statt in 500 gewrappt.
+```bash
+# Mit dem Dashboard-Launcher (empfohlen):
+cd ~/dev/SINator-dashboard
+./start.sh
+# → Startet Fireworks (:8000) + HeyPiggy (:8002) + Dashboard (:3000) + Tauri App
 
-### Proxy charset bug fix
+# Oder standalone:
+python agent_toolbox/start_toolbox.py
+# → http://localhost:8000/docs
+```
 
-Der aiohttp-Proxy crashte bei `Content-Type: application/json; charset=utf-8` mit `ValueError`. Fix: charset-Parameter vor Response-Konstruktion strippen. 10 Proxy-Instanzen (8888-8897) per launchd.
+---
+
+## Architecture
+
+```
+Clients (opencode, Cursor, etc.)
+  ↓ OpenAI-compatible API
+Pool-Router (:9998, ThreadingMixIn)
+  ↓ Auto-Failover über 10 Proxys
+Pool Proxys (:8888-:8897, aiohttp SSE)
+  ↓ Key rotation + silent swap
+Backend (:8000, FastAPI)
+  ↓ PoolManager + Keychain
+Chrome + CUA Driver
+  ↓ Browser automation
+GMX → Fireworks AI → API Key
+```
+
+**Services (macOS LaunchAgents):**
+
+| Service | Port | Purpose |
+|---------|------|---------|
+| `com.sinator.backend` | :8000 | FastAPI Backend |
+| `com.sinator.pool-router` | :9998 | Pool-Router mit Auto-Failover |
+| `com.sinator.pool-proxy-{8888..8897}` | :8888-:8897 | 10× OpenAI-compatible proxies with silent swap |
+| `com.sinator.pages` | :8040 | Landing page |
+| `com.sinator.chrome` | — | Chrome lifecycle |
+| `com.sinator.cua-driver` | — | macOS AX automation |
+
+---
+
+## Dashboard + HeyPiggy Integration
+
+Dieses Repo ist der Fireworks-Backend. Das vollständige System besteht aus drei Repos:
+
+| Repo | Port | Funktion |
+|------|------|----------|
+| **SINator-fireworksai** (dieses) | `:8000` | Fireworks Key Pool + Pool-Proxy |
+| [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy) | `:8002` | HeyPiggy Account Generator |
+| [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | `:3000` | Tauri App (Provider-Switcher) |
+
+```bash
+# Alles starten (from dashboard repo):
+cd ~/dev/SINator-dashboard && ./start.sh
+```
+
+---
+
+## Client Konfiguration
+
+### Lokal (auf Mac mit Backend)
+
+**OpenCode (`~/.config/opencode/opencode.json`):**
+```json
+{
+  "provider": {
+    "fireworks-ai": {
+      "options": {
+        "baseURL": "http://localhost:9998/inference/v1",
+        "apiKey": "<DEIN_API_KEY>"
+      }
+    }
+  }
+}
+```
+
+**Umgebungsvariable:**
+```bash
+export FIREWORKS_API_KEY="<DEIN_API_KEY>"
+```
+
+**Python:**
+```python
+from openai import OpenAI
+client = OpenAI(
+    base_url="http://localhost:9998/inference/v1",
+    api_key="<DEIN_API_KEY>",
+)
+```
+
+### Remote (andere Macs)
+
+**OpenCode:**
+```json
+{
+  "provider": {
+    "fireworks-ai": {
+      "options": {
+        "baseURL": "https://sinatorpool-router.delqhi.com/inference/v1",
+        "apiKey": "<DEIN_API_KEY>"
+      }
+    }
+  }
+}
+```
+
+**curl:**
+```bash
+curl https://sinatorpool-router.delqhi.com/inference/v1/models \
+  -H "Authorization: Bearer <DEIN_API_KEY>"
+```
+
+---
 
 ## Was der Installer macht
 
@@ -80,56 +176,42 @@ launchctl list | grep pool-proxy
 tail -f /tmp/pool-router-launchd.log
 ```
 
-## Inhalt
+## Struktur
 
-| Komponente | Zweck |
-|-----------|-------|
-| `config/fireworks-router.yaml` | Hermes Config fuer Pool-Router (`localhost:9998`) |
-| `config/fireworks-pool{1,2,3}.yaml` | Direkte Pool-Configs (Referenz, localhost:8888-8890) |
-| `scripts/pool-router.py` | Pool-Router v3 mit Threading + 413/Cooldown/pass-through |
-| `scripts/pool-router.plist` | macOS launchd Service (auto-start, restart on crash) |
-| `patches/error_classifier_412.patch` | 412-Retry-Fix |
-| `skills/sin-hermes-provider-setup/` | Hermes Skill — Installation auf neuem Mac |
-| `agent_toolbox/core/gmx_service.py` | GMX Session + Alias-Rotation + OTP-Read |
-| `agent_toolbox/core/fireworks_service.py` | Fireworks Registration + API-Key-Management |
-| `agent_toolbox/core/cdp_client.py` | Chrome DevTools Protocol Client |
-| `agent_toolbox/core/pool_manager.py` | API-Key Pool-Manager (Lease/Return) |
-| `proxy/` | Pool-Proxy-Source (Spiegel von `~/.sin-pool/`) — server.py mit silent swap |
-| `_ua_patch.py` | User-Agent Spoof + max_retries=0 fuer OpenAI SDK |
-| `docs/` | 412-Fix, UA-Spoof, Pool-Wechsel, Troubleshooting, Router |
-
+```
+├── agent_toolbox/
+│   └── core/
+│       ├── gmx_service.py              # GMX Session + Alias-Rotation + OTP
+│       ├── fireworks_service.py        # Fireworks Registration + API-Key
+│       ├── cdp_client.py               # Chrome DevTools Protocol Client
+│       └── pool_manager.py             # API-Key Pool-Manager (Lease/Return)
 ├── proxy/
 │   ├── __init__.py                     # Spiegel von ~/.sin-pool/
 │   ├── config.py
 │   ├── key_cache.py
 │   ├── pool_client.py
-│   └── server.py                       # silent swap Fix (412/429)
-├── scripts/
-│   ├── pool-router.py                  # Lokaler Proxy (v3: 413 pass-through)
-│   └── pool-router.plist               # macOS launchd Service (auto-start)
+│   ├── server.py                       # silent swap Fix (412/429)
+│   ├── setup.sh
+│   └── start-multi.sh                  # 10 Proxys starten
+├── tools/
+│   ├── install.sh
+│   ├── rotate.py
+│   ├── sinator-cli.py
+│   └── manage_services.sh
 ├── docs/
-│   ├── 412-retry-fix.md                # 412 Fix Doku
-│   ├── ua-spoof.md                     # UA-Spoof Doku
-│   ├── pool-switching.md               # Pool-Wechsel Anleitung
-│   ├── troubleshooting.md              # Fehlerbehebung
-│   └── router.md                       # Pool-Router Doku
-├── skills/
-│   └── sin-hermes-provider-setup/      # Hermes Skill fuer Installation
-│       └── SKILL.md
-├── _ua_patch.py                        # UA-Spoof + max_retries=0
-├── install.sh                          # Einziger Installer (Router + alles)
-└── README.md                           # Diese Datei
+├── tests/
+└── README.md
 ```
 
-## Warum getrennt?
+## API Key Lifecycle
 
-| Bundle | Inhalt | Update-Frequenz |
-|--------|--------|-----------------|
-| **Provider-Bundle** | Config, Patches, Router, UA-Spoof | Selten |
-| **Browser-Skills-Bundle** | 22+ Skills, SOP | Oft (nach jeder Umfrage) |
+| Status | Reaktion im Proxy |
+|--------|-------------------|
+| 401/402/403 (Key tot) | `_swap_key("suspended")` — meldet Key als suspended an Pool-API |
+| 412 (Precondition Failed) | `_swap_key_silent("precondition_failed")` — Key bleibt verfügbar |
+| 429 (Rate Limited) | `_swap_key_silent("rate_limited")` — Key bleibt verfügbar |
+| 5xx (Server Error) | Nächster Proxy versuchen |
 
-## Auth
+---
 
-```bash
-hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
-```
+*Stand: 2026-05-28 | 218 Keys | 10 Proxys + Pool-Router | silent swap Fix*

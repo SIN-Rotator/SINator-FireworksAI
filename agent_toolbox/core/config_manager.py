@@ -9,7 +9,7 @@ CONFIG_FILE = DATA_DIR / "config.json"
 
 class Config:
     def __init__(self):
-        self.gmx_email: str = "opensin@gmx.de"
+        self.gmx_email: str = "delqhi@gmx.de"
         self.gmx_password: str = "ZOE.jerry2024"
         self.fireworks_password: str = "ZOE.jerry2024!"
         self._load()

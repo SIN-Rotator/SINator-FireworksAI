@@ -77,7 +77,7 @@ async def _gmx_create_fallback(alias_name: Optional[str] = None) -> Dict[str, An
     """Fallback: GMX Alias Create direkt via GmxService."""
     from agent_toolbox.core.gmx_service import GmxService
     svc = GmxService()
-    await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
     result = await svc.create_alias(alias_name=alias_name, cdp_port=9222)
     if result.get("status") == "success":
         return result
@@ -116,7 +116,7 @@ async def _gmx_delete_fallback() -> Dict[str, Any]:
     """Fallback: GMX Alias Delete direkt via GmxService."""
     from agent_toolbox.core.gmx_service import GmxService
     svc = GmxService()
-    await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
     return await svc.delete_existing_alias(cdp_port=9222)
 
 
@@ -171,7 +171,7 @@ async def check_session():
 
 @router.post("/session/ensure", response_model=GmxSessionCheckResponse)
 async def ensure_gmx_session(
-    email: str = "opensin@gmx.de",
+    email: str = "delqhi@gmx.de",
     password: str = "ZOE.jerry2024",
 ):
     """
@@ -182,7 +182,7 @@ async def ensure_gmx_session(
     2. Falls nicht: Logout → Login (3x Profil-Icon) → Email → Passwort
     
     Args:
-        email: GMX login email (default: opensin@gmx.de)
+        email: GMX login email (default: delqhi@gmx.de)
         password: GMX login password (default: ZOE.jerry2024)
     
     Returns:
@@ -321,7 +321,7 @@ async def rotate_alias(request: GmxAliasRotateRequest = None):
         logger.info("gmx-alias-tool API offline, using direct fallback")
         from agent_toolbox.core.gmx_service import GmxService
         svc = GmxService()
-        await svc.ensure_gmx_session(email="opensin@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+        await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
         fb_result = await svc.rotate_alias(new_alias_name=new_alias_name, cdp_port=9222)
         return GmxAliasRotateResponse(
             status=fb_result.get("status", "error"),

@@ -1,23 +1,17 @@
-"""
-╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — Pool Manager (Core)                     ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  ZWECK:                                                                      ║
-║  API-Key-Pool-Speicherung und -Verwaltung.                                   ║
-║                                                                              ║
-║  ARCHITEKTUR:                                                                 ║
-║  ┌─────────────────────────────────────────────────────────────────────┐    ║
-║  │ PoolManager                                                          │    ║
-║  │ ├── add_key() → Fügt neuen API-Key zum Pool hinzu                   │    ║
-║  │ ├── get_available_key() → Liefert nächsten unverwendeten Key        │    ║
-║  │ ├── mark_used() → Markiert Key als verwendet                        │    ║
-║  │ ├── get_stats() → Pool-Statistiken                                  │    ║
-║  │ └── save() → Speichert Pool in JSON-Datei                           │    ║
-║  └─────────────────────────────────────────────────────────────────────┘    ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-"""
+import json
+import time
+import uuid
+import logging
+from pathlib import Path
+from typing import Optional, List, Dict, Any
+
+from agent_toolbox.core.keychain_store import (
+    store_key as _store_to_keychain,
+    retrieve_key as _retrieve_from_keychain,
+    delete_key as _delete_from_keychain,
+    SENTINEL as _KEYCHAIN_SENTINEL,
+)
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_POOL_PATH = Path(__file__).parent.parent.parent / "data" / "fireworksai-pool.json"
@@ -61,12 +55,10 @@ class PoolManager:
             logger.info("Kein Pool gefunden, erstelle neuen")
             self.keys = []
 
-=======
     def reload(self):
         """Lädt den Pool frisch von Disk (sync mit externen Änderungen)."""
         self._load()
 
->>>>>>> upstream/main
     def save(self):
         """Speichert den Pool in die JSON-Datei."""
         try:
@@ -76,8 +68,8 @@ class PoolManager:
         except Exception as e:
             logger.error(f"Pool-Speichern fehlgeschlagen: {e}")
 
-<<<<<<< HEAD
-    def add_key(self, api_key: str, alias_email: str, key_name: str = "sinator-key") -> Dict[str, Any]:
+    def add_key(self, api_key: str, alias_email: str, key_name: str = "sinator-key",
+                credits_initial: float = 6.0) -> Dict[str, Any]:
         """
         Fügt einen neuen API-Key zum Pool hinzu.
 
@@ -85,27 +77,25 @@ class PoolManager:
             api_key: Fireworks API-Key
             alias_email: Zugehörige GMX Alias-Email
             key_name: Name des Keys
-=======
             credits_initial: Startguthaben in USD (default 6.0 = $6 Free Credits)
->>>>>>> upstream/main
 
         Returns:
             Dict mit status und key_id
         """
-<<<<<<< HEAD
+        self.reload()
+        key_id = str(uuid.uuid4())
+        _store_to_keychain(key_id, api_key)
         key_entry = {
-            "id": str(uuid.uuid4()),
-            "api_key": api_key,
+            "id": key_id,
+            "api_key": _KEYCHAIN_SENTINEL,
             "alias_email": alias_email,
             "key_name": key_name,
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "used": False,
             "used_at": None,
-=======
             "credits_initial": credits_initial,
             "credits_remaining": credits_initial,
             "credits_checked_at": None,
->>>>>>> upstream/main
         }
 
         self.keys.append(key_entry)
@@ -119,20 +109,44 @@ class PoolManager:
 
     def get_available_key(self) -> Optional[Dict[str, Any]]:
         """
-<<<<<<< HEAD
-        Liefert den nächsten unverwendeten API-Key.
-
-        Returns:
-            Dict mit api_key, alias_email, key_name oder None
+        Liefert den nächsten unverwendeten, nicht-suspended und nicht-geleasten API-Key.
         """
+        self.reload()
+        self.expire_leases()
+        now = time.time()
         for key in self.keys:
-            if not key.get("used", False):
-                return key
+            if key.get("used", False) or key.get("suspended", False):
+                continue
+            leased_until = key.get("leased_until")
+            if leased_until is not None and leased_until > now:
+                continue
+            return self._hydrate_key(key)
         return None
+
+    def _hydrate_key(self, key: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of the key dict with api_key hydrated from Keychain."""
+        out = dict(key)
+        api_key = out.get("api_key", "")
+        if api_key == _KEYCHAIN_SENTINEL:
+            real = _retrieve_from_keychain(out["id"])
+            out["api_key"] = real or ""
+        return out
+
+    def mark_suspended(self, key_id: str, reason: str = "unknown") -> bool:
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                key["suspended"] = True
+                key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                key["suspended_reason"] = reason
+                self.save()
+                logger.info(f"Key suspended ({reason}): {key_id[:8]}...")
+                return True
+        return False
 
     def mark_used(self, key_id: str) -> bool:
         """
-        Markiert einen API-Key als verwendet.
+        Markiert einen API-Key als verwendet (manuell, z.B. nach Rotation).
 
         Args:
             key_id: ID des Keys
@@ -140,9 +154,7 @@ class PoolManager:
         Returns:
             True wenn Key gefunden und markiert
         """
-=======
         self.reload()
->>>>>>> upstream/main
         for key in self.keys:
             if key["id"] == key_id:
                 key["used"] = True
@@ -155,14 +167,14 @@ class PoolManager:
     def get_stats(self) -> Dict[str, Any]:
         """
         Generiert Pool-Statistiken.
-<<<<<<< HEAD
-
-        Returns:
-            Dict mit total, used, available, keys
         """
+        self.reload()
+        self.expire_leases()
+        now = time.time()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
-        available = total - used
+        suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
+        available = total - used - suspended
 
         keys_list = []
         for k in self.keys:
@@ -170,42 +182,67 @@ class PoolManager:
                 "id": k["id"],
                 "alias_email": k["alias_email"],
                 "key_name": k["key_name"],
+                "api_key": "",
                 "created_at": k["created_at"],
                 "used": k.get("used", False),
                 "used_at": k.get("used_at"),
+                "suspended": k.get("suspended", False),
+                "suspended_at": k.get("suspended_at"),
+                "suspended_reason": k.get("suspended_reason"),
+                "credits_initial": k.get("credits_initial", 6.0),
+                "credits_remaining": k.get("credits_remaining", 6.0),
+                "credits_checked_at": k.get("credits_checked_at"),
             })
 
         return {
             "total": total,
             "used": used,
-=======
             "suspended": suspended,
->>>>>>> upstream/main
             "available": available,
             "keys": keys_list,
         }
 
-<<<<<<< HEAD
-    def delete_key(self, key_id: str) -> bool:
+    def update_credits(self, key_id: str, credits_remaining: float) -> bool:
         """
-        Löscht einen API-Key aus dem Pool.
+        Aktualisiert das verbleibende Guthaben eines Keys.
 
         Args:
             key_id: ID des Keys
+            credits_remaining: Verbleibendes Guthaben in USD
 
         Returns:
-            True wenn Key gefunden und gelöscht
+            True wenn Key gefunden und aktualisiert
         """
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                key["credits_remaining"] = round(credits_remaining, 2)
+                key["credits_checked_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                self.save()
+                logger.info(f"Credits aktualisiert: {key_id[:8]}... = ${credits_remaining:.2f}")
+                if credits_remaining <= 0.01:
+                    key["suspended"] = True
+                    key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    key["suspended_reason"] = "credits_exhausted"
+                    self.save()
+                    logger.warning(f"Key suspended (0 Credits): {key_id[:8]}...")
+                return True
+        return False
+
+    def delete_key(self, key_id: str) -> bool:
+        """
+        Löscht einen API-Key aus dem Pool und aus der Keychain.
+        """
+        self.reload()
         initial_len = len(self.keys)
         self.keys = [k for k in self.keys if k["id"] != key_id]
         if len(self.keys) < initial_len:
+            _delete_from_keychain(key_id)
             self.save()
             logger.info(f"API-Key gelöscht: {key_id[:8]}...")
             return True
         return False
 
-<<<<<<< HEAD
-=======
     def lease_key(self, ttl_seconds: int = 1800, leased_to: str = "proxy",
                   lease_backup: bool = False) -> Optional[Dict[str, Any]]:
         """
@@ -461,7 +498,6 @@ def unregister_sse_listener(q: "asyncio.Queue"):
     if q in _SSE_LISTENERS:
         _SSE_LISTENERS.remove(q)
 
->>>>>>> upstream/main
 
 _pool_manager: Optional[PoolManager] = None
 

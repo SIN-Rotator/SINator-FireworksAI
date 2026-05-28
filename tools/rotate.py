@@ -27,7 +27,7 @@ logger = logging.getLogger("rotate")
 async def main():
     parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation")
     parser.add_argument("alias", nargs="?", help="Optional alias name")
-    parser.add_argument("--gmx-email", default="opensin@gmx.de", help="GMX account email")
+    parser.add_argument("--gmx-email", default="delqhi@gmx.de", help="GMX account email")
     parser.add_argument("--gmx-password", default="ZOE.jerry2024", help="GMX account password")
     parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks account password")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
@@ -60,75 +60,26 @@ async def main():
     # ═══ Step 2: Fireworks Signup + OTP ═══
     logger.info("=== Fireworks Signup ===")
     from fireworks_service import signup_fireworks
-    signup_result = await signup_fireworks(alias, args.password, cdp_port=args.cdp_port)
+    signup_result = await signup_fireworks(alias, args.password)
     if signup_result.get('status') == 'success':
-        logger.info("✅ Fireworks signup + verify OK")
+        logger.info(f"✅ Fireworks signup OK: {signup_result.get('verify_url', '')[:60]}")
     else:
-        logger.info(f"Signup: {signup_result.get('status')} — trying login fallback")
+        logger.info(f"Signup: {signup_result.get('status')} — {signup_result.get('error', '')}")
 
     # ═══ Step 3: Fireworks Login + Onboarding ═══
     logger.info("=== Fireworks Login + Onboarding ===")
-    # Login via CDP
-    from fireworks_service import FireworksService
-    fw = FireworksService()
-    client = None
-    try:
-        client, session_id = await fw._connect(args.cdp_port)
-        await client.navigate(session_id, "https://app.fireworks.ai/login")
-        await asyncio.sleep(3)
-        # Email
-        await fw._fill_input(client, session_id, ['input[name="email"]'], alias)
-        await fw._fill_input(client, session_id, ['input[type="password"]'], args.password)
-        await fw._click_text(client, session_id, ["next", "login", "anmelden"])
-        await asyncio.sleep(5)
-        # Check URL
-        url_res = await client.evaluate(session_id, "window.location.href")
-        current_url = url_res.get("result", {}).get("value", "")
-        logger.info(f"Post-login URL: {current_url}")
-
-        # Onboarding: Name + Checkboxes
-        if "onboarding" in current_url:
-            logger.info("Onboarding detected — filling form...")
-            await fw._fill_input(client, session_id, ['input[name="firstName"]', 'input[name="first"]'], "Super")
-            await fw._fill_input(client, session_id, ['input[name="lastName"]', 'input[name="last"]'], "Cheetah")
-            # Terms checkbox
-            await client.evaluate(session_id, """
-            (function() {
-                const cb = document.querySelector('input[type="checkbox"]');
-                if (cb && !cb.checked) { cb.click(); return true; }
-                return false;
-            })()
-            """, return_by_value=True)
-            await asyncio.sleep(1)
-            await fw._click_text(client, session_id, ["continue", "next", "weiter"])
-            await asyncio.sleep(3)
-            # Use cases
-            for uc in ["Prototype", "Flexible", "Conversational", "Search"]:
-                await client.evaluate(session_id, f"""
-                (function() {{
-                    const labels = document.querySelectorAll('label, span, div');
-                    for (const el of labels) {{
-                        if (el.textContent.includes('{uc}')) {{
-                            const cb = el.querySelector('input[type="checkbox"]') || el.previousElementSibling;
-                            if (cb && !cb.checked) {{ cb.click(); return true; }}
-                        }}
-                    }}
-                    return false;
-                }})()
-                """, return_by_value=True)
-                await asyncio.sleep(0.5)
-            await fw._click_text(client, session_id, ["submit", "get started", "loslegen"])
-            await asyncio.sleep(5)
-    except Exception as e:
-        logger.warning(f"Login/Onboarding error: {e}")
-    finally:
-        if client:
-            await client.disconnect()
+    from fireworks_service import login_fireworks
+    login_result = await login_fireworks(alias, args.password)
+    if login_result.get('status') == 'success':
+        logger.info(f"✅ Login OK: {login_result.get('steps_completed', [])}")
+    else:
+        logger.info(f"Login: {login_result.get('status')} — {login_result.get('error', '')}")
 
     # ═══ Step 4: API Key ═══
     logger.info("=== API Key ===")
+    from fireworks_service import create_api_key
     key_name = alias.split("@")[0].split("-")[0] if alias else "sinator-key"
-    api_result = await fw.create_api_key(key_name=key_name, cdp_port=args.cdp_port)
+    api_result = await create_api_key(key_name=key_name)
     api_key = api_result.get("api_key")
 
     if not api_key:

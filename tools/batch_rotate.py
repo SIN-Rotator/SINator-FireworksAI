@@ -27,7 +27,7 @@ async def count_available():
 async def rotate_one():
     proc = await asyncio.create_subprocess_exec(
         "python3", str(ROTATE_SCRIPT),
-        "--gmx-email", "opensin@gmx.de",
+        "--gmx-email", "delqhi@gmx.de",
         "--gmx-password", "ZOE.jerry2024",
         "--password", "ZOE.jerry2024!",
         "--cdp-port", "9222",

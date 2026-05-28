@@ -16,7 +16,7 @@ class PoolClient:
         cfg = load_config()
         self.pool_api_url = pool_api_url or cfg.get("pool_api_url", "http://localhost:8000/api/v1")
         self.lease_ttl = cfg.get("lease_ttl_seconds", 1800)
-        self.lease_backup = cfg.get("lease_backup", True)
+        self.lease_backup = cfg.get("lease_backup", False)
         self._http = httpx.AsyncClient(timeout=15.0)
 
     async def lease(self, leased_to: str = "proxy") -> Optional[Dict[str, Any]]:
@@ -55,9 +55,13 @@ class PoolClient:
             return False
 
     async def report(self, api_key: Optional[str] = None, key_id: Optional[str] = None,
-                     reason: str = "unknown") -> Optional[Dict[str, Any]]:
+                     reason: str = "unknown", leased_to: str = "proxy") -> Optional[Dict[str, Any]]:
         try:
-            body = {"reason": reason}
+            body = {
+                "reason": reason,
+                "leased_to": leased_to,
+                "ttl_seconds": self.lease_ttl,
+            }
             if api_key:
                 body["api_key"] = api_key
             if key_id:
