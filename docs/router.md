@@ -4,7 +4,7 @@
 
 Ein lokaler Mini-Proxy (`pool-router.py`) der auf `localhost:9998` lauscht und Requests an `sinatorpool1/2/3.delqhi.com` weiterleitet.
 
-**Killer-Feature:** Bei 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error) springt der Router **automatisch** zum nächsten Pool.
+**Killer-Feature:** Bei 413 (Payload Too Large), 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error) springt der Router **automatisch** zum nächsten Pool.
 
 ## Warum?
 
@@ -77,13 +77,26 @@ Hermes denkt es redet mit einem Provider. Tatsächlich redet es mit dem lokalen 
 
 ### Retry-Trigger (Status Codes)
 
+- `413` — Payload Too Large (API-Limit, alle Pools probieren)
 - `429` — Too Many Requests
 - `412` — Precondition Failed (suspended key)
 - `500`, `502`, `503`, `504` — Server Errors
 
 ### Failure-Tracking
 
-Jeder Pool hat einen Counter. Bei Retry-Trigger: +1. Bei Erfolg: -1. Bei `MAX_FAILURES` (default 3) wird der Pool übersprungen bis er wieder erfolgreich antwortet.
+Jeder Pool hat einen Counter. Bei Retry-Trigger: +1. Bei Erfolg: -1. Bei `MAX_FAILURES` (default 3) wird der Pool mit 60s Cooldown belegt statt dauerhaft zu sterben.
+
+### Gleicher Fehler von allen Pools (v2.1)
+
+Wenn ALLE Pools denselben Fehler zurückgeben (z.B. 413, 500), wird der Status-Code + Body **durchgereicht** statt in "All pools exhausted" (500) gewrappt. Das ermöglicht dem Client (z.B. OpenCode SDK) eigene Retry- oder Fallback-Logik.
+
+### 413 pass-through (v3 — 2026-05-28)
+
+413 wurde vorher sofort mit `raise` abgefangen → `except Exception` → 500. Jetzt: 413 in der Retry-Liste → alle Pools probieren → 413 durchreichen falls alle denselben Fehler haben.
+
+### Proxy charset bug fix
+
+Der Pool-Proxy (`~/.sin-pool/server.py`) crashte bei `Content-Type: application/json; charset=utf-8` von Fireworks mit `ValueError`. Fix: charset-Parameter vor aiohttp-Response-Konstruktion strippen. Betrifft alle 3 Proxy-Instanzen (8888/8889/8890).
 
 ### Logs
 
@@ -105,10 +118,10 @@ Beispiel:
 pgrep -f pool-router.py
 
 # Router stoppen
-launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
 # Router starten
-launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
 # Logs
 tail -f ~/.hermes/logs/pool-router.log

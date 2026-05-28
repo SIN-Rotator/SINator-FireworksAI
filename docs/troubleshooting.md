@@ -69,11 +69,16 @@ ls ~/.hermes/hermes-agent/_ua_patch.py
 grep "import _ua_patch" ~/.hermes/hermes-agent/run_agent.py
 
 # 6. Router Service?
-launchctl list | grep com.sinhermes.poolrouter
+launchctl list | grep com.sinator.pool-router
 pgrep -f pool-router.py
+
+# 7. Proxy charset? (optional, nur bei charset-Fehlern)
+# Symptom: "ValueError: Content-Type contains parameter charset=utf-8"
+# Fix: ~/.sin-pool/server.py strippt charset vor aiohttp-Response
+# Status: Alle 3 Proxies (8888/8889/8890) haben den Fix
 ```
 
-Alle 6 Checks müssen grün sein.
+Alle 7 Checks müssen grün sein.
 
 ## Auth-Fehler
 

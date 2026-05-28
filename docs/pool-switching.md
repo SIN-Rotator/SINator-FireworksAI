@@ -2,7 +2,7 @@
 
 ## Warum wechseln?
 
-Mit dem Pool-Router ist manuelles Wechseln meist nicht nötig — der Router wechselt automatisch bei Fehlern (429, 412, 5xx).
+Mit dem Pool-Router ist manuelles Wechseln meist nicht nötig — der Router wechselt automatisch bei Fehlern (413, 429, 412, 5xx).
 
 Aber manchmal willst du manuell eingreifen:
 - Pool 1 ist langsam (kein Fehler, nur hohe Latenz)
@@ -15,24 +15,19 @@ Aber manchmal willst du manuell eingreifen:
 
 ```bash
 # 1. Router stoppen
-launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
-
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
 # 2. Config auf direkten Pool ändern
 # ~/.hermes/config.yaml:
 #   base_url: https://sinatorpool2.delqhi.com/inference/v1
-
 # 3. Hermes neustarten (Config wird bei Start gelesen)
 ```
-
 ### Zurück zum Router
-
 ```bash
 # 1. Config auf localhost zurücksetzen
 # ~/.hermes/config.yaml:
 #   base_url: http://localhost:9998/inference/v1
-
 # 2. Router starten
-launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
 ```
 
 ## Ohne Router (direkte Pools)
