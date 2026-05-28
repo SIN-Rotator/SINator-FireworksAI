@@ -10,7 +10,7 @@ auxiliary:
     timeout: 120
 custom_providers:
 - name: fireworks
-  base_url: https://sinatorpool3.delqhi.com/inference/v1
+  base_url: http://localhost:8890/inference/v1
   key_env: FIREWORKS_AI_API_KEY
 toolsets:
 - web

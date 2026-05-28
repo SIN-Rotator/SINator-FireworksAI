@@ -14,36 +14,52 @@ curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provi
 
 Das installiert alles: Pool-Router, Config, 412-Patch, UA-Spoof, unlimited max_turns.
 
-## Pool-Router
+## Pool-Router — EINE Base-URL, 10 Proxys, Auto-Failover
 
-Statt einen einzelnen Proxy auszuwaehlen, laeuft ein lokaler Router auf `localhost:9998`.
-Er leitet Requests an `sinatorpool-router -> pool2 -> pool3` weiter.
+**NUR EINE einzige URL** — kein manuelles Pool-Wechseln mehr.
 
-**Auto-Failover:** Bei 413 (Payload Too Large), 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error)
-springt der Router automatisch zum naechsten Pool.
+Clients nutzen den Pool-Router als Base-URL. Der Router verteilt Requests automatisch auf 10 lokale Proxys (8888-8897), jeder mit eigenem API-Key aus dem Pool. Bei 413/429/412/5xx springt der Router zum nächsten Proxy — kein gegenseitiges Blockieren, kein Single-Point-of-Failure.
 
-**413 pass-through (v3 — 2026-05-28):** Wenn ALLE Pools denselben Fehler (z.B. 413)
-zurückgeben, wird der Status-Code durchgereicht statt in 500 gewrappt. Fix: 413 zur
-Retry-Liste hinzugefügt (vorher: sofortiger `raise` → `except Exception` → 500).
+| Zugriff | Base URL |
+|---------|----------|
+| **Lokal (dieser Mac)** | `http://localhost:9998/inference/v1` |
+| **Remote (andere Macs / Clients)** | `https://sinatorpool-router.delqhi.com/inference/v1` |
 
-**Proxy charset bug fix:** Der aiohttp-Proxy (`~/.sin-pool/server.py`) crashte bei
-`Content-Type: application/json; charset=utf-8` von Fireworks mit `ValueError`.
-Fix: charset-Parameter vor Response-Konstruktion strippen. 3 Proxy-Instanzen
-(8888/8889/8890) per launchd.
+### Backend: 10 Proxys (lokal, 8888-8897)
 
-| Pool | Base URL | Prioritaet |
-|------|----------|------------|
-| **Pool 1** | `https://sinatorpool-router.delqhi.com/inference/v1` | 1 (bevorzugt) |
-| **Pool 2** | `https://sinatorpool-router.delqhi.com/inference/v1` | 2 (Fallback) |
-| **Pool 3** | `https://sinatorpool-router.delqhi.com/inference/v1` | 3 (letzter Fallback) |
+Jeder Proxy ist eine eigene aiohttp-Instanz mit charset-Fix, eigenem API-Key aus dem Pool (218 Keys), und launchd-Autostart.
+
+### Auto-Failover
+
+| Status | Reaktion |
+|--------|----------|
+| 413 Payload Too Large | Nächster Proxy |
+| 429 Rate Limit | Nächster Proxy |
+| 412 Account Suspended | Nächster Proxy |
+| 500/502/503/504 Server Error | Nächster Proxy |
+| Alle Pools gleicher Fehler | Status-Code durchreichen (pass-through) |
+| Proxy 3 Fehler in 60s | Cooldown — 60s Pause |
+
+### Threading Fix (2026-05-28)
+
+`socketserver.TCPServer` → `ThreadingMixIn + TCPServer`. Vorher blockierte eine offene Verbindung alle anderen Requests.
+
+### 413 pass-through (v3)
+
+Wenn ALLE Pools denselben Fehler zurückgeben, wird der Status-Code durchgereicht statt in 500 gewrappt.
+
+### Proxy charset bug fix
+
+Der aiohttp-Proxy crashte bei `Content-Type: application/json; charset=utf-8` mit `ValueError`. Fix: charset-Parameter vor Response-Konstruktion strippen. 10 Proxy-Instanzen (8888-8897) per launchd.
 
 ## Was der Installer macht
 
 1. **Pool Router Config** — `~/.hermes/config.yaml` mit `localhost:9998`
-2. **Pool Router Daemon** — `pool-router.py` via launchd (auto-start on login, restart on crash)
-3. **412 Retry Patch** — `error_classifier.py`: 412 + "suspended" -> `billing` + retryable
-4. **UA-Spoof Patch** — `_ua_patch.py` + `import _ua_patch` in `run_agent.py`
-5. **Unlimited max_turns** — `999999` (kein Iterations-Limit)
+2. **Pool Router Daemon** — `pool-router.py` via launchd `com.sinator.pool-router`
+3. **10 Proxy Daemons** — `com.sinator.pool-proxy-{8888..8897}` via launchd
+4. **412 Retry Patch** — `error_classifier.py`: 412 + "suspended" -> `billing` + retryable
+5. **UA-Spoof Patch** — `_ua_patch.py` + `import _ua_patch` in `run_agent.py`
+6. **Unlimited max_turns** — `999999` (kein Iterations-Limit)
 
 ## Management
 
@@ -52,22 +68,25 @@ Fix: charset-Parameter vor Response-Konstruktion strippen. 3 Proxy-Instanzen
 pgrep -f pool-router.py
 
 # Router stoppen
-launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
 # Router starten
-launchctl load ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist
+launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
 
-# Logs
-tail -f ~/.hermes/logs/pool-router.log
+# Proxys (alle 10)
+launchctl list | grep pool-proxy
+
+# Pool-Router Logs
+tail -f /tmp/pool-router-launchd.log
 ```
 
 ## Inhalt
 
 | Komponente | Zweck |
 |-----------|-------|
-| `config/fireworks-router.yaml` | Hermes Config fuer lokalen Pool-Router |
-| `config/fireworks-pool{1,2,3}.yaml` | Einzelne Pool-Configs (Referenz, nicht fuer Installation) |
-| `scripts/pool-router.py` | Lokaler Proxy mit Auto-Failover (v3: 413 pass-through) |
+| `config/fireworks-router.yaml` | Hermes Config fuer Pool-Router (`localhost:9998`) |
+| `config/fireworks-pool{1,2,3}.yaml` | Direkte Pool-Configs (Referenz, localhost:8888-8890) |
+| `scripts/pool-router.py` | Pool-Router v3 mit Threading + 413/Cooldown/pass-through |
 | `scripts/pool-router.plist` | macOS launchd Service (auto-start, restart on crash) |
 | `patches/error_classifier_412.patch` | 412-Retry-Fix |
 | `skills/sin-hermes-provider-setup/` | Hermes Skill — Installation auf neuem Mac |
@@ -89,9 +108,9 @@ tail -f ~/.hermes/logs/pool-router.log
 │       └── pool_manager.py             # API-Key Pool-Manager
 ├── config/
 │   ├── fireworks-router.yaml           # localhost:9998 -> auto-failover
-│   ├── fireworks-pool1.yaml            # Referenz: sinatorpool-router
-│   ├── fireworks-pool2.yaml            # Referenz: sinatorpool-router
-│   └── fireworks-pool3.yaml            # Referenz: sinatorpool-router
+│   ├── fireworks-pool1.yaml            # Referenz: localhost:8888
+│   ├── fireworks-pool2.yaml            # Referenz: localhost:8889
+│   └── fireworks-pool3.yaml            # Referenz: localhost:8890
 ├── patches/
 │   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── scripts/
