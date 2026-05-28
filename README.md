@@ -17,7 +17,7 @@ Das installiert alles: Pool-Router, Config, 412-Patch, UA-Spoof, unlimited max_t
 ## Pool-Router
 
 Statt einen einzelnen Proxy auszuwaehlen, laeuft ein lokaler Router auf `localhost:9998`.
-Er leitet Requests an `sinatorpool1 -> pool2 -> pool3` weiter.
+Er leitet Requests an `sinatorpool-router -> pool2 -> pool3` weiter.
 
 **Auto-Failover:** Bei 413 (Payload Too Large), 429 (Rate Limit), 412 (Suspended), oder 5xx (Server Error)
 springt der Router automatisch zum naechsten Pool.
@@ -33,9 +33,9 @@ Fix: charset-Parameter vor Response-Konstruktion strippen. 3 Proxy-Instanzen
 
 | Pool | Base URL | Prioritaet |
 |------|----------|------------|
-| **Pool 1** | `https://sinatorpool1.delqhi.com/inference/v1` | 1 (bevorzugt) |
-| **Pool 2** | `https://sinatorpool2.delqhi.com/inference/v1` | 2 (Fallback) |
-| **Pool 3** | `https://sinatorpool3.delqhi.com/inference/v1` | 3 (letzter Fallback) |
+| **Pool 1** | `https://sinatorpool-router.delqhi.com/inference/v1` | 1 (bevorzugt) |
+| **Pool 2** | `https://sinatorpool-router.delqhi.com/inference/v1` | 2 (Fallback) |
+| **Pool 3** | `https://sinatorpool-router.delqhi.com/inference/v1` | 3 (letzter Fallback) |
 
 ## Was der Installer macht
 
@@ -89,9 +89,9 @@ tail -f ~/.hermes/logs/pool-router.log
 │       └── pool_manager.py             # API-Key Pool-Manager
 ├── config/
 │   ├── fireworks-router.yaml           # localhost:9998 -> auto-failover
-│   ├── fireworks-pool1.yaml            # Referenz: sinatorpool1
-│   ├── fireworks-pool2.yaml            # Referenz: sinatorpool2
-│   └── fireworks-pool3.yaml            # Referenz: sinatorpool3
+│   ├── fireworks-pool1.yaml            # Referenz: sinatorpool-router
+│   ├── fireworks-pool2.yaml            # Referenz: sinatorpool-router
+│   └── fireworks-pool3.yaml            # Referenz: sinatorpool-router
 ├── patches/
 │   └── error_classifier_412.patch      # 412 + "suspended" -> retryable
 ├── scripts/

@@ -35,9 +35,16 @@ import time
 import threading
 
 POOLS = [
-    "https://sinatorpool1.delqhi.com",
-    "https://sinatorpool2.delqhi.com",
-    "https://sinatorpool3.delqhi.com",
+    "http://localhost:8888",
+    "http://localhost:8889",
+    "http://localhost:8890",
+    "http://localhost:8891",
+    "http://localhost:8892",
+    "http://localhost:8893",
+    "http://localhost:8894",
+    "http://localhost:8895",
+    "http://localhost:8896",
+    "http://localhost:8897",
 ]
 
 PORT = int(os.environ.get("POOL_ROUTER_PORT", "9998"))

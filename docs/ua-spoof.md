@@ -8,7 +8,7 @@ Hermes nutzt das OpenAI Python SDK für alle LLM-Requests. Das SDK sendet defaul
 User-Agent: OpenAI/Python 1.x.x
 ```
 
-Unsere sinator-Proxy-Loadbalancer (sinatorpool1/2/3.delqhi.com) erkennen diesen Header als "Bot/Script" und drosseln oder blocken Requests.
+Unsere sinator-Pool-Router (sinatorpool-router.delqhi.com) erkennen diesen Header als "Bot/Script" und drosseln oder blocken Requests.
 
 ## Lösung
 

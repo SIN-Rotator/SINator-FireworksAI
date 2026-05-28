@@ -18,30 +18,30 @@ Aber manchmal willst du manuell eingreifen:
 launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
 # 2. Config auf direkten Pool ändern
 # ~/.hermes/config.yaml:
-#   base_url: https://sinatorpool2.delqhi.com/inference/v1
+#   base_url: http://localhost:9998/inference/v1
+#   # ODER remote:
+#   #   base_url: https://sinatorpool-router.delqhi.com/inference/v1
 # 3. Hermes neustarten (Config wird bei Start gelesen)
 ```
 ### Zurück zum Router
 ```bash
-# 1. Config auf localhost zurücksetzen
+# 1. Config auf Router setzen (EINE Base-URL für alle)
 # ~/.hermes/config.yaml:
-#   base_url: http://localhost:9998/inference/v1
+#   base_url: http://localhost:9998/inference/v1   # lokal
+#   # ODER: https://sinatorpool-router.delqhi.com/inference/v1  # remote
 # 2. Router starten
 launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
 ```
 
-## Ohne Router (direkte Pools)
+## Ohne Router (direkte Pools — nicht empfohlen)
 
-Wenn du keinen Router willst, nutze die Pool-Configs als Vorlage:
+Lokal am Mac geht auch direkt (ohne Router):
 
 ```bash
-# Pool 1 Config als Vorlage
-# Siehe: config/fireworks-pool1.yaml
-# Oder: config/fireworks-pool2.yaml
-# Oder: config/fireworks-pool3.yaml
+# base_url: http://localhost:8888/inference/v1   # Pool 1 direkt
 ```
 
-Diese YAML-Dateien zeigen wie eine direkte Pool-Config aussieht. Kopieren und `base_url` anpassen.
+Aber Router empfehlenswert — sonst kein Auto-Failover bei 413/429.
 
 ## Verifizierung
 
@@ -53,7 +53,6 @@ grep "base_url" ~/.hermes/config.yaml
 pgrep -f pool-router.py
 
 # Sollte zeigen:
-#   base_url: http://localhost:9998/inference/v1  (Router-Modus)
-# ODER:
-#   base_url: https://sinatorpoolX.delqhi.com/inference/v1  (Direkt)
+#   base_url: http://localhost:9998/inference/v1  (Router-Modus, lokal)
+#   base_url: https://sinatorpool-router.delqhi.com/inference/v1  (Router-Modus, remote)
 ```
