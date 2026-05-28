@@ -245,7 +245,11 @@ if __name__ == "__main__":
     print(f"[PoolRouter] Max failures: {MAX_FAILURES} per {COOLDOWN_SECONDS}s window")
     print(f"[PoolRouter] Health: http://localhost:{PORT}/health")
 
-    with socketserver.TCPServer(("", PORT), PoolHandler) as httpd:
+class ThreadedPoolServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+with ThreadedPoolServer(("", PORT), PoolHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:
