@@ -98,7 +98,8 @@ cd ~/dev/SINator-dashboard && ./start.sh
 
 ## Client Konfiguration
 
-**OpenCode (`~/.config/opencode/opencode.json`):**
+### OpenCode (`~/.config/opencode/opencode.json`)
+
 ```json
 {
   "provider": {
@@ -112,12 +113,24 @@ cd ~/dev/SINator-dashboard && ./start.sh
 }
 ```
 
-**Umgebungsvariable:**
+### OpenCode Quick Install (One-Liner)
+
 ```bash
-export FIREWORKS_API_KEY="<DEIN_API_KEY>"
+curl -fsSL https://raw.githubusercontent.com/SIN-Rotator/SINator-FireworksAI/main/opencode-config-install.sh | bash
 ```
 
-**Python:**
+Mit API Key:
+```bash
+curl -fsSL https://raw.githubusercontent.com/SIN-Rotator/SINator-FireworksAI/main/opencode-config-install.sh | bash -s -- --api-key fw_xxx
+```
+
+### Emergency Repair (Config kaputt?)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SIN-Rotator/SINator-FireworksAI/main/opencode-config-repair.sh | bash
+```
+
+### Python
 ```python
 from openai import OpenAI
 client = OpenAI(
@@ -126,7 +139,15 @@ client = OpenAI(
 )
 ```
 
-**curl:**
+### Hermes (`~/.hermes/config.yaml`)
+```yaml
+custom_providers:
+  - name: fireworks
+    base_url: https://sinatorpool-router.delqhi.com/inference/v1
+    key_env: FIREWORKS_AI_API_KEY
+```
+
+### curl
 ```bash
 curl https://sinatorpool-router.delqhi.com/inference/v1/models \
   -H "Authorization: Bearer <DEIN_API_KEY>"
