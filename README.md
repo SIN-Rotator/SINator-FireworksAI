@@ -2,6 +2,8 @@
 
 [![GitNexus](https://img.shields.io/badge/GitNexus-knowledge%20graph-8B5CF6)](.gitnexus/)
 
+> **⚠️ GitNexus-Pflicht:** Bevor du Code in diesem Repo änderst, MUSST du `gitnexus_impact()` (Blast Radius) und `gitnexus_detect_changes()` (vor Commit) ausführen. Siehe [GitNexus Guide](.gitnexus/).
+
 Automated GMX alias rotation → Fireworks AI account → API key pool.
 OpenAI-compatible proxy with automatic key rotation on rate-limits.
 
