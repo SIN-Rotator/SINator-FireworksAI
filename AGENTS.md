@@ -318,3 +318,23 @@ This project is indexed by GitNexus as **SINator-FireworksAI** (2044 symbols, 36
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->
+
+---
+
+## 🧠 Simone MCP — Code Intelligence & Automation
+
+Simone MCP bietet zusätzliche Code-Analyse-Tools via MCP:
+
+**Verfügbare Tools:**
+- `sin_simone_mcp_symbol_search` — Symbol-Suche im gesamten Workspace
+- `sin_simone_mcp_find_references` — Alle Referenzen zu einem Symbol finden
+- `sin_simone_mcp_project_overview` — Workspace-Footprint + Dateitypen
+- `sin_simone_mcp_structural_edit` — Strukturelle Code-Edits (LSP-grade)
+- `sin_simone_mcp_memory_query` — Cloud Semantic Memory (Kontext + Analysen)
+- `sin_simone_mcp_health` — Server-Status und Capabilities
+
+**IMMER verwenden für:**
+- `sin_simone_mcp_symbol_search` statt grep für Symbol-Suche
+- `sin_simone_mcp_find_references` vor Refactoring
+- `sin_simone_mcp_project_overview` für schnellen Codebase-Überblick
+- `sin_simone_mcp_structural_edit` für sichere, strukturierte Edits
