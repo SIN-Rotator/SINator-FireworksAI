@@ -98,15 +98,13 @@ cd ~/dev/SINator-dashboard && ./start.sh
 
 ## Client Konfiguration
 
-### Lokal (auf Mac mit Backend)
-
 **OpenCode (`~/.config/opencode/opencode.json`):**
 ```json
 {
   "provider": {
     "fireworks-ai": {
       "options": {
-        "baseURL": "http://localhost:9998/inference/v1",
+        "baseURL": "https://sinatorpool-router.delqhi.com/inference/v1",
         "apiKey": "<DEIN_API_KEY>"
       }
     }
@@ -123,25 +121,9 @@ export FIREWORKS_API_KEY="<DEIN_API_KEY>"
 ```python
 from openai import OpenAI
 client = OpenAI(
-    base_url="http://localhost:9998/inference/v1",
+    base_url="https://sinatorpool-router.delqhi.com/inference/v1",
     api_key="<DEIN_API_KEY>",
 )
-```
-
-### Remote (andere Macs)
-
-**OpenCode:**
-```json
-{
-  "provider": {
-    "fireworks-ai": {
-      "options": {
-        "baseURL": "https://sinatorpool-router.delqhi.com/inference/v1",
-        "apiKey": "<DEIN_API_KEY>"
-      }
-    }
-  }
-}
 ```
 
 **curl:**

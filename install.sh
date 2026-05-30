@@ -7,15 +7,15 @@ LAUNCH_AGENTS="$HOME/Library/LaunchAgents"
 echo "Installing SIN-Hermes-Provider-Bundle..."
 echo ""
 echo "This bundle installs:"
-echo "  - Pool Router (localhost:9998) with auto-failover across 10 proxies"
+echo "  - Pool Router (sinatorpool-router.delqhi.com) with auto-failover across 10 proxies"
 echo "  - Auto-start service (runs after reboot, restarts on crash)"
-echo "  - Fireworks Config pointing to local router"
+echo "  - Fireworks Config pointing to remote router"
 echo "  - 412 PRECONDITION_FAILED retry patch"
 echo "  - User-Agent spoof patch"
 echo "  - Unlimited max_turns"
 echo ""
 
-# 1. Router Config (localhost:9998)
+# 1. Router Config (sinatorpool-router.delqhi.com)
 curl -fsSL "$REPO/config/fireworks-router.yaml" -o "$HERMES_HOME/config.yaml"
 
 # 2. Download pool-router
@@ -104,7 +104,7 @@ echo "=========================================="
 echo " SIN-Hermes-Provider-Bundle installed!"
 echo "=========================================="
 echo ""
-echo "| Pool Router: localhost:9998 → 10 Proxys (8888-8897, auto-failover) |"
+echo "| Pool Router: sinatorpool-router.delqhi.com → 10 Proxys (8888-8897, auto-failover) |"
 echo "| Auto-start:  Enabled (runs on login, restarts on crash)         |"
 echo ""
 echo "Next step:"
