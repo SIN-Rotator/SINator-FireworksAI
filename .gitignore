@@ -32,3 +32,6 @@ node_modules/
 dist/
 build/
 *.egg-info/
+
+# Graphify (auto-generated)
+graphify-out/
