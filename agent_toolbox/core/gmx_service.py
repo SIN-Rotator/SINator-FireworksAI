@@ -121,6 +121,24 @@ class GmxService:
                     nodes = tree_result.get("nodes", [])
                     logger.debug(f"[CDP-AXTree] {len(nodes)} AXTree nodes gescannt")
 
+                    # Session Restore Detection: wenn wenig Nodes + "sitzung/wiederhergestellt" → reload
+                    if len(nodes) < 20:
+                        sample_text = " ".join(
+                            (n.get("name") or {}).get("value", "")
+                            for n in nodes[:10]
+                        ).lower()
+                        if "sitzung" in sample_text or "wiederhergestellt" in sample_text or "cookies" in sample_text:
+                            logger.warning("[CDP-AXTree] GMX Session Restore-Seite erkannt — lade neu...")
+                            try:
+                                await self.inbox_tab.reload(wait_until="domcontentloaded")
+                                await asyncio.sleep(5)
+                                logger.info("[CDP-AXTree] Page reloaded, continue polling")
+                                continue
+                            except Exception as reload_err:
+                                logger.warning(f"[CDP-AXTree] Reload failed: {reload_err}")
+                                await asyncio.sleep(5)
+                                continue
+
                     full_text = ""
                     fireworks_found = False
 
