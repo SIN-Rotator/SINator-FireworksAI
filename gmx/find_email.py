@@ -17,6 +17,7 @@ Returns: {"status": "found" | "not_found" | "not_logged_in" | "error",
           "verify_url": "https://app.fireworks.ai/...",
           "matches": int, "frame": "...", "text_preview": "...", "error": "..."}
 """
+
 import asyncio
 import re
 import html as html_module
@@ -24,8 +25,6 @@ from typing import Any, Dict
 
 from gmx._lib import run, DEFAULT_CDP_PORT
 
-# Shadow-DOM-penetrating scan: every element whose text contains the keyword,
-# no matter how deeply nested inside (shadow) roots.
 _SCAN_JS = r"""
 (() => {
     const KW = (arguments[0] || '').toLowerCase();
@@ -48,7 +47,6 @@ _SCAN_JS = r"""
 })()
 """
 
-# Click the shortest (most specific) element matching the keyword.
 _CLICK_JS = r"""
 (() => {
     const KW = (arguments[0] || '').toLowerCase();
@@ -74,7 +72,6 @@ _CLICK_JS = r"""
 })()
 """
 
-# Shadow-DOM-penetrating full-text extraction of a (frame) document.
 _TEXT_JS = r"""
 (() => {
     let results = [];
@@ -106,8 +103,66 @@ _URL_PATTERN = re.compile(
 )
 
 
-async def find_email(keyword: str = "fireworks", timeout: int = 8,
-                     port: int = DEFAULT_CDP_PORT) -> Dict[str, Any]:
+async def _navigate_to_inbox(page) -> Dict[str, Any]:
+    """Navigate page to the GMX inbox. Returns error dict on failure, None on success."""
+    current_url = page.url or ""
+    if "navigator.gmx.net/mail" in current_url and "sid=" in current_url:
+        return None
+
+    await page.goto(
+        "https://www.gmx.net/", wait_until="domcontentloaded", timeout=30000
+    )
+    await asyncio.sleep(4)
+    current_url = page.url
+
+    if (
+        "status=inactive" in current_url
+        or "session-expired" in current_url
+        or "logoutlounge" in current_url
+    ):
+        return {
+            "status": "not_logged_in",
+            "verify_url": None,
+            "error": "Session inactive or expired",
+        }
+
+    try:
+        postfach = page.locator("text=Zum Postfach").first
+        if await postfach.is_visible(timeout=5000):
+            await postfach.click()
+            await asyncio.sleep(6)
+            current_url = page.url
+            if "navigator.gmx.net/mail" not in current_url:
+                return {
+                    "status": "not_logged_in",
+                    "verify_url": None,
+                    "error": "Postfach click did not navigate to inbox",
+                }
+        else:
+            return {
+                "status": "not_logged_in",
+                "verify_url": None,
+                "error": "No Zum Postfach — not logged in",
+            }
+    except Exception as e:
+        return {
+            "status": "not_logged_in",
+            "verify_url": None,
+            "error": f"Postfach navigation failed: {e}",
+        }
+
+    body = await page.evaluate("() => document.body ? document.body.innerText : ''")
+    if "Nicht eingeloggt" in body or (
+        "anmelden" in body.lower()[:300] and "E-Mail" not in body
+    ):
+        return {"status": "not_logged_in", "verify_url": None}
+
+    return None
+
+
+async def find_email(
+    keyword: str = "fireworks", timeout: int = 8, port: int = DEFAULT_CDP_PORT
+) -> Dict[str, Any]:
     """Find the first inbox mail matching keyword, open it, return any verify URL."""
     from playwright.async_api import async_playwright
 
@@ -117,20 +172,31 @@ async def find_email(keyword: str = "fireworks", timeout: int = 8,
         page = None
         for ctx in browser.contexts:
             for pg in ctx.pages:
-                if "navigator.gmx.net" in (pg.url or "") or "gmx.net/mail" in (pg.url or ""):
+                if "navigator.gmx.net/mail" in (pg.url or "") and "sid=" in (
+                    pg.url or ""
+                ):
                     page = pg
                     break
             if page:
                 break
         if page is None:
-            page = await (browser.contexts[0].new_page() if browser.contexts else browser.new_page())
+            for ctx in browser.contexts:
+                for pg in ctx.pages:
+                    if "gmx.net" in (pg.url or "") and "consent" not in (pg.url or ""):
+                        page = pg
+                        break
+                if page:
+                    break
+        if page is None:
+            page = await (
+                browser.contexts[0].new_page()
+                if browser.contexts
+                else browser.new_page()
+            )
 
-        await page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(5)
-
-        body = await page.evaluate("() => document.body ? document.body.innerText : ''")
-        if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:300] and "E-Mail" not in body):
-            return {"status": "not_logged_in", "verify_url": None}
+        nav_err = await _navigate_to_inbox(page)
+        if nav_err:
+            return nav_err
 
         # 1) Scan all frames (incl. shadow DOM) for the keyword.
         target_frame, matches = None, []
@@ -150,8 +216,13 @@ async def find_email(keyword: str = "fireworks", timeout: int = 8,
         joined = "\n".join(m.get("text", "") for m in matches)
         m = _URL_PATTERN.search(joined)
         if m:
-            return {"status": "found", "verify_url": html_module.unescape(m.group(0)),
-                    "matches": len(matches), "frame": target_frame.url[:80], "source": "list"}
+            return {
+                "status": "found",
+                "verify_url": html_module.unescape(m.group(0)),
+                "matches": len(matches),
+                "frame": target_frame.url[:80],
+                "source": "list",
+            }
 
         # 2) Open the mail (Shadow DOM aware click).
         try:
@@ -171,17 +242,36 @@ async def find_email(keyword: str = "fireworks", timeout: int = 8,
                 biggest = text
             mm = _URL_PATTERN.search(text or "")
             if mm:
-                return {"status": "found", "verify_url": html_module.unescape(mm.group(0)),
-                        "matches": len(matches), "frame": frame.url[:80], "clicked": clicked,
-                        "source": "body"}
+                return {
+                    "status": "found",
+                    "verify_url": html_module.unescape(mm.group(0)),
+                    "matches": len(matches),
+                    "frame": frame.url[:80],
+                    "clicked": clicked,
+                    "source": "body",
+                }
 
-        return {"status": "not_found", "verify_url": None, "matches": len(matches),
-                "clicked": clicked, "text_preview": (biggest or "")[:500]}
+        return {
+            "status": "not_found",
+            "verify_url": None,
+            "matches": len(matches),
+            "clicked": clicked,
+            "text_preview": (biggest or "")[:500],
+        }
 
 
 def _add_args(p):
-    p.add_argument("--keyword", default="fireworks", help="Keyword in the mail text (default: fireworks)")
-    p.add_argument("--timeout", type=int, default=8, help="Seconds to wait after the click (default: 8)")
+    p.add_argument(
+        "--keyword",
+        default="fireworks",
+        help="Keyword in the mail text (default: fireworks)",
+    )
+    p.add_argument(
+        "--timeout",
+        type=int,
+        default=8,
+        help="Seconds to wait after the click (default: 8)",
+    )
 
 
 async def _action(args) -> Dict[str, Any]:
@@ -189,4 +279,8 @@ async def _action(args) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    run(_action, description="Find and open a GMX email (Shadow-DOM aware)", add_args=_add_args)
+    run(
+        _action,
+        description="Find and open a GMX email (Shadow-DOM aware)",
+        add_args=_add_args,
+    )
