@@ -174,7 +174,7 @@ class PoolManager:
         now = time.time()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
-        suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
+        suspended = sum(1 for k in self.keys if k.get("suspended") is True and not k.get("used", False))
         leased = sum(1 for k in self.keys
                      if not k.get("used", False)
                      and not k.get("suspended", False)

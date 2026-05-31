@@ -2,7 +2,7 @@
 
 **Version:** V15.6  
 **Datum:** 2026-05-31  
-**Status:** PLANNED — awaiting implementation  
+**Status:** IMPLEMENTED — Fixes 1-4 + Debug-Tool applied (V15.6)  
 **Severity:** CRITICAL — OTP-Extraktion komplett kaputt seit Monaten
 
 ---

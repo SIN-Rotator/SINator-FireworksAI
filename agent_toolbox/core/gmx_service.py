@@ -108,11 +108,23 @@ class GmxService:
                         let results = [];
                         function traverse(node) {
                             if (!node) return;
-                            if (node.shadowRoot) { traverse(node.shadowRoot); }
+                            // ZUERST shadowRoot behandeln — dort liegt der Inhalt
+                            if (node.shadowRoot) {
+                                const st = node.shadowRoot.body
+                                    ? node.shadowRoot.body.innerText
+                                    : (node.shadowRoot.documentElement
+                                        ? node.shadowRoot.documentElement.innerText
+                                        : '');
+                                if (st && st.trim()) results.push(st.trim());
+                                traverse(node.shadowRoot);
+                            }
+                            // Dann normale childNodes
                             node.childNodes.forEach(child => {
-                                if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+                                if (child.nodeType === Node.TEXT_NODE && child.textContent && child.textContent.trim()) {
                                     results.push(child.textContent.trim());
                                 } else if (child.nodeType === Node.ELEMENT_NODE) {
+                                    const elText = (child.innerText || child.textContent || '').trim();
+                                    if (elText) results.push(elText);
                                     traverse(child);
                                 }
                             });
@@ -985,20 +997,19 @@ class GmxService:
                 safe_filter = sender_filter.lower().replace("'", "\\'")
                 items_js = f"""
                 (function() {{
+                    const FILTER = '{safe_filter}';
                     function findItems(root) {{
                         let items = [];
-                        const all = root.querySelectorAll('*');
+                        const all = root.querySelectorAll ? root.querySelectorAll('*') : [];
                         for (const el of all) {{
-                            if (el.tagName.toLowerCase() === 'list-mail-item') {{
-                                const text = (el.textContent || '').toLowerCase();
-                                if (text.includes('{safe_filter}')) {{
-                                    const idAttr = el.getAttribute('id');
-                                    const mailId = idAttr ? idAttr.replace(/^id/, '') : null;
-                                    if (mailId) {{
-                                        items.push({{mailId: mailId, text: el.textContent.trim().slice(0, 120)}});
-                                    }}
-                                }}
+                            const text = (el.textContent || '').trim();
+                            // Match ALLE Elemente mit passendem Text (nicht nur veraltetes list-mail-item)
+                            if (text && text.toLowerCase().includes(FILTER)) {{
+                                const idAttr = el.getAttribute('id');
+                                const mailId = idAttr ? idAttr.replace(/^id/, '') : null;
+                                items.push({{mailId: mailId, text: text.slice(0, 400), el: (el.tagName || '').toLowerCase(), hasShadow: !!el.shadowRoot}});
                             }}
+                            // Shadow DOM penetrieren — dort liegt der Mail-Inhalt
                             if (el.shadowRoot) {{
                                 items = items.concat(findItems(el.shadowRoot));
                             }}
@@ -1108,18 +1119,16 @@ class GmxService:
                 # nicht nur im Hauptframe. Wir scannen daher ALLE Frames der Page.
                 scan_js = r"""
                 (() => {
-                    const SENDER = arguments[0];
+                    const SENDER = (arguments[0] || '').toLowerCase();
                     let out = [];
                     function walk(root) {
                         let nodes;
                         try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
                         for (const el of nodes) {
-                            if (el.tagName && el.tagName.toLowerCase() === 'list-mail-item') {
-                                const txt = (el.innerText || el.textContent || '');
-                                if (txt.toLowerCase().includes(SENDER)) {
-                                    const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
-                                    out.push({mailId: id, text: txt.trim().slice(0, 400)});
-                                }
+                            const txt = (el.innerText || el.textContent || '').trim();
+                            if (txt && txt.toLowerCase().includes(SENDER)) {
+                                const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
+                                out.push({mailId: id, text: txt.slice(0, 400)});
                             }
                             if (el.shadowRoot) walk(el.shadowRoot);
                         }
@@ -1132,17 +1141,15 @@ class GmxService:
                 (() => {
                     const a = arguments[0] || [];
                     const targetId = a[0];
-                    const targetText = a[1];
+                    const targetText = (a[1] || '').trim();
                     function walk(root) {
                         let nodes;
                         try { nodes = root.querySelectorAll('*'); } catch (e) { return false; }
                         for (const el of nodes) {
-                            if (el.tagName && el.tagName.toLowerCase() === 'list-mail-item') {
-                                const eid = (el.getAttribute('id') || '').replace(/^id/, '');
-                                const txt = (el.innerText || el.textContent || '').trim().slice(0, 400);
-                                if ((targetId && eid === targetId) || (!targetId && txt === targetText)) {
-                                    el.click(); return true;
-                                }
+                            const eid = (el.getAttribute('id') || '').replace(/^id/, '');
+                            const txt = (el.innerText || el.textContent || '').trim();
+                            if ((targetId && eid === targetId) || (!targetId && txt === targetText)) {
+                                el.click(); return true;
                             }
                             if (el.shadowRoot && walk(el.shadowRoot)) return true;
                         }
