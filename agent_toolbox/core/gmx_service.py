@@ -1591,7 +1591,7 @@ class GmxService:
                         matched_frame = frame
                         break
 
-                if items and matched_frame is not None:
+if items and matched_frame is not None:
                     logger.info(
                         f"Found {len(items)} email(s) matching '{sender_filter}' in {matched_frame.url[:60]}"
                     )
@@ -1608,41 +1608,86 @@ class GmxService:
                                 "execution_time": f"{elapsed:.2f}s",
                             }
 
-                    # Click first matching email IN ITS FRAME (Playwright evaluate nimmt genau 1 Arg -> Liste)
-                    clicked = await matched_frame.evaluate(
-                        click_js, [items[0].get("mailId"), items[0].get("text", "")]
-                    )
-                    if clicked:
-                        logger.info("Clicked email — polling for OOPIF...")
-                        # Poll OOPIF: 3 tries × 3s = 9s max wait
-                        for oopif_wait in range(3):
-                            await asyncio.sleep(3)
-                            for frame in pw_page.frames:
+                    # Click email using Playwright locator (finds elements inside iframes)
+                    email_text = items[0].get("text", "")[:100]
+                    logger.info(f"Clicking email via Playwright locator: '{email_text[:50]}...'")
+
+                    clicked = False
+                    try:
+                        # Try clicking by link/row containing the email text
+                        for locator_strategy in [
+                            pw_page.get_by_text(email_text[:50], exact=False),
+                            pw_page.locator(f"text={email_text[:30]}").first,
+                            matched_frame.get_by_text(email_text[:50], exact=False),
+                            matched_frame.locator(f"a:has-text('{sender_filter}')").first,
+                            matched_frame.locator(f"tr:has-text('{sender_filter}')").first,
+                        ]:
+                            try:
+                                if await locator_strategy.count() > 0:
+                                    el = locator_strategy.first
+                                    bb = await el.bounding_box()
+                                    if bb and bb["width"] > 10 and bb["height"] > 10:
+                                        await el.click(force=True, timeout=3000)
+                                        clicked = True
+                                        logger.info(f"Clicked via {type(locator_strategy).__name__}")
+                                        break
+                            except Exception as click_err:
+                                logger.debug(f"Click attempt failed: {click_err}")
+                                continue
+                    except Exception as e:
+                        logger.warning(f"Playwright click error: {e}")
+
+                    # Fallback: JS click in the correct frame
+                    if not clicked:
+                        clicked = await matched_frame.evaluate(
+                            click_js, [items[0].get("mailId"), items[0].get("text", "")]
+                        )
+                        logger.info("Clicked via JS fallback")
+
+if clicked:
+                        logger.info("Email clicked — polling for OOPIF with verify URL...")
+                        # Poll ALL frames for verify URL (increased wait for slow mail rendering)
+                        found_url = None
+                        for oopif_wait in range(8):  # 8 × 4s = 32s
+                            await asyncio.sleep(4)
+                            all_frames = list(pw_page.frames)
+                            logger.debug(f"Polling {len(all_frames)} frames for verify URL...")
+                            for frame in all_frames:
+                                if frame.url.startswith("data:") or not frame.url:
+                                    continue  # Skip data: frames
                                 try:
                                     text = await frame.evaluate(
-                                        "() => document.body.innerText", timeout=3000
+                                        "() => (document.body ? document.body.innerText : '') + (document.body ? document.body.innerHTML : '')",
+                                        timeout=5000
                                     )
-                                    urls = pattern.findall(text or "")
-                                    if urls:
-                                        elapsed = time.time() - start_time
-                                        return {
-                                            "status": "success",
-                                            "otp_url": html_module.unescape(urls[0]),
-                                            "execution_time": f"{elapsed:.2f}s",
-                                        }
-                                except Exception:
-                                    pass
-                        # Fallback: scan entire page HTML
-                        html = await pw_page.content()
-                        urls = pattern.findall(html)
-                        if urls:
-                            elapsed = time.time() - start_time
-                            return {
-                                "status": "success",
-                                "otp_url": html_module.unescape(urls[0]),
-                                "execution_time": f"{elapsed:.2f}s",
-                            }
-                        logger.warning("OOPIF not found after clicking email")
+                                    if text:
+                                        urls = pattern.findall(text or "")
+                                        if urls:
+                                            elapsed = time.time() - start_time
+                                            logger.info(f"✅ Found verify URL in frame: {frame.url[:60]}")
+                                            return {
+                                                "status": "success",
+                                                "otp_url": html_module.unescape(urls[0]),
+                                                "execution_time": f"{elapsed:.2f}s",
+                                            }
+                                except Exception as e:
+                                    logger.debug(f"Frame scan error: {e}")
+                            logger.info(f"OOPIF poll {oopif_wait+1}/8 — no URL yet")
+                        # Last resort: scan full page HTML
+                        try:
+                            html = await pw_page.content()
+                            urls = pattern.findall(html)
+                            if urls:
+                                elapsed = time.time() - start_time
+                                logger.info("✅ Found verify URL in full page HTML")
+                                return {
+                                    "status": "success",
+                                    "otp_url": html_module.unescape(urls[0]),
+                                    "execution_time": f"{elapsed:.2f}s",
+                                }
+                        except Exception:
+                            pass
+                        logger.warning("OOPIF not found after clicking email — URL may be in data: frame")
                 else:
                     logger.info(
                         f"No '{sender_filter}' email yet (attempt {attempt + 1}/{max_retries})"
