@@ -99,7 +99,7 @@ cd ~/dev/SINator-dashboard && ./start.sh
 ## Client Konfiguration
 
 **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
-**Hermes  →** [SIN-Code-FireworksAI-Hermes-Config](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
+**Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
 
 ### Quick-Start OpenCode
 
