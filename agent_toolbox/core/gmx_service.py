@@ -63,9 +63,13 @@ class GmxService:
 
     # ── Playwright Connection ────────────────────────────────────────────
 
-    async def _pw_connect(self, cdp_port: int = 9222) -> Page:
+    async def _pw_connect(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Page:
         """Connect to existing Chrome via CDP and return a Playwright Page.
-        Prefers allEmailAddresses page if available. Ignores iac/restart pages."""
+        If page is provided (V15.4 ONE Browser), returns it directly.
+        Otherwise connects via CDP and looks for existing GMX pages."""
+        if page is not None:
+            logger.info("[_pw_connect] Using provided page (V15.4 ONE Browser)")
+            return page
         logger.info(f"[_pw_connect] Connecting to Chrome on CDP port {cdp_port}")
         p = await async_playwright().start()
         browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
@@ -597,11 +601,11 @@ class GmxService:
             logger.error(f"Error verifying alias: {e}")
             return False
 
-    async def create_alias(self, alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
+    async def create_alias(self, alias_name: Optional[str] = None, cdp_port: int = 9222, page: Optional[Page] = None) -> Dict[str, Any]:
         if not alias_name:
             alias_name = self.generate_alias_name()
         try:
-            page = await self._pw_connect(cdp_port)
+            page = await self._pw_connect(cdp_port, page=page)
             if not await self._navigate_to_all_email_addresses(page):
                 return {"status": "not_logged_in", "alias_email": None, "error": "Navigation fehlgeschlagen"}
 
@@ -629,13 +633,13 @@ class GmxService:
 
     # ── Alias Rotation ────────────────────────────────────────────────────
 
-    async def rotate_alias(self, new_alias_name: Optional[str] = None, cdp_port: int = 9222) -> Dict[str, Any]:
+    async def rotate_alias(self, new_alias_name: Optional[str] = None, cdp_port: int = 9222, page: Optional[Page] = None) -> Dict[str, Any]:
         start_time = time.time()
         steps = []
         deleted_alias = None
         created_alias = None
         try:
-            page = await self._pw_connect(cdp_port)
+            page = await self._pw_connect(cdp_port, page=page)
             if not await self._navigate_to_all_email_addresses(page):
                 return {"status": "failed", "deleted_alias": None, "created_alias": None,
                         "error": "Navigation fehlgeschlagen", "execution_time": f"{time.time()-start_time:.2f}s"}
@@ -841,9 +845,9 @@ class GmxService:
 
     # ── Public Helpers ────────────────────────────────────────────────────
 
-    async def check_session(self, cdp_port: int = 9222) -> Dict[str, Any]:
+    async def check_session(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Dict[str, Any]:
         try:
-            page = await self._pw_connect(cdp_port)
+            page = await self._pw_connect(cdp_port, page=page)
             await page.goto("https://www.gmx.net/", wait_until="domcontentloaded")
             await asyncio.sleep(3)
             text = await page.evaluate("() => document.body.innerText")
@@ -852,9 +856,9 @@ class GmxService:
         except Exception as e:
             return {"status": "error", "error": str(e)}
 
-    async def open_email_addresses(self, cdp_port: int = 9222) -> Dict[str, Any]:
+    async def open_email_addresses(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Dict[str, Any]:
         try:
-            page = await self._pw_connect(cdp_port)
+            page = await self._pw_connect(cdp_port, page=page)
             ok = await self._navigate_to_all_email_addresses(page)
             return {"status": "success" if ok else "error", "current_url": page.url}
         except Exception as e:

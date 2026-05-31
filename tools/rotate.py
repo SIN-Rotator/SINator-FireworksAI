@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-SINator - Rotation Tool V8 (2026-05-31) — ONE Browser Flow
+SINator - Rotation Tool V8.1 (2026-05-31) — TRUE ONE Browser
 
-V8: Launch ONE chromium with --remote-debugging-port.
-GMX connects via CDP (session preserved), Fireworks shares same browser.
+V8.1: chromium.launch() → _login() auf der page → page an ALLE ops reichen.
+Kein CDP mehr — gmx_service._pw_connect() bypassed mit page=page.
 
 Usage:
     python3 tools/rotate.py              # Auto-generated alias
@@ -25,7 +25,6 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 logger = logging.getLogger("rotate")
 
 def _find_free_port(start: int = 9230) -> int:
-    """Find a free TCP port for Chromium CDP."""
     for port in range(start, start + 50):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             if s.connect_ex(('127.0.0.1', port)) != 0:
@@ -40,70 +39,74 @@ async def main():
     parser.add_argument("--gmx-password", default="ZOE.jerry2024", help="GMX account password")
     parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks account password")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
-    parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = auto from running Chrome)")
+    parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = chromium.launch)")
     args = parser.parse_args()
 
     t0 = time.time()
+    cdp_port = args.cdp_port or _find_free_port()
 
     # ═══ ONE Browser Startup ═══
     from playwright.async_api import async_playwright
     p = await async_playwright().start()
-    
-    cdp_port = args.cdp_port or _find_free_port()
     logger.info(f"=== Launching Chromium (CDP port {cdp_port}) ===")
     browser = await p.chromium.launch(
         headless=False,
         args=[f'--remote-debugging-port={cdp_port}']
     )
-    logger.info(f"✅ Chromium launched on CDP port {cdp_port}")
+    page = await browser.new_page()
+    logger.info(f"✅ Chromium launched — ONE Browser for entire rotation")
 
     try:
-        # ═══ Step 0: GMX Login (connects to SAME Chromium via CDP) ═══
-        logger.info("=== GMX Login ===")
         from gmx_service import GmxService
         gmx = GmxService()
 
-        session_check = await gmx.check_session(cdp_port=cdp_port)
-        if session_check.get("status") == "logged_in":
-            logger.info("✅ Bereits eingeloggt (Session restored)")
+        # ═══ Step 0: GMX Login on this page ═══
+        logger.info("=== GMX Login ===")
+        logged_in = await gmx._login(page, email=args.gmx_email, password=args.gmx_password)
+        if logged_in:
+            logger.info("✅ GMX Login OK")
         else:
-            logger.info("Session not found — login handled by service")
+            logger.info("⚠️ Login may not have completed — continuing anyway")
 
-        # ═══ Step 1: GMX Alias Rotation ═══
+        # ═══ Step 1: GMX Alias Rotation (same page) ═══
         logger.info("=== GMX Alias Rotation ===")
-        result = await gmx.rotate_alias(new_alias_name=args.alias, cdp_port=cdp_port)
-        if result.get('status') != 'success':
+        result = await gmx.rotate_alias(new_alias_name=args.alias, page=page)
+        if result.get('status') not in ('success', 'partial'):
             logger.error(f"❌ GMX rotation failed: {result.get('error')}")
             return
         alias = result.get('created_alias')
         logger.info(f"✅ GMX Alias: {alias} ({result.get('execution_time')})")
 
-        # ═══ Step 2: Fireworks Signup (same Chromium, CDP port) ═══
+        if not alias:
+            logger.error("❌ No alias created")
+            return
+
+        # ═══ Step 2: Fireworks Signup (CDP port for Chromium reuse) ═══
         logger.info("=== Fireworks Signup ===")
         from fireworks_service import signup_fireworks
         signup_result = await signup_fireworks(alias, args.password, cdp_port=cdp_port)
+        verify_ok = False
         if signup_result.get('status') == 'success':
             logger.info(f"✅ Fireworks signup OK: {signup_result.get('verify_url', '')[:60]}")
+            verify_url = signup_result.get('verify_url')
+            if verify_url:
+                from fireworks_service import verify_account
+                verify_ok = await verify_account(verify_url, cdp_port=cdp_port)
+                logger.info(f"Verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
         else:
             logger.info(f"Signup: {signup_result.get('status')} — {signup_result.get('error', '')}")
 
-        # ═══ Step 3: OTP via GMX ═══
-        if signup_result.get('verify_url'):
-            logger.info("=== Account Verify ===")
-            from fireworks_service import verify_account
-            verify_ok = await verify_account(signup_result['verify_url'], cdp_port=cdp_port)
-            logger.info(f"Verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
-
-        # ═══ Step 4: OTP Poll via GMX (alternative verify) ═══
+        # ═══ Step 3: OTP Poll (same GMX page — session cookies still valid) ═══
         logger.info("=== OTP Polling ===")
         otp_result = await gmx.read_otp(sender_filter="fireworks", cdp_port=cdp_port)
         otp_url = otp_result.get("otp_url")
         if otp_url and not verify_ok:
-            logger.info(f"Opening OTP verify URL")
+            logger.info(f"Verifying via OTP URL")
+            from fireworks_service import verify_account
             verify_ok = await verify_account(otp_url, cdp_port=cdp_port)
             logger.info(f"OTP verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
 
-        # ═══ Step 5: Fireworks Login + Onboarding ═══
+        # ═══ Step 4: Fireworks Login + Onboarding ═══
         logger.info("=== Fireworks Login + Onboarding ===")
         from fireworks_service import login_fireworks
         login_result = await login_fireworks(alias, args.password, cdp_port=cdp_port)
@@ -112,7 +115,7 @@ async def main():
         else:
             logger.info(f"Login: {login_result.get('status')} — {login_result.get('error', '')}")
 
-        # ═══ Step 6: API Key ═══
+        # ═══ Step 5: API Key ═══
         logger.info("=== API Key ===")
         from fireworks_service import create_api_key
         key_name = alias.split("@")[0].split("-")[0] if alias else "sinator-key"
@@ -125,7 +128,7 @@ async def main():
 
         logger.info(f"✅ API Key: {api_key}")
 
-        # ═══ Step 7: Save to pool ═══
+        # ═══ Step 6: Save to pool ═══
         if args.save:
             try:
                 from pool_manager import PoolManager
@@ -136,12 +139,13 @@ async def main():
                 logger.warning(f"Pool save skipped: {e}")
 
     finally:
+        elapsed = time.time() - t0
         logger.info("=== Shutdown ===")
         await browser.close()
         await p.stop()
-        elapsed = time.time() - t0
         logger.info(f"\n🎉 ROTATION COMPLETE — {elapsed:.1f}s")
-        logger.info(f"   Alias:   {alias}")
+        if alias:
+            logger.info(f"   Alias:   {alias}")
 
 
 if __name__ == "__main__":
