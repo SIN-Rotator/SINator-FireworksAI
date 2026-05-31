@@ -98,7 +98,7 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
             
             for attempt in range(15):
                 await asyncio.sleep(4)
-                otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=12, retry_delay=3)
+                otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=12, retry_delay=3, cdp_port=cdp_port)
                 if otp_result.get("status") == "success":
                     verify_url = otp_result.get("url") or otp_result.get("otp_url")
                     if verify_url:

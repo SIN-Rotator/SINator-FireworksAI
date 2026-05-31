@@ -787,6 +787,13 @@ class GmxService:
         if not target:
             target = await get_page_target(client, url_filter="gmx.net")
         if not target:
+            # Kein GMX-Target — neues Target via Target.createTarget
+            logger.info("No GMX target found — creating new page via CDP")
+            create = await client.send_to_session(None, "Target.createTarget", {"url": "https://www.gmx.net/"})
+            new_target_id = create.get("targetId")
+            if new_target_id:
+                target = await get_page_target(client, url_filter="gmx.net")
+        if not target:
             await client.disconnect()
             raise RuntimeError("Kein GMX Page-Target gefunden")
         session_id = await client.attach_to_target(target["targetId"])
