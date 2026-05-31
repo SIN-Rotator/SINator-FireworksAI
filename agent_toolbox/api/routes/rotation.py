@@ -18,8 +18,8 @@ ROTATE_SCRIPT = Path(__file__).parent.parent.parent.parent / "tools" / "rotate.p
 @router.post("/full", response_model=RotationResponse)
 async def full_rotation(request: RotationRequest):
     """
-    Rotation in NEUEM Chrome-Fenster (gleiches Profil 901).
-    Dashboard bleibt in Fenster 1, Rotation läuft in Fenster 2.
+    Rotation via chromium.launch() (V15.4 ONE Browser).
+    Dashboard bleibt offen, Rotation läuft im gleichen Chromium.
     """
     # Neues Chrome-Fenster öffnen (gleiches Profil — nebeneinander sichtbar)
     t0 = time.time()
