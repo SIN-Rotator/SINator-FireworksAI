@@ -6,7 +6,7 @@ Kernfunktionen:
   - Alias-Rotation (Löschen + Erstellen)
   - OTP/Confirm-URL Extraktion
 
-Playwright-native für Alias-Rotation. OTP bleibt auf CDP (komplex, funktioniert).
+Playwright-native für Alias-Rotation + OTP (read_otp_via_playwright).
 """
 import time
 import random
@@ -625,15 +625,33 @@ class GmxService:
             return False
 
     async def _click_add_button(self, page: Page) -> bool:
-        """Click the add alias button. No reload — let page handle navigation internally."""
+        """Click the add alias button via CDP native events (Wicket-kompatibel)."""
         logger.info("[_click_add_button] Looking for add button")
         try:
             frame = await self._get_all_email_frame(page)
             if not frame:
                 logger.warning("allEmailAddresses iframe not found")
                 return False
-            
-            # Click via JS evaluate (most reliable with Wicket)
+
+            # CDP native click via bounding box (Wicket-kompatibel)
+            btn = frame.locator('button:has-text("Hinzufügen")').first
+            bb = await btn.bounding_box()
+            if bb:
+                cx = bb['x'] + bb['width'] / 2
+                cy = bb['y'] + bb['height'] / 2
+                cdp = await page.context.new_cdp_session(page)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
+                await asyncio.sleep(0.1)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                await asyncio.sleep(0.1)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                await asyncio.sleep(2)
+                logger.info("Hinzufügen button clicked via CDP")
+                try: await cdp.detach()
+                except: pass
+                return True
+
+            # Fallback: JS evaluate
             result = await frame.evaluate("""(function() {
                 var btns = document.querySelectorAll('button');
                 for (var i = 0; i < btns.length; i++) {
@@ -656,24 +674,23 @@ class GmxService:
             return False
 
     async def _verify_alias(self, page: Page, alias_email: str, present: bool = True, max_wait: float = 12.0) -> bool:
-        """Verify alias is present/absent in the allEmailAddresses page."""
+        """Verify alias is present/absent — searches iframe content (not top frame)."""
         logger.info(f"[_verify_alias] Checking {alias_email} present={present}")
         try:
             deadline = time.time() + max_wait
             while time.time() < deadline:
-                # Check page URL first (top frame approach)
-                if "allEmailAddresses" in page.url and "settings" in page.url:
-                    text = await page.evaluate("() => document.body.innerText")
+                frame = await self._get_all_email_frame(page)
+                if frame:
+                    text = await frame.evaluate("() => document.body.innerText")
                     found = alias_email in text
                     if present and found:
                         return True
                     if not present and not found:
                         return True
                 else:
-                    # Search across all frames (fallback)
-                    for frame in page.frames:
-                        if "allEmailAddresses" in frame.url and "settings" in frame.url:
-                            text = await frame.evaluate("() => document.body.innerText")
+                    for f in page.frames:
+                        if "allEmailAddresses" in f.url and "settings" in f.url:
+                            text = await f.evaluate("() => document.body.innerText")
                             found = alias_email in text
                             if present and found:
                                 return True
@@ -960,6 +977,106 @@ class GmxService:
         finally:
             if client:
                 await client.disconnect()
+
+    async def read_otp_via_playwright(self, browser: Browser, sender_filter: str = "fireworks",
+                                       max_retries: int = 15, retry_delay: int = 6) -> Dict[str, Any]:
+        """Read OTP via Playwright — frische Page pro Versuch (kein frame detach bug).
+        Nutzt `browser` (ONE Browser) für cookie-korrekte GMX-Session.
+        """
+        start_time = time.time()
+        pattern = re.compile(r'https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+')
+        for attempt in range(max_retries):
+            page = None
+            try:
+                page = await browser.new_page()
+                await page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
+
+                body = await page.evaluate("() => document.body.innerText")
+                if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:300] and "E-Mail" not in body):
+                    logger.warning(f"GMX session verloren (attempt {attempt+1})")
+                    return {"status": "error", "otp_url": None, "error": "Nicht eingeloggt"}
+
+                items_js = r"""
+                (() => {
+                    function walk(root) {
+                        let out = [];
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.tagName.toLowerCase() === 'list-mail-item') {
+                                const txt = (el.textContent || '').toLowerCase();
+                                if (txt.includes('SENDER_FILTER')) {
+                                    const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
+                                    out.push({mailId: id, text: el.textContent.trim().slice(0, 300)});
+                                }
+                            }
+                            if (el.shadowRoot) out = out.concat(walk(el.shadowRoot));
+                        }
+                        return out;
+                    }
+                    return walk(document.body);
+                })()
+                """
+                items_js = items_js.replace('SENDER_FILTER', sender_filter.lower())
+                items = await page.evaluate(items_js)
+
+                if items:
+                    logger.info(f"Found {len(items)} email(s) matching '{sender_filter}'")
+                    for item in items:
+                        urls = pattern.findall(item.get('text', ''))
+                        if urls:
+                            elapsed = time.time() - start_time
+                            return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+
+                    click_js = r"""
+                    (() => {
+                        function walk(root, id) {
+                            for (const el of root.querySelectorAll('*')) {
+                                if (el.tagName.toLowerCase() === 'list-mail-item') {
+                                    const eid = (el.getAttribute('id') || '').replace(/^id/, '');
+                                    if (eid === id) { el.click(); return true; }
+                                }
+                                if (el.shadowRoot && walk(el.shadowRoot, id)) return true;
+                            }
+                            return false;
+                        }
+                        return walk(document.body, arguments[0]);
+                    })()
+                    """
+                    clicked = await page.evaluate(click_js, items[0].get('mailId'))
+                    if clicked:
+                        logger.info("Clicked email — waiting for mail body OOPIF")
+                        await asyncio.sleep(6)
+
+                        for frame in page.frames:
+                            try:
+                                text = await frame.evaluate("() => document.body.innerText", timeout=5000)
+                                urls = pattern.findall(text)
+                                if urls:
+                                    elapsed = time.time() - start_time
+                                    return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                            except Exception:
+                                pass
+
+                        html = await page.content()
+                        urls = pattern.findall(html)
+                        if urls:
+                            elapsed = time.time() - start_time
+                            return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                else:
+                    logger.info(f"No '{sender_filter}' email yet (attempt {attempt+1}/{max_retries})")
+            except Exception as e:
+                logger.warning(f"OTP attempt {attempt+1} fehlgeschlagen: {e}")
+            finally:
+                if page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+
+        return {"status": "not_found", "otp_url": None, "error": "Nicht gefunden"}
 
     # ── Public Helpers ────────────────────────────────────────────────────
 

@@ -97,9 +97,9 @@ async def main():
         else:
             logger.info(f"Signup: {signup_result.get('status')} — {signup_result.get('error', '')}")
 
-        # ═══ Step 3: OTP Poll (same GMX page — session cookies still valid) ═══
+        # ═══ Step 3: OTP Poll (via Playwright — same context = same cookies) ═══
         logger.info("=== OTP Polling ===")
-        otp_result = await gmx.read_otp(sender_filter="fireworks", cdp_port=cdp_port)
+        otp_result = await gmx.read_otp_via_playwright(page.context.browser, sender_filter="fireworks", max_retries=8, retry_delay=5)
         otp_url = otp_result.get("otp_url")
         if otp_url and not verify_ok:
             logger.info(f"Verifying via OTP URL")
