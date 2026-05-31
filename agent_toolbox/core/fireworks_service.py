@@ -6,12 +6,12 @@ Uses Playwright for form interaction, CUA for React checkboxes.
 """
 import logging
 import re
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
-async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
+async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = None) -> Dict[str, Any]:
     """Create new Fireworks account via signup form + OTP verification.
     
     Flow:
@@ -19,6 +19,9 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
     2. Poll GMX for verification email (via MailCheck extension)
     3. Open verify URL to confirm account
     4. Returns {status, verify_url, steps_completed}
+    
+    If cdp_port provided, connects to existing Chromium (ONE Browser V8).
+    Otherwise launches fresh Chromium (standalone mode).
     """
     import asyncio
     import sys
@@ -31,7 +34,10 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
         sys.path.insert(0, str(_Path(__file__).parent))
         
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            if cdp_port:
+                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            else:
+                browser = await p.chromium.launch(headless=False)
             page = await browser.new_page()
             
             # Step 1: Signup form
@@ -125,9 +131,10 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
         return {"status": "error", "steps_completed": steps, "error": str(e)}
 
 
-async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
+async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = None) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + CUA onboarding.
-    Returns: {status, steps_completed, error}"""
+    Returns: {status, steps_completed, error}
+    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
     import asyncio
     import json
     import subprocess
@@ -137,7 +144,10 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
     steps = []
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            if cdp_port:
+                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            else:
+                browser = await p.chromium.launch(headless=False)
             page = await browser.new_page()
 
             await page.goto("https://app.fireworks.ai/login")
@@ -494,14 +504,18 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
     return {"status": "error", "error": "API Key not found after retry"}
 
 
-async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
-    """Create Fireworks API Key via Playwright with auto-retry. Returns {status, api_key, error}"""
+async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] = None) -> Dict[str, Any]:
+    """Create Fireworks API Key via Playwright with auto-retry. Returns {status, api_key, error}
+    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
     import asyncio
     from playwright.async_api import async_playwright
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            if cdp_port:
+                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            else:
+                browser = await p.chromium.launch(headless=False)
 
             # Always use a fresh page to avoid stale frame issues
             pg = await browser.new_page()
@@ -614,14 +628,18 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-async def verify_account(verify_url: str) -> bool:
-    """Open Fireworks verify URL to confirm account. Returns True if confirmed."""
+async def verify_account(verify_url: str, cdp_port: Optional[int] = None) -> bool:
+    """Open Fireworks verify URL to confirm account. Returns True if confirmed.
+    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
     import asyncio
     from playwright.async_api import async_playwright
     
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            if cdp_port:
+                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            else:
+                browser = await p.chromium.launch(headless=False)
             page = await browser.new_page()
             await page.goto(verify_url)
             await asyncio.sleep(2)
