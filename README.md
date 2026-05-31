@@ -98,24 +98,21 @@ cd ~/dev/SINator-dashboard && ./start.sh
 
 ## Client Konfiguration
 
-**OpenCode + Hermes Konfiguration →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
-
-Dort findest du:
-- `opencode.json` — fertige Provider-Konfiguration mit 12 Fireworks-Modellen (Copy & Paste)
-- Install-Scripts für OpenCode CLI (One-Liner + Emergency Repair)
-- Komplette Install-Doku mit Troubleshooting
+**OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
+**Hermes  →** [SIN-Code-FireworksAI-Hermes-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-Hermes-Config)
 
 ### Quick-Start OpenCode
 
 ```bash
 mkdir -p ~/.config/opencode
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/opencode.json -o ~/.config/opencode/opencode.json
+curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config/main/opencode.json -o ~/.config/opencode/opencode.json
 ```
 
 ### Quick-Start Hermes
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/config/fireworks-router.yaml -o ~/.hermes/config.yaml
+mkdir -p ~/.hermes
+curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-Hermes-Config/main/config/fireworks-router.yaml -o ~/.hermes/config.yaml
 hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
 ```
 
