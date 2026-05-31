@@ -1,189 +1,143 @@
-# BUILDING PLAN — SINator Fireworks AI V12 ✅ (2026-05-26)
+# PLAN.md — V14→V15.4 Code-Migration (SINator-fireworksai)
 
-## ✅ V12 Status: COMPLETE
-
-```
-GMX Login (built-in, Step 0) → Alias Rotation (~180s) → Fireworks Signup
-→ OTP → Verify → Login → Onboarding → Playwright Fallback → API Key → Pool
-Pool: 218 Keys (94 verfügbar, 10 used, 114 suspended)
-Cycle Time: ~180s avg
-Pool-Router: :9998 (ThreadingMixIn) → 10 Proxys :8888-:8897
-Pool-Router URL: sinatorpool-router.delqhi.com (single endpoint, auto-failover)
-API Key (alle Macs): <DEIN_API_KEY>
-Dashboard SSE live
-```
-
-| Flow | Name | Status | Tool |
-|------|------|:---:|------|
-| #0 | GMX Session | ✅ | Playwright "Zum Postfach" click → SID |
-| #1 | GMX Alias Delete | ✅ | New-Tab allEmailAddresses URL → hover+click+OK |
-| #1 | GMX Alias Create | ✅ | New-Tab allEmailAddresses URL → fill+click, verify empty |
-| #2 | Fireworks Signup | ✅ | Playwright + CUA: email→pw→Create→OTP→Verify |
-| #3 | Fireworks Login | ✅ | Playwright form `a:has-text("Email Login")` + CUA onboarding |
-| #4 | Onboarding | ✅ | CUA: "First"+"Last" type_text + Terms AXPress + Playwright Fallback |
-| #5 | Use-Case + $5 | ✅ | CUA dynamic scan text-based checkboxes |
-| #6 | API Key | ✅ | PopUpButton force-click + menuitem + Generate (disabled-wait + polling) |
-| #7 | Pool | ✅ | Auto-save to keychain (146 keys total) |
-
-## ✅ V12 Changes (2026-05-26)
-
-### 3 Pool-Proxies + Tunnel Subdomains
-- Pool-Router (`:9998`) mit ThreadingMixIn + 10 Proxy-Instanzen (`:8888`-`:8897`)
-- EINE baseURL: `sinatorpool-router.delqhi.com` (Auto-Failover über alle Proxys)
-- `proxy/start-multi.sh` startet alle 3 + killt alte Instanzen
-- Kein Backup-Key mehr (`SIN_NO_BACKUP=true`)
-
-### GMX Navigation V12 — Playwright Shadow DOM
-- CUA `find_cua_window` funktioniert nicht mehr (Chrome-Tab-Titel leer bei programmatischen Tabs)
-- Reiner Playwright-Ansatz: `ACCOUNT-AVATAR-NAVIGATOR` → JS `.click()` + `dispatchEvent(mouseenter)` → Shadow DOM traversal → "E-Mail Einstellungen"
-- Settings-Seite lädt `signature/settings` iframe → "E-Mail-Adressen" klicken → `allEmailAddresses` iframe
-- 20×1s Polling bis iframe gefunden
-
-### Double-Key-Waste Fix (Atomic Report+Lease)
-- `pool_manager.report_key()` leaset Ersatz-Key jetzt **atomar** (im gleichen Lock wie suspend)
-- Proxy nutzt `report()`-Result direkt — kein extra `lease()`
-- Backend: `report_key(api_key, key_id, reason, leased_to, ttl_seconds)`
-- Proxy: `_swap_key()` prüft `report_result.get("new_key")` → nutzt direkt
-
-### 429 Handling — Client Return statt Intern Retry
-- Transientes 429 → Proxy gibt SOFORT 429 an Client zurück mit `Retry-After` Header
-- Kein internes Warten mehr (verhindert Client-Timeouts + InvalidHTTPResponse)
-
-### Chrome Tab Cleanup
-- Nach 4h Batch-Rotation → 37 Tabs offen → Chrome überlastet → `connect_over_cdp` Timeout
-- `rotate.py` schließt jetzt ALLE non-essential Tabs (nicht nur GMX/Fireworks)
-- Nur Dashboard + 1 GMX-Inbox bleiben
-
-### CDP Target Selection — Inbox bevorzugen
-- `get_page_target()` priorisiert `navigator.gmx.net` URLs über `www.gmx.net`
-- Homepage hat keinen "Einstellungen"-Button
-
-### Config Manager — GMX + Fireworks Credentials
-- `agent_toolbox/core/config_manager.py` — speichert `gmx_email`, `gmx_password`, `fireworks_password` in `data/config.json`
-- `agent_toolbox/api/routes/config.py` — `GET /api/v1/config` + `POST /api/v1/config` (public, kein Auth)
-- Rotation nutzt `get_config()` → `--gmx-email` + `--gmx-password` + `--password` (nicht mehr hardcodiert!)
-- Setup-Seite `/setup` im Dashboard — Formular für alle Credentials + 3 Pool-URLs + API Key
-
-### Pool-Stats: `leased` entfernt
-- `available = total - used - suspended` (geleastete Keys zählen als verfügbar)
-- Dashboard zeigt: Gesamt / Verfügbar / Verbraucht
-
-### Chat-Assistent (Dashboard /hilfe)
-- Rust-Command `chat_send` ruft Pool-Proxy (`localhost:8888`) auf
-- Modell: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M input)
-- System-Prompt in `src-tauri/chat-system-prompt.txt` (include_str!)
-- Live-Pool-Stats + Backend-Health in Rust geholt → in System-Prompt injiziert
-
-### Pool-Verschlüsselung
-- 146/146 API-Keys in macOS Keychain (`com.sinator.pool`)
-- `keychain_store.py` mit CRUD + Migration
-- `GET /pool/reveal/{key_id}` hydratisiert Key aus Keychain
-- Pool-JSON enthält nur SENTINEL-Werte (keine Keys im Klartext)
-
-### CORS + Auth
-- `/api/v1/config` in `public_prefixes` (kein Auth-Token nötig)
-- CORS Origins: `https://tauri.localhost`, `tauri://localhost`, `http://localhost:3000`, `http://localhost:8000`
+**CEO: Jeremy | Datum: 2026-05-31 | Status: INIT**
 
 ---
 
-## ✅ V5-V12 Completed Milestones
+## ZIEL
 
-| # | Task | Ergebnis |
-|---|------|----------|
-| 1 | Full-Flow Automation | `rotation.py` V12 — Playwright+CUA+CDP hybrid |
-| 2 | API-Key Pool | 146 Keys (59 available), auto-save + Keychain |
-| 3 | fireworks_service.py | 3103→114 Zeilen (-96%), V5 Playwright+CUA |
-| 4 | V5 Cleanup | Obsolete files gelöscht (preflight.py, command_registry.json, etc.) |
-| 5 | Single Command | `python tools/rotate.py` — E2E in einem Befehl |
-| 6 | Dynamic CUA Scanning | Text-based `_find_element()` — keine Hardcoded-Indizes |
-| 7 | Chrome Config | NON-accessibility mode: `--profile-directory="Profile 901"`, Port 9222 |
-| 8 | V7 Self-Healing | Rate-Limit Backoff, OOPIF Polling, API Key Retry |
-| 9 | V8 GMX Nav Fix | Playwright inbox goto + CUA Einstellungen + JS hidden-nav + New-Tab iframe |
-| 10 | V9 Sleep-Reduktion + Bugfixes | health mark_used(), Dashboard override, PoolManager reload |
-| 11 | V10 CUA PID Targeting | lsof PID-Ermittlung, target_pid an find_cua_window |
-| 12 | V11 Config Manager + Chat + Keychain | Credentials API, Rust chat_send, Keychain encryption |
-| 13 | V13 Pool-Router | EINE baseURL, 10 Proxys, ThreadingMixIn, silent swap |
+Docs sind V15.4, Code ist V14. Migration: `connect_over_cdp` → `chromium.launch()`, gelöschte Module wirklich löschen, `Profile 901` → `Profile 73`, `SIN-Hermes-Bundles` → `SIN-Rotator`.
+
+## PRINZIPIEN
+
+- **Jede Phase = 1 Commit** — bei Erfolg sofort `git commit && git push`
+- **Nach JEDEM Schritt testen** — kein Blindflug
+- **Keine Batch-Löschungen** — jede Datei einzeln prüfen
+- **Test-Strategie:** `python -c "import agent_toolbox.start_toolbox"` als Smoke-Test, dann spezifische Tests
 
 ---
 
-## 📌 PROJECT COMPLETE — Maintenance Mode
+## PHASE 1: Safe Deletions (leaf dependencies)
 
-**Keine neuen Features mehr.** V12 = letzte geplante Version.
-Ab jetzt nur noch:
+### 1.1 DELETE `cookie_manager.py` + `routes/cookies.py`
+- **Dependency:** cookie_manager ← routes/cookies.py (ONLY CALLER)
+- **routes/cookies.py** ← start_toolbox.py (ONLY CALLER)
+- **Aktion:** Lösche beide Dateien. Entferne `cookies_router` import + registration aus start_toolbox.py
+- **Test:** `python -c "from agent_toolbox.start_toolbox import app; print('OK')"`
+- ~~~bash
+  git rm agent_toolbox/core/cookie_manager.py agent_toolbox/api/routes/cookies.py
+  ~~~
 
-| Aktivität | Beschreibung |
-|-----------|-------------|
-| 🐛 Bugfixes | Wenn was im Live-Betrieb kaputt geht |
-| 🔄 Live Runs | `python tools/rotate.py` — Keys generieren |
-| 📝 AGENTS.md | Learnings aus Live-Runs dokumentieren |
-
-**Status:** Feature-Complete ✅ — 218 Keys, ~180s/Rotation, Pool-Router + 10 Proxys, Config Manager, Keychain, Chat-Assistent.
-
----
-
-## 📌 Known Issues
-
-### Account Suspension
-Fireworks suspendiert Accounts bei Spending Limit ($5 Credits aufgebraucht):
-```
-Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
-spending limit or failure to pay past invoices.
-```
-**Workaround:** Key via `POST /pool/report` als suspended markieren → Proxy holt atomar Ersatz-Key.
-
-### 429 Rate Limiting
-Transientes 429 bei hoher Last → Proxy gibt SOFORT 429 an Client zurück mit `Retry-After: 5s`.
-Kein internes Retry mehr (verhindert Timeouts).
-
-### Chrome Tab Overload
-Nach 4h Batch-Rotation → 37+ Tabs → Chrome überlastet.
-**Workaround:** `rotate.py` räumt jetzt ALLE non-essential Tabs auf (nur Dashboard + 1 GMX-Inbox bleiben).
+### 1.2 DELETE `routes/browser.py`
+- **Dependency:** routes/browser.py ← start_toolbox.py (ONLY CALLER)
+- **browser_manager.py bleibt VORERST** (wird von routes/gmx.py + routes/fireworks.py importiert)
+- **Aktion:** Nur routes/browser.py löschen. browser_router aus start_toolbox.py entfernen.
+- **Test:** `python -c "from agent_toolbox.start_toolbox import app; print('OK')"`
+- ~~~bash
+  git rm agent_toolbox/api/routes/browser.py
+  ~~~
 
 ---
 
-## 🚀 Quick Start (V11)
+## PHASE 2: browser_manager Refactor (HARD — careful)
 
-```bash
-# Chrome mit Profile 901 (OHNE accessibility!)
-nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
-  --remote-debugging-port=9222 \
-  --no-first-run --no-default-browser-check \
-  > /tmp/chrome_sinator.log 2>&1 &
+### 2.1 Check caller usage in routes/gmx.py und routes/fireworks.py
+- Was genau brauchen die routes von `browser_manager`? Nur `cdp_port`?
+- **Aktion:** Ersetze `browser_manager`-Import durch direkten 9222-Constant
+- **Test:** `python -c "from agent_toolbox.api.routes.gmx import router; print('GMX OK')"` + `python -c "from agent_toolbox.api.routes.fireworks import router; print('FW OK')"`
 
-# CUA Daemon
-cua-driver serve &
-
-# Full Rotation (Single Command — liest Config aus data/config.json)
-python tools/rotate.py
-
-# API Server
-python agent_toolbox/start_toolbox.py
-
-# Pool Stats
-curl -s http://localhost:8000/pool/stats | python3 -m json.tool
-
-# Config setzen (GMX + FW Credentials)
-curl -X POST http://localhost:8000/api/v1/config \
-  -H 'Content-Type: application/json' \
-  -d '{"gmx_email":"opensin@gmx.de","gmx_password":"ZOE.jerry2024","fireworks_password":"ZOE.jerry2024!"}'
-```
+### 2.2 DELETE `browser_manager.py`
+- **Aktion:** Nach routes/gmx.py + routes/fireworks.py entkoppelt → browser_manager.py löschen
+- **start_toolbox.py** /health endpoint: `browser_mgr.is_running` → immer True (Playwright läuft)
+- **start_toolbox.py** lifespan: `browser_mgr.stop()` → no-op (chromium.launch() braucht kein cleanup)
+- **Test:** `python -c "from agent_toolbox.start_toolbox import app; print('OK')"`
 
 ---
 
-## 🏗️ Services (LaunchAgents)
+## PHASE 3: connect_over_cdp → chromium.launch()
 
-| Service | Port | Beschreibung |
-|---------|------|-------------|
-| `com.sinator.backend` | :8000 | FastAPI Backend |
-| `com.sinator.pool-proxy-{8888..8897}` | :8888-:8897 | 10× aiohttp SSE + silent swap Proxies |
-| `com.sinator.pool-router` | :9998 | Pool-Router mit ThreadingMixIn + Failover |
-| `com.sinator.pages` | :8040 | Landing Page |
-| `com.sinator.chrome` | :9222 | Chrome mit Profile 901 |
-| `com.sinator.cua-driver` | — | CUA AX-Daemon |
+### 3.1 fireworks_service.py (4 calls: L34, L140, L504, L624)
+- **Aktion:** `connect_over_cdp("http://127.0.0.1:9222")` → `chromium.launch(headless=False)` + dynamischen Port via `_find_free_port()`
+- **Test:** Skript das `signup_fireworks()` aufruft (non-destructive read-only mode)
 
-### Pool-Router-Routing
-- `/` → `:8040` (Landing Page)
-- `/inference/v1/*`, `/v1/*` → Pool-Router :9998 → 10 Proxys :8888-:8897
-- `/api/*`, `/docs` → :8000 (Backend)
+### 3.2 gmx_service.py (L71: parameterized)
+- **Aktion:** `_pw_connect(cdp_port)` → `_pw_launch()` (kein cdp_port mehr nötig)
+- **Test:** `python tools/rotate.py --dry-run` (falls existiert) oder Unit-Test
+
+### 3.3 billing_tracker.py (L94)
+- **Aktion:** `connect_over_cdp("http://127.0.0.1:9222")` → `chromium.launch(headless=False)`
+- **Test:** Import-Test
+
+---
+
+## PHASE 4: cdp_port entfernen aus gmx_service API
+
+### 4.1 `_pw_connect()` → `_pw_launch()`
+- Kein cdp_port Parameter mehr. Intern `chromium.launch()`
+
+### 4.2 Alle public-Methoden: `cdp_port` → entfernen
+- `create_alias(page=..., playwright=..., browser=...)` — page reicht
+- `rotate_alias(page=..., playwright=..., browser=...)` — page reicht
+- `read_otp(page=..., playwright=...)` — page reicht
+- `check_session(page=...)` — page reicht
+- **Test:** `python tools/rotate.py` (echte Rotation)
+
+---
+
+## PHASE 5: Schemas & Profile-Fixes
+
+### 5.1 schemas.py: cdp_port + profile_name entfernen
+- **Aktion:** `BrowserConfigRequest.cdp_port` + `BrowserConfigRequest.profile_name` raus
+- **GMXSessionRequest.cdp_port** raus
+- **Test:** Schema-Import
+
+### 5.2 Profile 901 → Profile 73 in browser_manager.py
+- Falls browser_manager noch existiert, Konstante ändern
+- Falls gelöscht: Kommentare in billing_tracker.py, __init__.py fixen
+
+---
+
+## PHASE 6: SIN-Hermes-Bundles References
+
+### 6.1 install.sh URL fixen
+### 6.2 docs/router.md, docs/ua-spoof.md, docs/troubleshooting.md fixen  
+### 6.3 skills/sin-hermes-provider-setup/SKILL.md fixen
+- **Test:** grep `SIN-Hermes-Bundles` → sollte 0 hits
+
+---
+
+## PHASE 7: Git Cleanup
+
+### 7.1 data/fireworksai-pool.json aus Tracking entfernen
+### 7.2 __pycache__ aus Tracking entfernen
+### 7.3 debug/, deprecated/, plans/ aufräumen
+- **Test:** `git ls-files | wc -l` → target ~80 files (aktuell ?)
+
+---
+
+## PHASE 8: Docs & Final Cleanup
+
+### 8.1 sinrules.md → auf V15.4 updaten oder als "HISTORICAL" markieren
+### 8.2 plan.md → auf HISTORICAL flaggen
+### 8.3 CONFIGURATION.md → Chrome-Lines updaten (chromium.launch())
+### 8.4 AGENTS.md Header: V14 → V15.4
+### 8.5 README.md Footer updaten
+
+---
+
+## RISK-MAP
+
+| Phase | Risk | Was bricht? |
+|-------|------|-------------|
+| 1 | 🟢 LOW | Nichts — cookie/browser routes ungenutzt |
+| 2 | 🟡 MEDIUM | API routes verlieren browser_manager → ersetzen mit Konstante |
+| 3 | 🔴 HIGH | production services (fireworks_service, gmx_service) |
+| 4 | 🔴 HIGH | gmx_service API-Änderung — rotate.py muss funktionieren |
+| 5 | 🟢 LOW | Schemas + Konstanten |
+| 6 | 🟢 LOW | Nur Docs |
+| 7 | 🟢 LOW | Git Tracking |
+| 8 | 🟢 LOW | Nur Docs |
+
+---
+
+*Start: sofort. Jede Phase → Test → Commit → Push.*
