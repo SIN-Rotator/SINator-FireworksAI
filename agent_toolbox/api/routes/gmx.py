@@ -32,7 +32,8 @@ from typing import Optional, Dict, Any
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from agent_toolbox.core.browser_manager import get_browser_manager
+# V15.4: chromium.launch() — kein browser_manager für cdp_port nötig
+GMX_CDP_PORT = 9222
 from agent_toolbox.core.gmx_service import get_gmx_service
 from agent_toolbox.api.schemas import (
     GmxSessionCheckResponse,
@@ -121,19 +122,8 @@ async def _gmx_delete_fallback() -> Dict[str, Any]:
 
 
 def _require_browser():
-    """
-    Prüft ob der Browser läuft und gibt den CDP-Port zurück.
-    
-    Raises:
-        HTTPException: Wenn Browser nicht gestartet
-    """
-    browser_mgr = get_browser_manager()
-    if not browser_mgr.is_running:
-        raise HTTPException(
-            status_code=400,
-            detail="Browser nicht gestartet. POST /browser/start zuerst aufrufen."
-        )
-    return browser_mgr.cdp_port
+    """V15.4: chromium.launch() — immer verfügbar. Gibt CDP-Port zurück."""
+    return GMX_CDP_PORT
 
 
 @router.post("/session/check", response_model=GmxSessionCheckResponse)

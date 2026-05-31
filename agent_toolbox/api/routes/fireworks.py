@@ -5,7 +5,7 @@ import time
 import logging
 from fastapi import APIRouter, HTTPException
 
-from agent_toolbox.core.browser_manager import get_browser_manager
+# V15.4: chromium.launch() — kein browser_manager nötig
 from agent_toolbox.core.fireworks_service import login_fireworks, create_api_key
 from agent_toolbox.api.schemas import (
     FireworksRegisterRequest, FireworksRegisterResponse,
@@ -17,10 +17,8 @@ router = APIRouter(prefix="/fireworks", tags=["Fireworks AI Services"])
 
 
 def _require_browser():
-    browser_mgr = get_browser_manager()
-    if not browser_mgr.is_running:
-        raise HTTPException(status_code=400, detail="Browser nicht gestartet.")
-    return browser_mgr.cdp_port
+    """V15.4: chromium.launch() — immer verfügbar."""
+    return 9222
 
 
 @router.post("/login", response_model=FireworksRegisterResponse)

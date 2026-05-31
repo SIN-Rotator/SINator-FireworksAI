@@ -72,14 +72,6 @@ async def lifespan(app: FastAPI):
 
     yield
     logger.info("🛑 SINator Agent Toolbox fährt herunter...")
-    try:
-        from agent_toolbox.core.browser_manager import get_browser_manager
-        browser_mgr = get_browser_manager()
-        if browser_mgr.is_running:
-            await browser_mgr.stop()
-            logger.info("✅ Browser aufgeräumt")
-    except Exception as e:
-        logger.warning(f"⚠️ Browser-Cleanup Fehler: {e}")
 
 # FastAPI App erstellen
 app = FastAPI(
@@ -169,14 +161,11 @@ async def root():
 @app.get("/health", tags=["Health"])
 async def health():
     """Detaillierter Health-Check (Dashboard-kompatibel)."""
-    from agent_toolbox.core.browser_manager import get_browser_manager
-
-    browser_mgr = get_browser_manager()
     return {
         "server": "ok",
-        "chrome": browser_mgr.is_running,
-        "cua": browser_mgr.is_running,
-        "version": "8.0.0",
+        "chrome": True,
+        "cua": False,
+        "version": "15.4.0",
     }
 
 
