@@ -4230,10 +4230,10 @@
     "credits_initial": 6.0,
     "credits_remaining": 6.0,
     "credits_checked_at": null,
-    "leased_until": 1780244703.91875,
+    "leased_until": 1780246544.747584,
     "leased_to": "proxy-1780194449",
-    "lease_id": "be3e7d96c9e6",
-    "leased_at": 1780242903.91875
+    "lease_id": "8237b199d571",
+    "leased_at": 1780244744.747584
   },
   {
     "id": "4076c758-e2ea-431d-b7f0-c2faadeb8d22",
@@ -4341,10 +4341,54 @@
     "credits_initial": 6.0,
     "credits_remaining": 6.0,
     "credits_checked_at": null,
-    "leased_until": 1780244704.0310678,
+    "leased_until": 1780246544.7981179,
     "leased_to": "proxy-1780194449-backup",
-    "lease_id": "fb2cbf9dc960",
-    "leased_at": 1780242904.0310678,
+    "lease_id": "bb89f5ea8b14",
+    "leased_at": 1780244744.7981179,
     "suspended": false
+  },
+  {
+    "id": "96a439ff-8c3f-4720-92ae-77f28e4cc1fa",
+    "api_key": "STORED_IN_KEYCHAIN",
+    "alias_email": "beta-tiger-499@gmx.de",
+    "key_name": "beta",
+    "created_at": "2026-05-31T18:23:47Z",
+    "used": false,
+    "used_at": null,
+    "credits_initial": 6.0,
+    "credits_remaining": 6.0,
+    "credits_checked_at": null,
+    "leased_until": 1780246545.414884,
+    "leased_to": "proxy-1780194449-backup",
+    "lease_id": "c6e9a92bd55a",
+    "leased_at": 1780244745.414884
+  },
+  {
+    "id": "ba6be04c-e6d9-49de-8052-0db76b7a9c9f",
+    "api_key": "STORED_IN_KEYCHAIN",
+    "alias_email": "beta-tiger-499@gmx.de",
+    "key_name": "beta",
+    "created_at": "2026-05-31T18:23:54Z",
+    "used": false,
+    "used_at": null,
+    "credits_initial": 6.0,
+    "credits_remaining": 6.0,
+    "credits_checked_at": null,
+    "leased_until": 1780246545.453353,
+    "leased_to": "proxy-1780194449-backup-backup",
+    "lease_id": "41a66e5ef638",
+    "leased_at": 1780244745.453353
+  },
+  {
+    "id": "2a3a7969-0f83-4ffb-8f6e-fdeceb26b36e",
+    "api_key": "STORED_IN_KEYCHAIN",
+    "alias_email": "beta-tiger-499@gmx.de",
+    "key_name": "beta",
+    "created_at": "2026-05-31T18:24:02Z",
+    "used": false,
+    "used_at": null,
+    "credits_initial": 6.0,
+    "credits_remaining": 6.0,
+    "credits_checked_at": null
   }
 ]

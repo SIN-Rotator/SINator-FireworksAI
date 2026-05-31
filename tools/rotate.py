@@ -86,9 +86,16 @@ async def main():
         else:
             logger.info("⚠️ Login may not have completed — continuing anyway")
 
-        # inbox_tab jetzt zum Posteingang navigieren (Login ist abgeschlossen)
+ # inbox_tab jetzt zum Posteingang navigieren (Login ist abgeschlossen)
         if inbox_tab:
-            await gmx.navigate_inbox()
+            try:
+                nav_ok = await gmx.navigate_inbox()
+                if not nav_ok:
+                    logger.warning("⚠️ inbox_tab navigation nicht bestätigt — verwende work_tab für OTP")
+                    inbox_tab = None
+            except Exception as e:
+                logger.warning(f"⚠️ inbox_tab navigation fehlgeschlagen: {e} — verwende work_tab für OTP")
+                inbox_tab = None
 
         # ═══ Step 1: GMX Alias Rotation auf work_tab ═══
         logger.info("=== GMX Alias Rotation ===")
