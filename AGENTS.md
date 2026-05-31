@@ -8,12 +8,15 @@ python tools/rotate.py
 # → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
-**Pool:** 218 Keys (94 verfügbar, 10 used, 114 suspended)
+**Pool:** 235 Keys (235 verfügbar, 0 used, 0 suspended)
 **Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
 **Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
 **API Key (alle Macs gleich):** `<DEIN_API_KEY>`
 **Services:** com.sinator.backend (:8000), com.sinator.pool-router (:9998), 10× pool-proxy (:8888-:8897), Pages (:8040)
+**Config Repos:**
+  • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
+  • **Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
 
 ---
 
