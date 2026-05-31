@@ -92,3 +92,41 @@ echo $FIREWORKS_AI_API_KEY
 # Registrieren (einmalig)
 hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
 ```
+
+## GMX OTP / Verify-Email wird nicht gefunden
+
+**Symptom:** Signup bei Fireworks klappt, aber `read_otp_via_playwright()` findet die
+Verify-Mail nicht; Rotation endet in `partial`.
+
+### 1. Methoden in der Klasse? (häufigste Ursache)
+Alle OTP-/Tab-Methoden MÜSSEN Teil von `GmxService` sein (4-Space-Indent). War in V15.5 gebrochen.
+
+```bash
+python3 -c "
+import ast
+t=ast.parse(open('agent_toolbox/core/gmx_service.py').read())
+cls=[n for n in t.body if isinstance(n,ast.ClassDef) and n.name=='GmxService'][0]
+m=[n.name for n in cls.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))]
+for x in ['initialize_architecture','navigate_inbox','read_otp_via_playwright','read_otp_axtree_and_frames']:
+    print(('OK  ' if x in m else 'FEHLT ')+x)
+"
+```
+Alle vier müssen `OK` sein. Wenn `FEHLT`: Methode ist auf Modul-Ebene gerutscht → wieder einrücken.
+
+### 2. Mail in einem iframe/OOPIF?
+GMX liefert die Mail teilweise unter `bap.navigator.gmx.net` in einem Sub-Frame.
+`read_otp_via_playwright` scannt seit V15.5 **alle** `page.frames` — nicht nur den Hauptframe.
+
+```bash
+# Frame-Scan-Logik prüfen
+grep -n "page.frames" agent_toolbox/core/gmx_service.py
+```
+
+### 3. Falscher Code extrahiert (False-Positive)?
+Das alte `[A-Z0-9]{6}`-Pattern matchte zufällige IDs. Seit V15.5 wird zuerst die
+Fireworks **Confirm-URL** bevorzugt und ein 6-stelliger Code nur mit Verifizierungs-Kontext
+(`code`/`verify`/`confirm`) akzeptiert, rein numerisch (`\d{6}`).
+
+### 4. Inbox-Tab navigiert weg?
+Der dedizierte Inbox-Tab (`navigate_inbox()`) muss IMMER im Posteingang bleiben.
+Alias-Operationen laufen im separaten `work_tab` (`initialize_architecture()`).

@@ -52,15 +52,40 @@ python tools/rotate.py
 
 **Kein CDP mehr im rotate.py!** Alles über Playwright-API-Calls.
 
-### gmx_service.py — Playwright-native (910 Zeilen)
+### gmx_service.py — Playwright-native (1286 Zeilen)
 **Vorher:** Mix aus CDP + CUA + Playwright
 **Jetzt:** Playwright-native für alle Operationen
 
+- `initialize_architecture(browser)` — Multi-Tab-Setup (work_tab + dedizierter inbox_tab)
+- `navigate_inbox()` — hält den Inbox-Tab dauerhaft im Posteingang
 - `_navigate_to_all_email_addresses()` — Playwright shadow DOM traversal
 - `_login()` — Playwright form fill
 - `_delete_alias()` — Playwright iframe interaction
 - `_create_alias()` — Playwright iframe interaction
-- `read_otp()` — CDP-basiert (MailCheck Extension + OOPIF), unverändert — bewährt
+- `read_otp()` — CDP-basiert (MailCheck Extension + OOPIF), Legacy-Fallback — bewährt
+- `read_otp_via_playwright(browser)` — **frame-aware**: scannt ALLE Frames (auch OOPIF `bap.navigator.gmx.net`), klickt im matchenden Frame
+- `read_otp_axtree_and_frames()` — bevorzugt Fireworks Confirm-URL, 6-stelliger Code nur mit Verifizierungs-Kontext
+
+> ⚠️ Diese 8 Methoden gehören ALLE zur Klasse `GmxService` (4-Space-Indent). Ein
+> früherer Bug hatte vier davon versehentlich auf Modul-Ebene (Spalte 0) verschoben
+> → `AttributeError` bei jedem Aufruf. Siehe V15.5 FIXES.
+
+---
+
+## 🔧 V15.5 FIXES (2026-05-31) — OTP-Extraktion repariert
+
+### Struktur-Bug: Methoden aus der Klasse gefallen
+- `generate_alias_name`, `initialize_architecture`, `navigate_inbox`,
+  `read_otp_axtree_and_frames` standen auf Modul-Ebene (Spalte 0) statt in `GmxService`
+- Folge: `self.generate_alias_name()`, `gmx.initialize_architecture()`,
+  `gmx.navigate_inbox()`, `gmx.read_otp_axtree_and_frames()` → `AttributeError`
+- Fix: zurück in die Klasse eingerückt (per AST verifiziert, alle 22 Methoden vorhanden)
+
+### Frame-aware OTP
+- `read_otp_via_playwright` durchsucht jetzt `page.frames` (alle Frames), nicht nur den Hauptframe
+- Klick erfolgt im matchenden Frame (`matched_frame.evaluate`), Text- ODER ID-basiert
+- `read_otp_axtree_and_frames` erkennt zuerst die eindeutige Fireworks **Confirm-URL** und
+  akzeptiert 6-stellige Codes nur aus Text mit Verifizierungs-Kontext (vermeidet `[A-Z0-9]{6}`-False-Positives)
 
 ---
 
@@ -156,6 +181,12 @@ spending limit or failure to pay past invoices.
 - Fireworks Verify-Email kann bis zu 180s brauchen
 - Fix: 25×8s = 200s Polling in `signup_fireworks()`
 - Fallback: `partial` status — Account ist unverified aber oft loginbar
+
+### OTP-Extraktion — ✅ GEFIXT (V15.5)
+- **War:** `read_otp_via_playwright` scannte nur den Hauptframe → Mail in OOPIF/iframe
+  (`bap.navigator.gmx.net`) wurde nie gefunden; zusätzlich waren 4 GmxService-Methoden
+  durch fehlerhafte Einrückung aus der Klasse gefallen (`AttributeError`).
+- **Jetzt:** Frame-übergreifender Scan + Confirm-URL-Erkennung + Kontext-validierter Code.
 
 ### Unverified Account = API Key Blocked
 - Account erstellt, aber unverified → API Key Seite redirected zu `/login`
@@ -286,7 +317,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-05-31 (V15.4 — ONE Browser, OOPIF Frames, Chrome 148 Fix)*
+*Last Updated: 2026-05-31 (V15.5 — OTP frame-aware Fix, GmxService Struktur-Fix)*
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
 <!-- gitnexus:start -->

@@ -142,4 +142,4 @@ Alias-Rotation → Signup → OTP → API Key → Pool
 
 ---
 
-*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.4 ONE-Browser | Proxy 1s Key-Retry*
+*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.5 ONE-Browser | Frame-aware OTP | Proxy 1s Key-Retry*
