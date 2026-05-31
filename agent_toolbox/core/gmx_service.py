@@ -41,7 +41,10 @@ GMX_HOME_URL = "https://www.gmx.net/"
 
 
 class GmxService:
-    def __init__(self):
+    def __init__(self, context=None):
+        self.context = context
+        self.inbox_tab: Optional[Page] = None
+        self.work_tab: Optional[Page] = None
         self.adjectives = [
             "elron", "dark", "swift", "iron", "silver", "golden", "crystal", "shadow",
             "storm", "frost", "blaze", "thunder", "cosmic", "neon", "cyber", "quantum",
@@ -55,13 +58,83 @@ class GmxService:
             "wolverine", "raptor", "condor", "viper", "scorpion", "spider", "mantis", "beetle",
         ]
 
-    def generate_alias_name(self) -> str:
-        adj = random.choice(self.adjectives)
-        noun = random.choice(self.nouns)
-        num = random.randint(100, 999)
-        return f"{adj}-{noun}-{num}"
+def generate_alias_name(self) -> str:
+    adj = random.choice(self.adjectives)
+    noun = random.choice(self.nouns)
+    num = random.randint(100, 999)
+    return f"{adj}-{noun}-{num}"
 
-    # ── Playwright Connection ────────────────────────────────────────────
+# ── Multi-Tab Architecture ───────────────────────────────────────────
+
+async def initialize_architecture(self, browser: Browser):
+    """Erstelle isolierte Tabs: work_tab (Alias/FW) + inbox_tab (OTP, bleibt IMMER im Posteingang).
+    inbox_tab wird ERST navigiert nach erfolgreichem Login (via navigate_inbox()).
+    """
+    logger.info("Initialisiere Multi-Tab Architektur...")
+    self.work_tab = await browser.new_page()
+    self.inbox_tab = await browser.new_page()
+    logger.info("Tabs erstellt. inbox_tab wird nach Login navigiert.")
+
+async def navigate_inbox(self):
+    """Navigiert inbox_tab zum Posteingang (NUR nach Login aufrufen!)."""
+    if self.inbox_tab is None:
+        logger.error("inbox_tab nicht initialisiert")
+        return False
+    logger.info("Navigiere inbox_tab zum Posteingang...")
+    await self.inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+    await asyncio.sleep(5)
+    body = await self.inbox_tab.evaluate("() => document.body.innerText")
+    if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:200] and "E-Mail" not in body):
+        logger.error("inbox_tab Session ungültig — Login vorher ausführen!")
+        return False
+    logger.info("✅ inbox_tab im Posteingang (session-verifiziert)")
+    return True
+
+async def read_otp_axtree_and_frames(self, sender_keyword: str = "fireworks", timeout: int = 90) -> Dict[str, Any]:
+    """OTP-Suche via Frame-Traversal + Shadow-DOM-Durchdringung.
+    Nutzt inbox_tab (dedizierter GMX-Tab, session-isoliert).
+    Sucht 6-stellige Codes (A-Z0-9) sobald Keyword irgendwo im Frame gefunden.
+    """
+    if self.inbox_tab is None:
+        logger.error("inbox_tab nicht initialisiert — initialize_architecture() vorher aufrufen!")
+        return {"status": "error", "otp_url": None, "error": "inbox_tab missing"}
+    logger.info(f"Starte OTP-Suche via Frame-Traversal (Keyword: {sender_keyword}, inbox_tab)")
+    otp_pattern = re.compile(r'\b[A-Z0-9]{6}\b')
+    start = time.time()
+    while time.time() - start < timeout:
+        for frame in self.inbox_tab.frames:
+            try:
+                texts = await frame.evaluate("""() => {
+                    let results = [];
+                    function traverse(node) {
+                        if (!node) return;
+                        if (node.shadowRoot) { traverse(node.shadowRoot); }
+                        node.childNodes.forEach(child => {
+                            if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim()) {
+                                results.push(child.textContent.trim());
+                            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                                traverse(child);
+                            }
+                        });
+                    }
+                    if (document.body) traverse(document.body);
+                    return results;
+                }""")
+                full_text = " ".join(texts).lower()
+                if sender_keyword.lower() in full_text or "verification" in full_text or "confirm" in full_text:
+                    for chunk in texts:
+                        m = otp_pattern.search(chunk)
+                        if m:
+                            elapsed = time.time() - start
+                            logger.info(f"OTP in Frame {frame.url[:60]} gefunden: {m.group(0)}")
+                            return {"status": "success", "otp_url": None, "otp_code": m.group(0), "execution_time": f"{elapsed:.2f}s"}
+            except Exception:
+                continue
+        await asyncio.sleep(3)
+    logger.warning("Timeout: OTP nicht im inbox_tab gefunden")
+    return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "Timeout"}
+
+# ── Playwright Connection ────────────────────────────────────────────
 
     async def _pw_connect(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Page:
         """Connect to existing Chrome via CDP and return a Playwright Page.
@@ -139,6 +212,13 @@ class GmxService:
                     logger.warning(f"Consent handling failed: {e}")
                 url = page.url
                 logger.info(f"After consent: {url[:80]}")
+                # After consent, we're on consent-management page — navigate to real www.gmx.net
+                if "consent" in url:
+                    logger.info("Navigating to www.gmx.net after consent")
+                    await page.goto("https://www.gmx.net/", wait_until="domcontentloaded")
+                    await asyncio.sleep(3)
+                    url = page.url
+                    logger.info(f"After consent redirect: {url[:80]}")
             
             # Already logged in on www.gmx.net homepage with Zum Postfach?
             text = await page.evaluate("() => document.body.innerText")
@@ -234,7 +314,7 @@ class GmxService:
                 logger.error("Login failed — unexpected URL after login")
                 return False
             
-            # Fallback: click Login button on homepage first
+            # Fallback: click Login button on homepage, then two-step auth
             logger.info("Homepage without login form — clicking Login button")
             try:
                 login_btn = page.locator('button:has-text("Login")').first
@@ -245,7 +325,6 @@ class GmxService:
                     url = page.url
                     logger.info(f"After login click: {url[:80]}")
                     
-                    # Now we should be on auth.gmx.net — proceed with two-step
                     if "auth.gmx.net" in url or "login.gmx.net" in url:
                         logger.info("On login page after clicking Login")
                         # Fill email (step 1)
@@ -261,9 +340,19 @@ class GmxService:
                             logger.info("Clicked Weiter")
                             await asyncio.sleep(4)
                         
+                        # If prompt=none, replace with prompt=login via JS
+                        if "prompt=none" in page.url:
+                            logger.info("prompt=none detected — replacing with prompt=login")
+                            await page.evaluate("""
+                                const u = new URL(window.location.href);
+                                u.searchParams.set('prompt', 'login');
+                                window.history.replaceState({}, '', u.toString());
+                            """)
+                            await asyncio.sleep(1)
+                        
                         # Step 2: password
                         password_input = page.locator('input[type="password"]').first
-                        if await password_input.is_visible(timeout=5000):
+                        if await password_input.is_visible(timeout=8000):
                             await password_input.fill(password)
                             logger.info("Password filled")
                         
@@ -979,34 +1068,41 @@ class GmxService:
                 await client.disconnect()
 
     async def read_otp_via_playwright(self, browser: Browser, sender_filter: str = "fireworks",
-                                       max_retries: int = 15, retry_delay: int = 6) -> Dict[str, Any]:
-        """Read OTP via Playwright — frische Page pro Versuch (kein frame detach bug).
-        Nutzt `browser` (ONE Browser) für cookie-korrekte GMX-Session.
+                                       max_retries: int = 15, retry_delay: int = 6,
+                                       existing_page: Optional[Page] = None) -> Dict[str, Any]:
+        """Read OTP via Playwright. Wenn existing_page übergeben, reuse (bleibt im logged-in Tab).
+        Sonst frische Page pro Versuch (fallback).
         """
         start_time = time.time()
         pattern = re.compile(r'https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+')
         for attempt in range(max_retries):
-            page = None
+            pw_page = None
+            own_page = False
             try:
-                page = await browser.new_page()
-                await page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
+                if existing_page is not None and attempt == 0:
+                    pw_page = existing_page
+                else:
+                    pw_page = await browser.new_page()
+                    own_page = True
+                await pw_page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(5)
 
-                body = await page.evaluate("() => document.body.innerText")
+                body = await pw_page.evaluate("() => document.body.innerText")
                 if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:300] and "E-Mail" not in body):
                     logger.warning(f"GMX session verloren (attempt {attempt+1})")
                     return {"status": "error", "otp_url": None, "error": "Nicht eingeloggt"}
 
+                # Use innerText for shadow-DOM-kompatible Text-Extraktion
                 items_js = r"""
                 (() => {
                     function walk(root) {
                         let out = [];
                         for (const el of root.querySelectorAll('*')) {
                             if (el.tagName.toLowerCase() === 'list-mail-item') {
-                                const txt = (el.textContent || '').toLowerCase();
+                                const txt = (el.innerText || '').toLowerCase();
                                 if (txt.includes('SENDER_FILTER')) {
                                     const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
-                                    out.push({mailId: id, text: el.textContent.trim().slice(0, 300)});
+                                    out.push({mailId: id, text: el.innerText.trim().slice(0, 300)});
                                 }
                             }
                             if (el.shadowRoot) out = out.concat(walk(el.shadowRoot));
@@ -1017,16 +1113,20 @@ class GmxService:
                 })()
                 """
                 items_js = items_js.replace('SENDER_FILTER', sender_filter.lower())
-                items = await page.evaluate(items_js)
+                items = await pw_page.evaluate(items_js)
 
                 if items:
                     logger.info(f"Found {len(items)} email(s) matching '{sender_filter}'")
+                    logger.debug(f"Items: {[i.get('text','')[:60] for i in items]}")
+
+                    # Check mail list preview for URL
                     for item in items:
                         urls = pattern.findall(item.get('text', ''))
                         if urls:
                             elapsed = time.time() - start_time
                             return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
 
+                    # Click first matching email
                     click_js = r"""
                     (() => {
                         function walk(root, id) {
@@ -1042,34 +1142,36 @@ class GmxService:
                         return walk(document.body, arguments[0]);
                     })()
                     """
-                    clicked = await page.evaluate(click_js, items[0].get('mailId'))
+                    clicked = await pw_page.evaluate(click_js, items[0].get('mailId'))
                     if clicked:
-                        logger.info("Clicked email — waiting for mail body OOPIF")
-                        await asyncio.sleep(6)
-
-                        for frame in page.frames:
-                            try:
-                                text = await frame.evaluate("() => document.body.innerText", timeout=5000)
-                                urls = pattern.findall(text)
-                                if urls:
-                                    elapsed = time.time() - start_time
-                                    return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
-                            except Exception:
-                                pass
-
-                        html = await page.content()
+                        logger.info("Clicked email — polling for OOPIF...")
+                        # Poll OOPIF: 3 tries × 3s = 9s max wait
+                        for oopif_wait in range(3):
+                            await asyncio.sleep(3)
+                            for frame in pw_page.frames:
+                                try:
+                                    text = await frame.evaluate("() => document.body.innerText", timeout=3000)
+                                    urls = pattern.findall(text or '')
+                                    if urls:
+                                        elapsed = time.time() - start_time
+                                        return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                                except Exception:
+                                    pass
+                        # Fallback: scan entire page HTML
+                        html = await pw_page.content()
                         urls = pattern.findall(html)
                         if urls:
                             elapsed = time.time() - start_time
                             return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                        logger.warning("OOPIF not found after clicking email")
                 else:
                     logger.info(f"No '{sender_filter}' email yet (attempt {attempt+1}/{max_retries})")
             except Exception as e:
                 logger.warning(f"OTP attempt {attempt+1} fehlgeschlagen: {e}")
             finally:
-                if page:
+                if pw_page and own_page:
                     try:
-                        await page.close()
+                        await pw_page.close()
                     except Exception:
                         pass
 
