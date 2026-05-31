@@ -23,6 +23,15 @@ findet kein `<list-mail-item>` mit `"fireworks"` im Text.
 4. `innerText` des Items enthält nicht "fireworks" sondern zB "Fireworks AI" oder URL-only
 5. MailCheck Extension (`chrome-extension://camnampocfohlcgbajligmemmabnljcm/`) könnte nötig sein
 
+## Problem 2: Code bleibt nicht im logged-in Tab
+Nach erfolgreichem GMX-Login (Tab auf `bap.navigator.gmx.net/mail?sid=...`) wird derselbe Tab
+für Alias-Operationen auf die Settings-Seite navigiert (`3c.gmx.net/mail/client/settings/...`).
+Später muss OTP-Reading in diesen Tab zurücknavigieren, was Session-Probleme verursachen kann.
+
+**Gewünscht:** Ein eigener Tab für GMX bleibt IMMER im Posteingang (nie navigiert).
+Alle anderen Ops (Alias, FW-Signup) nutzen separate Tabs. Der OTP-Tab hat dann immer
+die frische Session ohne erneute Navigation.
+
 ## Alte Arbeitsansätze
 - `tools/test_otp_mailcheck.py` — MailCheck Extension + OOPIF-Attach via CDP (funktionierte früher)
 - `read_otp()` (CDP-basiert, Zeile ~830) — AXTree + OOPIF-Polling (funktionierte, legacy)
@@ -32,3 +41,5 @@ findet kein `<list-mail-item>` mit `"fireworks"` im Text.
 - GMX-Inbox per CDP/AXTree scannen statt Playwright shadow DOM
 - `read_otp()` (CDP-legacy) als Fallback einbauen
 - Auf MailCheck Extension umstellen (siehe `test_otp_mailcheck.py`)
+- EIGENEN Tab für OTP: `browser.new_page()` BEVOR der GMX-Tab weg navigiert wird
+- Keine Navigation des OTP-Tabs — bleibt fix auf `navigator.gmx.net/mail`
