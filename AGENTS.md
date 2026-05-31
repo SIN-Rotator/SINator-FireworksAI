@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V15.4 (2026-05-31)
+# AGENTS.md — SINator Fireworks AI Rotator V16.0 (2026-05-31)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-29
 
@@ -69,6 +69,46 @@ python tools/rotate.py
 > ⚠️ Diese 8 Methoden gehören ALLE zur Klasse `GmxService` (4-Space-Indent). Ein
 > früherer Bug hatte vier davon versehentlich auf Modul-Ebene (Spalte 0) verschoben
 > → `AttributeError` bei jedem Aufruf. Siehe V15.5 FIXES.
+
+---
+
+## 🔧 V16.0 FIXES (2026-05-31) — GMX Navigation + Session + Credentials
+
+### ⚠️ KERNFIX: "Zum Postfach" klicken statt goto(navigator.gmx.net/mail)
+**NIEMALS** `page.goto("https://navigator.gmx.net/mail")` verwenden — GMX
+redirected ohne SID zurück zu `www.gmx.net`. Statt dessen:
+1. `page.goto("https://www.gmx.net/")` — Homepage laden
+2. "Zum Postfach" Link klicken — erzeugt SID-Session
+3. Danach ist `page.url` auf `navigator.gmx.net/mail?sid=...`
+
+Dieser Fix betrifft ALLE Tools die den Posteingang öffnen:
+- `gmx/open_inbox.py` — "Zum Postfach" Click statt goto
+- `gmx/find_email.py` — `_navigate_to_inbox()` Helper mit Zum Postfach
+- `agent_toolbox/core/gmx_service.py` — `navigate_inbox()` nutzt bereits Zum Postfach
+
+### Bug 1: open_inbox gab success ohne Navigation
+- `page.goto("navigator.gmx.net/mail")` redirected zu `www.gmx.net` ohne SID
+- Body-Text-Check auf "anmelden"/"Nicht eingeloggt" traf nicht zu → `success` fälschlich
+- Fix: URL-Check VOR Body-Check + "Zum Postfach" Click-Strategie
+- Tags: `v16.0-fix-open-inbox-zum-postfach`
+
+### Bug 2: check_session meldete logged_in bei inactive Session
+- URL war `www.gmx.net/?status=inactive` aber Body zeigte noch "Sie sind eingeloggt"
+- Fix: URL-Check auf `status=inactive`/`session-expired`/`logoutlounge`/`iac/restart` VOR Body-Text
+- Tags: `v16.0-fix-gmx-service-triple`
+
+### Bug 3: delete_alias/rotate_alias ohne Credentials → TypeError
+- `_navigate_to_all_email_addresses()` rief `self._login(page)` ohne email/password
+- `GmxService._login()` hat email+password als Pflichtparameter → TypeError
+- Fix: email/password Parameter durch alle Aufruferkette + Config-Fallback
+- Betroffen: `gmx/delete_alias.py`, `gmx/create_alias.py`, `gmx/rotate_alias.py`
+- Tags: `v16.0-fix-delete-alias-credentials`, `v16.0-fix-create-alias-credentials`, `v16.0-fix-rotate-alias-credentials`
+
+### _pw_connect: SID-Tab-Priorisierung
+- Vorher: erster `gmx.net`-Tab wurde genommen (oft der nicht-eingeloggte)
+- Jetzt: Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt
+- Zusätzlich: `status=inactive` URLs werden übersprungen
+- Tags: `v16.0-fix-gmx-service-triple`
 
 ---
 
@@ -317,7 +357,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-05-31 (V15.5 — OTP frame-aware Fix, GmxService Struktur-Fix)*
+*Last Updated: 2026-05-31 (V16.0 — Zum Postfach Fix, Session-Detection, Credentials-Passthrough)*
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
 <!-- gitnexus:start -->
