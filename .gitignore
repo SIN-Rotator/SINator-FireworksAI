@@ -1,36 +1,43 @@
-1:1:# Environment
-2:2:.env
-3:3:*.log
-4:4:logs/
-5:5:.DS_Store
-6:6:__pycache__/
-7:7:*.pyc
-8:8:*.pyo
-9:9:.env.local
-10:10:
-11:11:# Data (secrets - never commit)
-12:12:data/
-13:13:*.json
-14:14:
-15:15:# Chrome profiles (huge, temporary)
-16:16:/tmp/sinator-chrome-*/
-17:17:
-18:18:# IDE
-19:19:.vscode/
-20:20:.idea/
-21:21:*.swp
-22:22:*.swo
-23:23:
-24:24:# OS
-25:25:.DS_Store
-26:26:Thumbs.db
-27:27:
-28:28:# Dependencies
-29:29:node_modules/
-30:30:
-31:31:# Build artifacts
-32:32:dist/
-33:33:build/
-34:34:*.egg-info/
-35:35:
-37:38:.gitnexus
+# Environment
+.env
+*.log
+logs/
+.env.local
+
+# Data (secrets - never commit)
+data/
+*.json
+
+# Chrome profiles (huge, temporary)
+/tmp/sinator-chrome-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Deprecated / historical (kept on disk, not tracked)
+deprecated/
+plans/
+debug/
+
+# Tools
+.gitnexus

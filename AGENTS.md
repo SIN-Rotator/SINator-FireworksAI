@@ -70,7 +70,7 @@ python tools/rotate.py
 - `PUBLIC_PROXY_PATHS` um `/v1/models` erweitert
 
 ### Hermes `custom:*` Provider Support
-- `patches/` (now in SIN-Hermes-Bundles repo) — `provider_model_ids()` behandelt `custom:` prefix
+- `patches/` (now in SIN-Rotator repo) — `provider_model_ids()` behandelt `custom:` prefix
 - Probt `/v1/models` live über Pool-Proxy
 - Model-Picker zeigt Fireworks-Modelle (vorher: 0, jetzt: 12)
 
