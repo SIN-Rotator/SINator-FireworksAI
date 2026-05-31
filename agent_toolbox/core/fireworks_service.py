@@ -31,8 +31,8 @@ async def signup_fireworks(email: str, password: str) -> Dict[str, Any]:
         sys.path.insert(0, str(_Path(__file__).parent))
         
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-            page = await browser.contexts[0].new_page()
+            browser = await p.chromium.launch(headless=False)
+            page = await browser.new_page()
             
             # Step 1: Signup form
             await page.goto("https://app.fireworks.ai/signup")
@@ -137,8 +137,8 @@ async def login_fireworks(email: str, password: str) -> Dict[str, Any]:
     steps = []
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-            page = await browser.contexts[0].new_page()
+            browser = await p.chromium.launch(headless=False)
+            page = await browser.new_page()
 
             await page.goto("https://app.fireworks.ai/login")
             await asyncio.sleep(2)
@@ -501,10 +501,10 @@ async def create_api_key(key_name: str = "sinator-key") -> Dict[str, Any]:
 
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
+            browser = await p.chromium.launch(headless=False)
 
             # Always use a fresh page to avoid stale frame issues
-            pg = await browser.contexts[0].new_page()
+            pg = await browser.new_page()
             await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
             await asyncio.sleep(2)
 
@@ -621,8 +621,8 @@ async def verify_account(verify_url: str) -> bool:
     
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-            page = await browser.contexts[0].new_page()
+            browser = await p.chromium.launch(headless=False)
+            page = await browser.new_page()
             await page.goto(verify_url)
             await asyncio.sleep(2)
             logger.info(f"Verify URL opened: {page.url[:80]}")

@@ -91,8 +91,8 @@ async def check_key_credits_via_playwright(api_key: str) -> dict:
         from playwright.async_api import async_playwright
 
         async with async_playwright() as p:
-            browser = await p.chromium.connect_over_cdp("http://127.0.0.1:9222")
-            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            browser = await p.chromium.launch(headless=False)
+            context = await browser.new_context()
             page = await context.new_page()
 
             await page.goto("https://app.fireworks.ai/account/billing",
