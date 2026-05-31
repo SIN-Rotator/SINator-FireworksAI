@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V14 (2026-05-29)
+# AGENTS.md — SINator Fireworks AI Rotator V15.4 (2026-05-31)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-29
 
