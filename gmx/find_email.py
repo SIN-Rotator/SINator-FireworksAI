@@ -29,11 +29,21 @@ _SCAN_JS = r"""
 (() => {
     const KW = (arguments[0] || '').toLowerCase();
     let out = [];
+    function getText(el) {
+        let txt = (el.innerText || el.textContent || '').trim();
+        if (el.shadowRoot) {
+            const st = el.shadowRoot.body
+                ? el.shadowRoot.body.innerText
+                : (el.shadowRoot.documentElement ? el.shadowRoot.documentElement.innerText : '');
+            if (st && st.trim()) txt = txt ? txt + ' ' + st.trim() : st.trim();
+        }
+        return txt;
+    }
     function walk(root) {
         let nodes;
         try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
         for (const el of nodes) {
-            const txt = (el.innerText || el.textContent || '').trim();
+            const txt = getText(el);
             if (txt && txt.toLowerCase().includes(KW)) {
                 const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
                 out.push({mailId: id, tag: (el.tagName || '').toLowerCase(),
@@ -51,11 +61,21 @@ _CLICK_JS = r"""
 (() => {
     const KW = (arguments[0] || '').toLowerCase();
     let best = null, bestLen = Infinity;
+    function getText(el) {
+        let txt = (el.innerText || el.textContent || '').trim();
+        if (el.shadowRoot) {
+            const st = el.shadowRoot.body
+                ? el.shadowRoot.body.innerText
+                : (el.shadowRoot.documentElement ? el.shadowRoot.documentElement.innerText : '');
+            if (st && st.trim()) txt = txt ? txt + ' ' + st.trim() : st.trim();
+        }
+        return txt;
+    }
     function walk(root) {
         let nodes;
         try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
         for (const el of nodes) {
-            const txt = (el.innerText || el.textContent || '').trim();
+            const txt = getText(el);
             if (txt && txt.toLowerCase().includes(KW) && txt.length < bestLen) {
                 best = el; bestLen = txt.length;
             }
@@ -160,6 +180,35 @@ async def _navigate_to_inbox(page) -> Dict[str, Any]:
     return None
 
 
+async def _wait_for_inbox_content(page, max_wait: int = 30) -> bool:
+    """Wait until the webmailer frame has loaded mail items (shadow-DOM aware)."""
+    deadline = asyncio.get_event_loop().time() + max_wait
+    while asyncio.get_event_loop().time() < deadline:
+        for frame in page.frames:
+            if "webmailer.gmx.net" in (frame.url or ""):
+                try:
+                    count = await frame.evaluate("""() => {
+                        let count = 0;
+                        function walk(root) {
+                            if (!root) return;
+                            try {
+                                root.querySelectorAll('*').forEach(el => {
+                                    if (el.tagName.toLowerCase() === 'list-mail-item') count++;
+                                    if (el.shadowRoot) walk(el.shadowRoot);
+                                });
+                            } catch(e) {}
+                        }
+                        if (document.body) walk(document.body);
+                        return count;
+                    }""")
+                    if count and count > 0:
+                        return True
+                except Exception:
+                    pass
+        await asyncio.sleep(2)
+    return False
+
+
 async def find_email(
     keyword: str = "fireworks", timeout: int = 8, port: int = DEFAULT_CDP_PORT
 ) -> Dict[str, Any]:
@@ -198,11 +247,48 @@ async def find_email(
         if nav_err:
             return nav_err
 
-        # 1) Scan all frames (incl. shadow DOM) for the keyword.
+        if not await _wait_for_inbox_content(page, max_wait=30):
+            return {
+                "status": "not_found",
+                "verify_url": None,
+                "matches": 0,
+                "error": "Inbox content did not load within 30s",
+            }
+
         target_frame, matches = None, []
         for frame in page.frames:
             try:
-                found = await frame.evaluate(_SCAN_JS, keyword.lower())
+                found = await frame.evaluate(
+                    f"""(KW) => {{
+                    let out = [];
+                    function getText(el) {{
+                        let txt = (el.innerText || el.textContent || '').trim();
+                        if (el.shadowRoot) {{
+                            const st = el.shadowRoot.body
+                                ? el.shadowRoot.body.innerText
+                                : (el.shadowRoot.documentElement ? el.shadowRoot.documentElement.innerText : '');
+                            if (st && st.trim()) txt = txt ? txt + ' ' + st.trim() : st.trim();
+                        }}
+                        return txt;
+                    }}
+                    function walk(root) {{
+                        let nodes;
+                        try {{ nodes = root.querySelectorAll('*'); }} catch (e) {{ return; }}
+                        for (const el of nodes) {{
+                            const txt = getText(el);
+                            if (txt && txt.toLowerCase().includes(KW)) {{
+                                const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
+                                out.push({{mailId: id, tag: (el.tagName || '').toLowerCase(),
+                                          text: txt.slice(0, 400), hasShadow: !!el.shadowRoot}});
+                            }}
+                            if (el.shadowRoot) walk(el.shadowRoot);
+                        }}
+                    }}
+                    if (document.body) walk(document.body);
+                    return out;
+                }}""",
+                    keyword.lower(),
+                )
             except Exception:
                 found = []
             if found:
@@ -226,7 +312,40 @@ async def find_email(
 
         # 2) Open the mail (Shadow DOM aware click).
         try:
-            clicked = await target_frame.evaluate(_CLICK_JS, keyword.lower())
+            clicked = await target_frame.evaluate(
+                f"""(KW) => {{
+                let best = null, bestLen = Infinity;
+                function getText(el) {{
+                    let txt = (el.innerText || el.textContent || '').trim();
+                    if (el.shadowRoot) {{
+                        const st = el.shadowRoot.body
+                            ? el.shadowRoot.body.innerText
+                            : (el.shadowRoot.documentElement ? el.shadowRoot.documentElement.innerText : '');
+                        if (st && st.trim()) txt = txt ? txt + ' ' + st.trim() : st.trim();
+                    }}
+                    return txt;
+                }}
+                function walk(root) {{
+                    let nodes;
+                    try {{ nodes = root.querySelectorAll('*'); }} catch (e) {{ return; }}
+                    for (const el of nodes) {{
+                        const txt = getText(el);
+                        if (txt && txt.toLowerCase().includes(KW) && txt.length < bestLen) {{
+                            best = el; bestLen = txt.length;
+                        }}
+                        if (el.shadowRoot) walk(el.shadowRoot);
+                    }}
+                }}
+                if (document.body) walk(document.body);
+                if (best) {{
+                    const clickable = best.closest('a, button, [role="button"], [onclick], li, tr') || best;
+                    clickable.click();
+                    return true;
+                }}
+                return false;
+            }}""",
+                keyword.lower(),
+            )
         except Exception:
             clicked = False
         await asyncio.sleep(timeout)
@@ -235,7 +354,29 @@ async def find_email(
         biggest = ""
         for frame in page.frames:
             try:
-                text = await frame.evaluate(_TEXT_JS)
+                text = await frame.evaluate("""() => {
+                    let results = [];
+                    function traverse(node) {
+                        if (!node) return;
+                        if (node.shadowRoot) {
+                            const st = node.shadowRoot.body ? node.shadowRoot.body.innerText
+                                : (node.shadowRoot.documentElement ? node.shadowRoot.documentElement.innerText : '');
+                            if (st && st.trim()) results.push(st.trim());
+                            traverse(node.shadowRoot);
+                        }
+                        node.childNodes.forEach(child => {
+                            if (child.nodeType === Node.TEXT_NODE && child.textContent && child.textContent.trim()) {
+                                results.push(child.textContent.trim());
+                            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                                const elText = (child.innerText || child.textContent || '').trim();
+                                if (elText) results.push(elText);
+                                traverse(child);
+                            }
+                        });
+                    }
+                    if (document.body) traverse(document.body);
+                    return results.join('\\n');
+                }""")
             except Exception:
                 continue
             if text and len(text) > len(biggest):

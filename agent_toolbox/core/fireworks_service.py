@@ -100,39 +100,11 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
                     break
             steps.append("create_clicked")
         
-        # Step 2: Poll for OTP email via Playwright (same context = same cookies)
-        logger.info("Waiting for Fireworks verification email...")
-        verify_url = None
-        from agent_toolbox.core.gmx_service import GmxService
-        svc = GmxService()
-        
-        for attempt in range(15):
-            await asyncio.sleep(4)
-            otp_result = await svc.read_otp_via_playwright(browser, sender_filter="fireworks", max_retries=1, retry_delay=3, existing_page=existing_page)
-            if otp_result.get("status") == "success":
-                verify_url = otp_result.get("url") or otp_result.get("otp_url")
-                if verify_url:
-                    logger.info(f"✅ OTP found (attempt {attempt+1})")
-                    break
-            logger.info(f"OTP poll {attempt+1}/15...")
-        
-        if not verify_url:
-            steps.append("otp_not_found")
-            return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 18 attempts"}
-        
-        steps.append("otp_found")
-        
-        # Step 3: Verify account (reuse same browser if provided from outside)
-        verified = await verify_account(verify_url, browser=_ext_browser, cdp_port=cdp_port)
-        if verified:
-            steps.append("account_verified")
-            logger.info("✅ Account verified")
-        else:
-            steps.append("verify_failed")
-        
+        # Step 2: OTP wird NICHT hier polled — rotate.py liest OTP auf inbox_tab
+        # Das stellt sicher dass die richtige, authentifizierte Seite verwendet wird
+        logger.info("Signup complete — OTP reading delegated to rotate.py")
         return {
-            "status": "success",
-            "verify_url": verify_url,
+            "status": "signup_done",
             "steps_completed": steps,
         }
     except Exception as e:
