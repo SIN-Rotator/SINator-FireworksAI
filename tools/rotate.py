@@ -67,69 +67,50 @@ async def main():
         args.password = cfg.fireworks_password
 
     t0 = time.time()
+    cdp_port = args.cdp_port or _find_free_port()
 
     from playwright.async_api import async_playwright
     p = await async_playwright().start()
-
-    # Verbinden zu laufender Chrome Session (hat GMX Session = Profile 73)
-    cdp_url = f"http://localhost:9222"
-    logger.info(f"=== Connecting to Chrome at {cdp_url} (Profile 73 — GMX eingeloggt) ===")
-    browser = await p.chromium.connect_over_cdp(cdp_url)
-    logger.info("✅ Connected to Chrome")
+    logger.info(f"=== Launching Bot Chromium (CDP port {cdp_port}) ===")
+    browser = await p.chromium.launch(
+        headless=False,
+        args=[f'--remote-debugging-port={cdp_port}']
+    )
+    logger.info("✅ Bot Chromium launched")
 
     alias = None
     try:
         from gmx_service import GmxService
         gmx = GmxService()
 
-        # ═══ Multi-Tab Architektur — EIN Page für GMX + Fireworks, dann zurück ═══
-        existing_pages = []
-        for ctx in browser.contexts:
-            existing_pages.extend(ctx.pages)
-        logger.info(f"Found {len(existing_pages)} pages: {[pg.url[:50] for pg in existing_pages]}")
-
-        # Finde existierenden GMX-Tab mit SID
-        sid_tab = None
-        for pg in existing_pages:
-            url = pg.url or ""
-            if "sid=" in url and "navigator.gmx.net" in url:
-                sid_tab = pg
-                logger.info(f"Found GMX tab with SID: {url[:80]}")
-                break
-
-        if sid_tab:
-            work_tab = sid_tab
-        else:
-            # Kein GMX-Tab — work_tab = erste Page (GitHub oder ähnlich)
-            work_tab = existing_pages[0] if existing_pages else await browser.new_page()
-            logger.warning(f"No GMX tab with SID. Using first page: {work_tab.url[:50]}")
-
-        # inbox_tab = work_tab (selber Tab, spart Cookie-Problem)
+        # ═══ Multi-Tab Architektur — Bot-Chrome frische Tabs ═══
+        logger.info("Creating work_tab and inbox_tab...")
+        work_tab = await browser.new_page()
+        inbox_tab = await browser.new_page()
         gmx.work_tab = work_tab
-        gmx.inbox_tab = work_tab  # SELBER Tab!
-        inbox_tab = work_tab
+        gmx.inbox_tab = inbox_tab
 
         await work_tab.bring_to_front()
 
-        # ═══ Step 0: GMX Session-Verifikation + SID merken ═══
-        logger.info("=== GMX Session Verification ===")
-        await work_tab.bring_to_front()
-        await asyncio.sleep(2)
-        body = await work_tab.evaluate("() => document.body.innerText")
-        if "Sie sind eingeloggt" in body or "Zum Postfach" in body:
-            logger.info("✅ GMX Session bereits aktiv (Profile 73)")
+        # ═══ Step 0: GMX Login auf work_tab (Bot-Chrome hat keine Session) ═══
+        logger.info("=== GMX Login ===")
+        logged_in = await gmx._login(work_tab, email=args.gmx_email, password=args.gmx_password)
+        if logged_in:
+            logger.info("✅ GMX Login OK")
         else:
-            logger.info("⚠️ Keine aktive GMX Session — versuche Login")
-            logged_in = await gmx._login(work_tab, email=args.gmx_email, password=args.gmx_password)
-            if logged_in:
-                logger.info("✅ GMX Login OK")
-            else:
-                logger.info("⚠️ Login fehlgeschlagen — continue trotzdem")
+            logger.error("❌ GMX Login failed")
+            return
 
-        # SID aus work_tab URL extrahieren (für OTP-Navigation)
+        # SID aus work_tab URL extrahieren
         sid_match = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
         gmx_sid = sid_match.group(1) if sid_match else None
         logger.info(f"GMX SID: {gmx_sid[:20] if gmx_sid else 'None'}...")
+
+        # inbox_tab NACH Login zum GMX-Posteingang navigieren
+        if gmx_sid:
+            await inbox_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
+            await asyncio.sleep(5)
+            logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
 
         # ═══ Step 1: GMX Alias Rotation auf work_tab ═══
         logger.info("=== GMX Alias Rotation ===")
@@ -178,20 +159,24 @@ async def main():
 
         logger.info(f"OTP-Tab URL: {work_tab.url[:80]}")
 
+        # ═══ Step 3: CDP AXTree OTP (durchdringt OOPIFs + ignoriert Ad-Frames) ═══
+        logger.info("=== OTP via CDP AXTree (inbox_tab, bis 180s) ===")
         verify_ok = False
-        # WICHTIG: read_otp_via_playwright clickt die Email und extracted verify URL aus OOPIF
-        # read_otp_axtree_and_frames findet nur Preview-Code, nicht die URL im Body!
-        otp_fb = await gmx.read_otp_via_playwright(
-            browser, sender_filter="fireworks", max_retries=25, retry_delay=8,
-            existing_page=work_tab
+        otp_result = await gmx.read_otp_cdp_axtree(
+            sender_keyword="fireworks", timeout=180
         )
-        otp_url = otp_fb.get("otp_url")
+        otp_url = otp_result.get("otp_url")
+        otp_code = otp_result.get("otp_code")
+
         if otp_url:
+            logger.info(f"OTP-URL: {otp_url[:60]}")
             from fireworks_service import verify_account
             verify_ok = await verify_account(otp_url, browser=browser)
-            logger.info(f"OTP verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
+            logger.info(f"Verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
+        elif otp_code:
+            logger.info(f"OTP-Code: {otp_code}")
         else:
-            logger.warning(f"OTP nicht gefunden: {otp_fb.get('error')}")
+            logger.warning(f"OTP nicht gefunden: {otp_result.get('error')}")
 
         # ═══ Step 4: Fireworks Login + Onboarding auf work_tab ═══
         logger.info("=== Fireworks Login + Onboarding ===")
