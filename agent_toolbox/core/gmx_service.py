@@ -6,7 +6,7 @@ Kernfunktionen:
   - Alias-Rotation (Löschen + Erstellen)
   - OTP/Confirm-URL Extraktion
 
-Playwright-native für Alias-Rotation. OTP bleibt auf CDP (komplex, funktioniert).
+Playwright-native für Alias-Rotation + OTP (read_otp_via_playwright).
 """
 import time
 import random
@@ -455,56 +455,141 @@ class GmxService:
         return None
 
     async def _delete_alias(self, page: Page, alias_email: str) -> bool:
-        """Delete an alias by hovering over its row and clicking delete."""
+        """Delete an alias via CDP Input.dispatchMouseEvent (Wicket-kompatibel)."""
         logger.info(f"[_delete_alias] Deleting {alias_email}")
         try:
             frame = await self._get_all_email_frame(page)
             if not frame:
                 logger.warning("allEmailAddresses iframe not found for delete")
                 return False
-            
-            # Find the row containing the alias email
-            row = frame.locator(f'text={alias_email}').first
-            if not await row.is_visible(timeout=3000):
-                logger.warning(f"Alias row not visible: {alias_email}")
+
+            # 1) TABLE-ROW finden die den Alias enthält
+            row_data = await frame.evaluate(f"""() => {{
+                var rows = document.querySelectorAll('tr, li, .row, [class*="row"]');
+                for (var i=0; i<rows.length; i++) {{
+                    if (rows[i].textContent.includes('{alias_email}')) {{
+                        var r = rows[i].getBoundingClientRect();
+                        if (r.width > 20 && r.height > 5) {{
+                            // Mitte der Zeile (für Hover)
+                            return {{
+                                cx: Math.round(r.x + r.width/2),
+                                cy: Math.round(r.y + r.height/2)
+                            }};
+                        }}
+                    }}
+                }}
+                return null;
+            }}""")
+            if not row_data:
+                logger.warning(f"Alias row not found: {alias_email}")
                 return False
 
-            # Hover to reveal delete button
-            await row.hover()
-            await asyncio.sleep(1)
+            # 2) CDP-Session für native Mouse-Events
+            cdp = await page.context.new_cdp_session(page)
 
-            # Look for delete button (title or aria-label containing "lösch")
-            delete_btn = frame.locator('[title*="lösch" i], [aria-label*="lösch" i]').first
-            if not await delete_btn.is_visible(timeout=2000):
-                # Try any button near the alias
-                delete_btn = frame.locator('button').filter(has=frame.locator('svg, i, img')).first
+            # 3) Hover über die ZEILE (nicht über ein Text-Element)
+            logger.info(f"Hover row via CDP at ({row_data['cx']}, {row_data['cy']})")
+            await cdp.send('Input.dispatchMouseEvent', {
+                'type': 'mouseMoved', 'x': row_data['cx'], 'y': row_data['cy']
+            })
+            await asyncio.sleep(1.5)
 
-            if await delete_btn.is_visible(timeout=2000):
-                logger.info("Clicking delete button")
-                await delete_btn.click(force=True)
-                await asyncio.sleep(3)
+            # 4) Delete-Icon INNERHALB der Zeile suchen
+            delete_pos = await frame.evaluate(f"""() => {{
+                var rows = document.querySelectorAll('tr, li, .row, [class*="row"]');
+                for (var i=0; i<rows.length; i++) {{
+                    if (rows[i].textContent.includes('{alias_email}')) {{
+                        var delEl = rows[i].querySelector('[title*="lösch"], [aria-label*="lösch"], [title*="lösch"], [class*="delete"]');
+                        if (!delEl) {{
+                            delEl = rows[i].querySelector('a, button, span, i, img, svg');
+                        }}
+                        if (delEl) {{
+                            var r = delEl.getBoundingClientRect();
+                            if (r.width > 5 && r.height > 5) {{
+                                return {{x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), title: delEl.getAttribute('title') || ''}};
+                            }}
+                        }}
+                    }}
+                }}
+                return null;
+            }}""")
+            if not delete_pos:
+                logger.warning("Delete icon not found in alias row — global search as fallback")
+                # Fallback: global search
+                delete_pos = await frame.evaluate("""() => {
+                    var allEls = document.querySelectorAll('a, button, span, i, img, svg');
+                    for (var i=0; i<allEls.length; i++) {
+                        var el = allEls[i];
+                        var title = (el.getAttribute('title') || '').toLowerCase();
+                        var aria = (el.getAttribute('aria-label') || '').toLowerCase();
+                        if (title.includes('l\u00f6sch') || aria.includes('l\u00f6sch') || title.includes('delete')) {
+                            var r = el.getBoundingClientRect();
+                            if (r.width > 5 && r.height > 5) {
+                                return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), title: el.getAttribute('title') || ''};
+                            }
+                        }
+                    }
+                    return null;
+                }""")
+                if not delete_pos:
+                    logger.warning("Delete icon not found globally either")
+                    return False
 
-                # Confirm dialog
-                try:
-                    ok_btn = frame.locator('button:has-text("OK")').first
-                    if await ok_btn.is_visible(timeout=2000):
-                        await ok_btn.click()
-                        await asyncio.sleep(2)
-                except:
-                    pass
+            logger.info(f"Delete '{delete_pos.get('title', '')}' at ({delete_pos['x']}, {delete_pos['y']})")
 
-                # Verify deletion
-                for _ in range(10):
-                    text = await frame.evaluate("() => document.body.innerText")
-                    if alias_email not in text:
-                        logger.info("Alias deleted successfully")
-                        return True
-                    await asyncio.sleep(1)
+            # 5) Delete per CDP klicken
+            await cdp.send('Input.dispatchMouseEvent', {
+                'type': 'mousePressed', 'x': delete_pos['x'], 'y': delete_pos['y'],
+                'button': 'left', 'clickCount': 1
+            })
+            await asyncio.sleep(0.05)
+            await cdp.send('Input.dispatchMouseEvent', {
+                'type': 'mouseReleased', 'x': delete_pos['x'], 'y': delete_pos['y'],
+                'button': 'left', 'clickCount': 1
+            })
+            await asyncio.sleep(3)
 
-            logger.warning("Delete button not found")
+            # 6) Confirm-Dialog (OK)
+            ok_pos = await frame.evaluate("""() => {
+                var allEls = document.querySelectorAll('button, a, span');
+                for (var i=0; i<allEls.length; i++) {
+                    var el = allEls[i];
+                    if (el.textContent && el.textContent.trim() === 'OK') {
+                        var r = el.getBoundingClientRect();
+                        if (r.width > 5 && r.height > 5) {
+                            return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)};
+                        }
+                    }
+                }
+                return null;
+            }""")
+            if ok_pos:
+                logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']})")
+                await cdp.send('Input.dispatchMouseEvent', {
+                    'type': 'mousePressed', 'x': ok_pos['x'], 'y': ok_pos['y'],
+                    'button': 'left', 'clickCount': 1
+                })
+                await asyncio.sleep(0.05)
+                await cdp.send('Input.dispatchMouseEvent', {
+                    'type': 'mouseReleased', 'x': ok_pos['x'], 'y': ok_pos['y'],
+                    'button': 'left', 'clickCount': 1
+                })
+                await asyncio.sleep(2)
+
+            # 7) Verifikation
+            for _ in range(10):
+                text = await frame.evaluate("() => document.body.innerText")
+                if alias_email not in text:
+                    logger.info("Alias deleted successfully")
+                    return True
+                await asyncio.sleep(1)
+
+            logger.warning("Alias still present after delete attempt")
             return False
         except Exception as e:
             logger.error(f"Error deleting alias: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     # ── Alias Creation ──────────────────────────────────────────────────
@@ -540,15 +625,33 @@ class GmxService:
             return False
 
     async def _click_add_button(self, page: Page) -> bool:
-        """Click the add alias button. No reload — let page handle navigation internally."""
+        """Click the add alias button via CDP native events (Wicket-kompatibel)."""
         logger.info("[_click_add_button] Looking for add button")
         try:
             frame = await self._get_all_email_frame(page)
             if not frame:
                 logger.warning("allEmailAddresses iframe not found")
                 return False
-            
-            # Click via JS evaluate (most reliable with Wicket)
+
+            # CDP native click via bounding box (Wicket-kompatibel)
+            btn = frame.locator('button:has-text("Hinzufügen")').first
+            bb = await btn.bounding_box()
+            if bb:
+                cx = bb['x'] + bb['width'] / 2
+                cy = bb['y'] + bb['height'] / 2
+                cdp = await page.context.new_cdp_session(page)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
+                await asyncio.sleep(0.1)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                await asyncio.sleep(0.1)
+                await cdp.send("Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                await asyncio.sleep(2)
+                logger.info("Hinzufügen button clicked via CDP")
+                try: await cdp.detach()
+                except: pass
+                return True
+
+            # Fallback: JS evaluate
             result = await frame.evaluate("""(function() {
                 var btns = document.querySelectorAll('button');
                 for (var i = 0; i < btns.length; i++) {
@@ -571,24 +674,23 @@ class GmxService:
             return False
 
     async def _verify_alias(self, page: Page, alias_email: str, present: bool = True, max_wait: float = 12.0) -> bool:
-        """Verify alias is present/absent in the allEmailAddresses page."""
+        """Verify alias is present/absent — searches iframe content (not top frame)."""
         logger.info(f"[_verify_alias] Checking {alias_email} present={present}")
         try:
             deadline = time.time() + max_wait
             while time.time() < deadline:
-                # Check page URL first (top frame approach)
-                if "allEmailAddresses" in page.url and "settings" in page.url:
-                    text = await page.evaluate("() => document.body.innerText")
+                frame = await self._get_all_email_frame(page)
+                if frame:
+                    text = await frame.evaluate("() => document.body.innerText")
                     found = alias_email in text
                     if present and found:
                         return True
                     if not present and not found:
                         return True
                 else:
-                    # Search across all frames (fallback)
-                    for frame in page.frames:
-                        if "allEmailAddresses" in frame.url and "settings" in frame.url:
-                            text = await frame.evaluate("() => document.body.innerText")
+                    for f in page.frames:
+                        if "allEmailAddresses" in f.url and "settings" in f.url:
+                            text = await f.evaluate("() => document.body.innerText")
                             found = alias_email in text
                             if present and found:
                                 return True
@@ -702,6 +804,13 @@ class GmxService:
         if not target:
             target = await get_page_target(client, url_filter="gmx.net")
         if not target:
+            # Kein GMX-Target — neues Target via Target.createTarget
+            logger.info("No GMX target found — creating new page via CDP")
+            create = await client.send_to_session(None, "Target.createTarget", {"url": "https://www.gmx.net/"})
+            new_target_id = create.get("targetId")
+            if new_target_id:
+                target = await get_page_target(client, url_filter="gmx.net")
+        if not target:
             await client.disconnect()
             raise RuntimeError("Kein GMX Page-Target gefunden")
         session_id = await client.attach_to_target(target["targetId"])
@@ -802,33 +911,59 @@ class GmxService:
                 items = items_result.get("result", {}).get("value", [])
                 new_items = [it for it in items if it.get("mailId") not in known_ids]
                 if new_items:
-                    cookies_res = await client.send_to_session(session_id, "Network.getAllCookies")
-                    cookies = cookies_res.get("cookies", [])
-                    essential = {"JSESSIONID", "SESSION", "lps", "navigator", "iac_token"}
-                    cookie_dict = {c.get("name"): c.get("value", "") for c in cookies if c.get("name") in essential}
-                    headers = {
-                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Referer": "https://3c-bap.gmx.net/mail/client/start",
-                    }
-                    async with httpx.AsyncClient(cookies=cookie_dict, follow_redirects=True, timeout=20) as http:
-                        for item in new_items[:5]:
-                            mail_id = item.get("mailId")
-                            if not mail_id:
-                                continue
-                            for suffix in ["true", "false"]:
-                                email_url = f"https://3c-bap.gmx.net/mail/client/mailbody/tmai{mail_id}/{suffix};jsessionid={jsessionid}"
-                                try:
-                                    resp = await http.get(email_url, headers=headers)
-                                    if resp.status_code == 200 and len(resp.text) > 1000:
-                                        urls = re.findall(r'https://app\.fireworks\.ai/[^\s"\'<>]+', resp.text)
-                                        candidates = [u for u in urls if any(k in u.lower() for k in ["confirm", "verify", "token", "auth", "activate", "signup"])]
-                                        if candidates:
-                                            confirm_url = html_module.unescape(candidates[0])
-                                            return {"status": "success", "otp_url": confirm_url, "mail_id": mail_id,
-                                                    "execution_time": f"{time.time()-start_time:.2f}s"}
-                                except Exception:
-                                    pass
+                    await client.send_to_session(session_id, "Accessibility.enable")
+                    await asyncio.sleep(1)
+                    ax_result = await client.send_to_session(session_id, "Accessibility.getFullAXTree", {"depth": -1, "pierce": True})
+                    ax_nodes = ax_result.get("nodes", [])
+                    verify_nodes = []
+                    for n in ax_nodes:
+                        name_val = (n.get("name", {}) or {}).get("value", "")
+                        desc_val = (n.get("description", {}) or {}).get("value", "")
+                        combined = f"{name_val} {desc_val}".lower()
+                        if "fireworks" in combined:
+                            verify_nodes.append(n)
+                    logger.info(f"AXTree: {len(ax_nodes)} nodes, {len(verify_nodes)} fireworks hits")
+                    if verify_nodes:
+                        target_node = verify_nodes[0]
+                        bid = target_node.get("backendDOMNodeId")
+                        if bid:
+                            try:
+                                quad = await client.send_to_session(session_id, "DOM.getContentQuads", {"backendNodeId": bid})
+                                quads = quad.get("quads", [])
+                                if quads and quads[0]:
+                                    q = quads[0]
+                                    cx = (q[0] + q[4]) / 2
+                                    cy = (q[1] + q[5]) / 2
+                                    logger.info(f"Click fireworks email at ({cx:.0f},{cy:.0f})")
+                                    before_ids = {t["targetId"] for t in await client.get_targets()}
+                                    await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy})
+                                    await asyncio.sleep(0.2)
+                                    await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mousePressed", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                    await asyncio.sleep(0.15)
+                                    await client.send_to_session(session_id, "Input.dispatchMouseEvent", {"type": "mouseReleased", "x": cx, "y": cy, "button": "left", "clickCount": 1})
+                                    await asyncio.sleep(5)
+                                    after = await client.get_targets()
+                                    for t in after:
+                                        tu = t.get("url", "")
+                                        if "mailbody" in tu:
+                                            logger.info(f"Mailbody OOPIF: {tu[:120]}")
+                                            try:
+                                                ifs = await client.attach_to_target(t["targetId"])
+                                                await client.send_to_session(ifs, "Runtime.enable")
+                                                body_r = await client.evaluate(ifs, 'document.body ? document.body.innerText : ""', return_by_value=True)
+                                                b = body_r.get("result", {}).get("value", "") or ""
+                                                if not b.strip():
+                                                    html_r = await client.evaluate(ifs, 'document.body ? document.body.innerHTML : ""', return_by_value=True)
+                                                    b = html_r.get("result", {}).get("value", "") or ""
+                                                urls = re.findall(r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify)[^\s\"\'<>]+', b)
+                                                if urls:
+                                                    elapsed = time.time() - start_time
+                                                    return {"status": "success", "otp_url": html_module.unescape(urls[0]), "mail_id": None, "execution_time": f"{elapsed:.2f}s"}
+                                            except Exception:
+                                                pass
+                                            await asyncio.sleep(0.1)
+                            except Exception as e:
+                                logger.warning(f"AXTree click failed: {e}")
                 for it in items:
                     mid = it.get("mailId")
                     if mid:
@@ -842,6 +977,106 @@ class GmxService:
         finally:
             if client:
                 await client.disconnect()
+
+    async def read_otp_via_playwright(self, browser: Browser, sender_filter: str = "fireworks",
+                                       max_retries: int = 15, retry_delay: int = 6) -> Dict[str, Any]:
+        """Read OTP via Playwright — frische Page pro Versuch (kein frame detach bug).
+        Nutzt `browser` (ONE Browser) für cookie-korrekte GMX-Session.
+        """
+        start_time = time.time()
+        pattern = re.compile(r'https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+')
+        for attempt in range(max_retries):
+            page = None
+            try:
+                page = await browser.new_page()
+                await page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(5)
+
+                body = await page.evaluate("() => document.body.innerText")
+                if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:300] and "E-Mail" not in body):
+                    logger.warning(f"GMX session verloren (attempt {attempt+1})")
+                    return {"status": "error", "otp_url": None, "error": "Nicht eingeloggt"}
+
+                items_js = r"""
+                (() => {
+                    function walk(root) {
+                        let out = [];
+                        for (const el of root.querySelectorAll('*')) {
+                            if (el.tagName.toLowerCase() === 'list-mail-item') {
+                                const txt = (el.textContent || '').toLowerCase();
+                                if (txt.includes('SENDER_FILTER')) {
+                                    const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
+                                    out.push({mailId: id, text: el.textContent.trim().slice(0, 300)});
+                                }
+                            }
+                            if (el.shadowRoot) out = out.concat(walk(el.shadowRoot));
+                        }
+                        return out;
+                    }
+                    return walk(document.body);
+                })()
+                """
+                items_js = items_js.replace('SENDER_FILTER', sender_filter.lower())
+                items = await page.evaluate(items_js)
+
+                if items:
+                    logger.info(f"Found {len(items)} email(s) matching '{sender_filter}'")
+                    for item in items:
+                        urls = pattern.findall(item.get('text', ''))
+                        if urls:
+                            elapsed = time.time() - start_time
+                            return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+
+                    click_js = r"""
+                    (() => {
+                        function walk(root, id) {
+                            for (const el of root.querySelectorAll('*')) {
+                                if (el.tagName.toLowerCase() === 'list-mail-item') {
+                                    const eid = (el.getAttribute('id') || '').replace(/^id/, '');
+                                    if (eid === id) { el.click(); return true; }
+                                }
+                                if (el.shadowRoot && walk(el.shadowRoot, id)) return true;
+                            }
+                            return false;
+                        }
+                        return walk(document.body, arguments[0]);
+                    })()
+                    """
+                    clicked = await page.evaluate(click_js, items[0].get('mailId'))
+                    if clicked:
+                        logger.info("Clicked email — waiting for mail body OOPIF")
+                        await asyncio.sleep(6)
+
+                        for frame in page.frames:
+                            try:
+                                text = await frame.evaluate("() => document.body.innerText", timeout=5000)
+                                urls = pattern.findall(text)
+                                if urls:
+                                    elapsed = time.time() - start_time
+                                    return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                            except Exception:
+                                pass
+
+                        html = await page.content()
+                        urls = pattern.findall(html)
+                        if urls:
+                            elapsed = time.time() - start_time
+                            return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
+                else:
+                    logger.info(f"No '{sender_filter}' email yet (attempt {attempt+1}/{max_retries})")
+            except Exception as e:
+                logger.warning(f"OTP attempt {attempt+1} fehlgeschlagen: {e}")
+            finally:
+                if page:
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
+
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+
+        return {"status": "not_found", "otp_url": None, "error": "Nicht gefunden"}
 
     # ── Public Helpers ────────────────────────────────────────────────────
 

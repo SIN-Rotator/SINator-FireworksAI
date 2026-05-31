@@ -90,7 +90,7 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
                         break
                 steps.append("create_clicked")
             
-            # Step 2: Poll for OTP email via read_otp (CDP-based, proven)
+            # Step 2: Poll for OTP email via Playwright (same context = same cookies)
             logger.info("Waiting for Fireworks verification email...")
             verify_url = None
             from agent_toolbox.core.gmx_service import GmxService
@@ -98,7 +98,7 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
             
             for attempt in range(15):
                 await asyncio.sleep(4)
-                otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=1, retry_delay=3)
+                otp_result = await svc.read_otp_via_playwright(browser, sender_filter="fireworks", max_retries=1, retry_delay=3)
                 if otp_result.get("status") == "success":
                     verify_url = otp_result.get("url") or otp_result.get("otp_url")
                     if verify_url:
@@ -112,8 +112,8 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
             
             steps.append("otp_found")
             
-            # Step 3: Verify account
-            verified = await verify_account(verify_url)
+            # Step 3: Verify account (reuse same browser via cdp_port)
+            verified = await verify_account(verify_url, cdp_port=cdp_port)
             if verified:
                 steps.append("account_verified")
                 logger.info("✅ Account verified")
