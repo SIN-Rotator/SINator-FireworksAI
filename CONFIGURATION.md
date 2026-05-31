@@ -19,9 +19,9 @@ Wird via Dashboard-Setup-Seite (`/setup`) oder direkt bearbeitet:
 
 ```json
 {
-  "gmx_email": "opensin@gmx.de",
-  "gmx_password": "ZOE.jerry2024",
-  "fireworks_password": "ZOE.jerry2024!"
+  "gmx_email": "deinname@gmx.de",
+  "gmx_password": "DEIN_GMX_PASSWORT",
+  "fireworks_password": "DEIN_FIREWORKS_PASSWORT"
 }
 ```
 

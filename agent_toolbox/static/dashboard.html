@@ -303,7 +303,7 @@ async function startRotation() {
 
   log('Starte Rotation in separatem Chrome-Fenster...', 'info');
   try {
-    const r = await api('POST', '/rotation/full', { fireworks_password: 'ZOE.jerry2024', save_to_pool: true });
+    const r = await api('POST', '/rotation/full', { save_to_pool: true });
     if (r.status === 'success') log('✅ Rotation erfolgreich! Key: ' + (r.api_key || '?'), 'success');
     else if (r.status === 'partial') log('⚠️ Teil-Erfolg — Alias: ' + (r.gmx_alias || '?') + ', Key fehlt', 'error');
     else log('❌ Status: ' + r.status + ' — ' + (r.error || ''), 'error');

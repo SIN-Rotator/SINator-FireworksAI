@@ -2,117 +2,88 @@
 
 [![GitNexus](https://img.shields.io/badge/GitNexus-knowledge%20graph-8B5CF6)](.gitnexus/)
 
-> **⚠️ GitNexus-Pflicht:** Bevor du Code in diesem Repo änderst, MUSST du `gitnexus_impact()` (Blast Radius) und `gitnexus_detect_changes()` (vor Commit) ausführen. Siehe [GitNexus Guide](.gitnexus/).
+Automated GMX alias rotation → Fireworks AI account registration → API key pool.
+OpenAI-compatible proxy with automatic key rotation on rate-limits and silent key swap.
 
-Automated GMX alias rotation → Fireworks AI account → API key pool.
-OpenAI-compatible proxy with automatic key rotation on rate-limits.
+**Backend:** :8000 | **Pool:** 235 Keys | **Proxy:** 10 Instances (:8888-:8897) | **Router:** :9998
 
-**Backend Port:** `8000` | **Dashboard Repo:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | **HeyPiggy Repo:** [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy)
-
-## EINE Base-URL — Pool-Router mit Auto-Failover
-
-**Es gibt nur EINEN Endpunkt.** Der Pool-Router verteilt Requests automatisch auf 10 lokale Proxys (8888-8897), jeder mit eigenem API-Key aus dem Pool. Bei 413/429/412/5xx springt der Router zum nächsten Proxy.
-
-| Zugriff | Base URL |
-|---------|----------|
-| **Lokal (dieser Mac)** | `http://localhost:9998/inference/v1` |
-| **Remote (andere Macs / Clients)** | `https://sinatorpool-router.delqhi.com/inference/v1` |
-
-**Kein manuelles Pool-Wechseln mehr.** Der Router macht alles automatisch.
-
-### Auto-Failover
-
-| Status | Reaktion |
-|--------|----------|
-| 413 Payload Too Large | Nächster Proxy |
-| 429 Rate Limit | Nächster Proxy |
-| 412 Account Suspended | Nächster Proxy |
-| 500/502/503/504 Server Error | Nächster Proxy |
-| Alle Pools gleicher Fehler | Status-Code durchreichen (pass-through) |
-| Proxy 3 Fehler in 60s | Cooldown — 60s Pause |
-
-### Backend: 10 Proxys (lokal, 8888-8897)
-
-Jeder Proxy ist eine eigene aiohttp-Instanz mit charset-Fix, eigenem API-Key aus dem Pool (218 Keys), und launchd-Autostart.
+**Dashboard:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) |
+**Config:** [OpenSIN-Code](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config) |
+**Hermes:** [SIN-Hermes-Bundles](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
 
 ## Quick Start
 
 ```bash
-# Mit dem Dashboard-Launcher (empfohlen):
-cd ~/dev/SINator-dashboard
-./start.sh
-# → Startet Fireworks (:8000) + HeyPiggy (:8002) + Dashboard (:3000) + Tauri App
+# Dashboard (empfohlen):
+cd ~/dev/SINator-dashboard && ./start.sh
+# → Backend (:8000) + Dashboard (:3000) + Tauri App
 
 # Oder standalone:
 python agent_toolbox/start_toolbox.py
 # → http://localhost:8000/docs
 ```
 
----
+## Eine Base-URL — Pool-Router mit Auto-Failover
 
-## Architecture
+Der Router (:9998) verteilt auf 10 Proxys (:8888-:8897), jeder mit eigenem API-Key. Bei Fehlern wird zum nächsten Proxy gesprungen.
 
+| Zugriff | URL |
+|---------|-----|
+| **Lokal** | `http://localhost:9998/inference/v1` |
+| **Remote** | `https://sinatorpool-router.delqhi.com/inference/v1` |
+
+### Auto-Failover
+
+| Status | Aktion |
+|--------|--------|
+| 401/403 (Key suspended) | **suspended** → Key aus Pool, Ersatz geleast |
+| 412 (Precondition Failed) | Nächster Proxy |
+| 429 transient | Retry-After an Client |
+| 429 permanent (Spending-Limit) | Key swap → suspended |
+| 5xx | Nächster Proxy |
+| Kein Key verfügbar | **1s interne Retry** (max 300× = 5 Min), kein sofortiger 503 |
+
+### Key-Status
+
+| Status | Bedeutung |
+|--------|-----------|
+| `available` | Nutzbar, nicht belegt |
+| `leased` | Von Proxy reserviert (Primary + Backup) |
+| `used` | Manuell verbraucht |
+| `suspended` | Von Fireworks gesperrt |
+
+`available = total - used - suspended - leased`
+
+## Setup
+
+1. **GMX-Zugangsdaten** über `/setup` im Dashboard konfigurieren
+2. Oder direkt `data/config.json`:
+```json
+{
+  "gmx_email": "deinname@gmx.de",
+  "gmx_password": "DEIN_GMX_PASSWORT",
+  "fireworks_password": "DEIN_FIREWORKS_PASSWORT"
+}
 ```
-Clients (opencode, Cursor, etc.)
-  ↓ OpenAI-compatible API
-Pool-Router (:9998, ThreadingMixIn)
-  ↓ Auto-Failover über 10 Proxys
-Pool Proxys (:8888-:8897, aiohttp SSE)
-  ↓ Key rotation + silent swap
-Backend (:8000, FastAPI)
-  ↓ PoolManager + Keychain
-Chrome + CUA Driver
-  ↓ Browser automation
-GMX → Fireworks AI → API Key
-```
+3. **Rotation** über Dashboard `/rotation` oder `python tools/rotate.py`
 
-**Services (macOS LaunchAgents):**
+## Client-Konfiguration
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| `com.sinator.backend` | :8000 | FastAPI Backend |
-| `com.sinator.pool-router` | :9998 | Pool-Router mit Auto-Failover |
-| `com.sinator.pool-proxy-{8888..8897}` | :8888-:8897 | 10× OpenAI-compatible proxies with silent swap |
-| `com.sinator.pages` | :8040 | Landing page |
-| `com.sinator.chrome` | — | Chrome lifecycle |
-| `com.sinator.cua-driver` | — | macOS AX automation |
-
----
-
-## Dashboard + HeyPiggy Integration
-
-Dieses Repo ist der Fireworks-Backend. Das vollständige System besteht aus drei Repos:
-
-| Repo | Port | Funktion |
-|------|------|----------|
-| **SINator-fireworksai** (dieses) | `:8000` | Fireworks Key Pool + Pool-Proxy |
-| [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy) | `:8002` | HeyPiggy Account Generator |
-| [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | `:3000` | Tauri App (Provider-Switcher) |
-
-```bash
-# Alles starten (from dashboard repo):
-cd ~/dev/SINator-dashboard && ./start.sh
-```
-
----
-
-## Client Konfiguration
-
-**OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
-**Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
-
-### Quick-Start OpenCode
+### OpenCode
 
 ```bash
 mkdir -p ~/.config/opencode
-curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config/main/opencode.json -o ~/.config/opencode/opencode.json
+curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config/main/opencode.json \
+  -o ~/.config/opencode/opencode.json
 ```
 
-### Quick-Start Hermes
+12 Modelle: DeepSeek V4 Pro/Flash, GLM 5.1/Fast, Kimi K2.5/2.6/Turbo, Qwen 3.6 Plus, MiniMax M2.5/2.7, GPT-OSS 120B/20B.
+
+### Hermes
 
 ```bash
-mkdir -p ~/.hermes
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/config/fireworks-router.yaml -o ~/.hermes/config.yaml
+curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/config/fireworks-router.yaml \
+  -o ~/.hermes/config.yaml
 hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
 ```
 
@@ -127,65 +98,48 @@ client = OpenAI(
 ```
 
 ```bash
-curl https://sinatorpool-router.delqhi.com/inference/v1/models \
-  -H "Authorization: Bearer <DEIN_API_KEY>"
+curl https://sinatorpool-router.delqhi.com/inference/v1/chat/completions \
+  -H "Authorization: Bearer <DEIN_API_KEY>" \
+  -d '{"model":"accounts/fireworks/models/gpt-oss-120b","messages":[{"role":"user","content":"Hi"}]}'
 ```
 
-## Management
-
-```bash
-# Router läuft?
-pgrep -f pool-router.py
-
-# Router stoppen
-launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist
-
-# Router starten
-launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist
-
-# Proxys (alle 10)
-launchctl list | grep pool-proxy
-
-# Pool-Router Logs
-tail -f /tmp/pool-router-launchd.log
-```
-
-## Struktur
+## Architecture
 
 ```
-├── agent_toolbox/
-│   └── core/
-│       ├── gmx_service.py              # GMX Session + Alias-Rotation + OTP
-│       ├── fireworks_service.py        # Fireworks Registration + API-Key
-│       ├── cdp_client.py               # Chrome DevTools Protocol Client
-│       └── pool_manager.py             # API-Key Pool-Manager (Lease/Return)
-├── proxy/
-│   ├── __init__.py                     # Spiegel von ~/.sin-pool/
-│   ├── config.py
-│   ├── key_cache.py
-│   ├── pool_client.py
-│   ├── server.py                       # silent swap Fix (412/429)
-│   ├── setup.sh
-│   └── start-multi.sh                  # 10 Proxys starten
-├── tools/
-│   ├── install.sh
-│   ├── rotate.py
-│   ├── sinator-cli.py
-│   └── manage_services.sh
-├── docs/
-├── tests/
-└── README.md
+Clients (opencode, Cursor, Continue, Python)
+  ↓ OpenAI-compatible API (EINE URL)
+Pool-Router (:9998, ThreadingMixIn)
+  ↓ Auto-Failover über 10 Proxys
+Pool Proxys (:8888-:8897, aiohttp SSE, silent key swap)
+  ↓ Key rotation on 412/429/401, 1s Key-Retry
+Backend (:8000, FastAPI)
+  ↓ PoolManager + Keychain + Rotation-Orchestrator
+Chrome (Playwright V15.4 ONE Browser)
+  ↓ GMX + Fireworks Automation
+Alias-Rotation → Signup → OTP → API Key → Pool
 ```
 
-## API Key Lifecycle
+## Pool-API
 
-| Status | Reaktion im Proxy |
-|--------|-------------------|
-| 401/402/403 (Key tot) | `_swap_key("suspended")` — meldet Key als suspended an Pool-API |
-| 412 (Precondition Failed) | `_swap_key_silent("precondition_failed")` — Key bleibt verfügbar |
-| 429 (Rate Limited) | `_swap_key_silent("rate_limited")` — Key bleibt verfügbar |
-| 5xx (Server Error) | Nächster Proxy versuchen |
+| Endpoint | Methode | Beschreibung |
+|----------|---------|-------------|
+| `/api/v1/pool/stats` | GET | `total/used/suspended/leased/available` |
+| `/api/v1/pool/keys` | GET | Alle Keys |
+| `/api/v1/pool/lease` | POST | Key reservieren |
+| `/api/v1/pool/return` | POST | Key freigeben |
+| `/api/v1/pool/report` | POST | Key melden + Ersatz leasen |
+| `/api/v1/pool/add` | POST | Key hinzufügen |
+
+## Repository-Landschaft
+
+| Repo | GitHub | Funktion |
+|------|--------|----------|
+| **SINator-FireworksAI** (dieses) | [SIN-Rotator/SINator-FireworksAI](https://github.com/SIN-Rotator/SINator-FireworksAI) | Key Pool + Proxy + Automation |
+| **SINator-dashboard** | [SIN-Rotator/SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | Tauri Dashboard + Setup |
+| **SINator-heypiggy** | [SIN-Rotator/SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy) | HeyPiggy Account Generator |
+| **OpenCode Config** | [OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config) | opencode.json mit 12 Modellen |
+| **Hermes Bundle** | [SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle) | Hermes Provider Config |
 
 ---
 
-*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.4 ONE-Browser*
+*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.4 ONE-Browser | Proxy 1s Key-Retry*

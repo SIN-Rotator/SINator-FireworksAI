@@ -25,11 +25,13 @@ async def count_available():
     return data.get("available", 0), data.get("total", 0)
 
 async def rotate_one():
+    from agent_toolbox.core.config_manager import get_config
+    cfg = get_config()
     proc = await asyncio.create_subprocess_exec(
         "python3", str(ROTATE_SCRIPT),
-        "--gmx-email", "delqhi@gmx.de",
-        "--gmx-password", "ZOE.jerry2024",
-        "--password", "ZOE.jerry2024!",
+        "--gmx-email", cfg.gmx_email,
+        "--gmx-password", cfg.gmx_password,
+        "--password", cfg.fireworks_password,
         "--cdp-port", "9222",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

@@ -112,7 +112,7 @@ class GmxService:
         
         return page
 
-    async def _login(self, page: Page, email: str = "delqhi@gmx.de", password: str = "ZOE.jerry2024") -> bool:
+    async def _login(self, page: Page, email: str, password: str) -> bool:
         """Login to GMX via Playwright. Two-step flow: Email → Weiter → Password → Login."""
         logger.info(f"[_login] Logging in to GMX as {email}")
         try:

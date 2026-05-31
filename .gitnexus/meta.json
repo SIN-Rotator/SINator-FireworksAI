@@ -1,14 +1,14 @@
 {
-  "repoPath": "/Users/jeremy/dev/SIN-Rotator-SINator-FireworksAI",
-  "lastCommit": "f62e21b973d1c8d1239da8cd1fca43b069495a3a",
-  "indexedAt": "2026-05-30T00:51:05.934Z",
+  "repoPath": "/Users/jeremy/dev/SINator-fireworksai",
+  "lastCommit": "7db3c9cf33b54bc4943a5f345b2d6e4d3533303a",
+  "indexedAt": "2026-05-31T01:36:46.970Z",
   "remoteUrl": "git@github.com:SIN-Rotator/SINator-FireworksAI",
   "stats": {
-    "files": 77,
-    "nodes": 2044,
-    "edges": 3656,
-    "communities": 73,
-    "processes": 123,
+    "files": 70,
+    "nodes": 1734,
+    "edges": 3136,
+    "communities": 56,
+    "processes": 92,
     "embeddings": 0
   }
 }

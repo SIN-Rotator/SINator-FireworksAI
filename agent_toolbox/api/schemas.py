@@ -153,7 +153,8 @@ class PoolStatsResponse(BaseModel):
     total: int = Field(..., description="Gesamtanzahl Keys")
     used: int = Field(..., description="Manuell verbrauchte Keys")
     suspended: int = Field(default=0, description="Von Fireworks gesperrte Keys")
-    available: int = Field(..., description="Verfügbare Keys (incl. geleast)")
+    leased: int = Field(default=0, description="Aktuell geleaste Keys (von Proxys belegt)")
+    available: int = Field(..., description="Verfügbare Keys (exkl. used, suspended, leased)")
     keys: List[Dict[str, Any]] = Field(default_factory=list, description="Liste aller Keys (ohne Secret)")
     execution_time: str = Field(..., description="Ausführungszeit")
 

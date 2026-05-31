@@ -35,12 +35,22 @@ def _find_free_port(start: int = 9230) -> int:
 async def main():
     parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation")
     parser.add_argument("alias", nargs="?", help="Optional alias name")
-    parser.add_argument("--gmx-email", default="delqhi@gmx.de", help="GMX account email")
-    parser.add_argument("--gmx-password", default="ZOE.jerry2024", help="GMX account password")
-    parser.add_argument("--password", default="ZOE.jerry2024!", help="Fireworks account password")
+    parser.add_argument("--gmx-email", help="GMX account email (required)")
+    parser.add_argument("--gmx-password", help="GMX account password (required)")
+    parser.add_argument("--password", help="Fireworks account password (required)")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
     parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = chromium.launch)")
     args = parser.parse_args()
+
+    # Fill missing args from config file (backend-only source of truth)
+    from agent_toolbox.core.config_manager import get_config
+    cfg = get_config()
+    if not args.gmx_email:
+        args.gmx_email = cfg.gmx_email
+    if not args.gmx_password:
+        args.gmx_password = cfg.gmx_password
+    if not args.password:
+        args.password = cfg.fireworks_password
 
     t0 = time.time()
     cdp_port = args.cdp_port or _find_free_port()

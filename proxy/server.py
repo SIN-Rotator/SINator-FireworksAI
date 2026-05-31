@@ -353,8 +353,22 @@ class PoolProxy:
         ]
         return web.json_response({"object": "list", "data": data})
 
+    async def _ensure_key_with_retry(self, max_attempts: int = 300, delay: float = 1.0):
+        """Retry _ensure_key() with 1s intervals instead of returning 503 to client."""
+        for attempt in range(max_attempts):
+            key_info = await self._ensure_key()
+            if key_info:
+                if attempt > 0:
+                    logger.info(f"Key acquired after {attempt+1}s wait")
+                return key_info
+            if attempt < max_attempts - 1:
+                logger.info(f"No key available, retry {attempt+1}/{max_attempts} in {delay}s")
+                await asyncio.sleep(delay)
+        logger.error("No key available after max retries")
+        return None
+
     async def _do_proxy(self, request: web.Request, fw_url: str) -> web.Response:
-        key_info = await self._ensure_key()
+        key_info = await self._ensure_key_with_retry()
         if not key_info:
             return web.json_response(
                 {"error": "no_api_key", "message": "No API key available in pool"},

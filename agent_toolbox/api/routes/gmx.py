@@ -76,9 +76,13 @@ async def _gmx_create_via_api(alias_name: Optional[str] = None) -> Optional[Dict
 
 async def _gmx_create_fallback(alias_name: Optional[str] = None) -> Dict[str, Any]:
     """Fallback: GMX Alias Create direkt via GmxService."""
+    from agent_toolbox.core.config_manager import get_config
     from agent_toolbox.core.gmx_service import GmxService
+    cfg = get_config()
     svc = GmxService()
-    await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    result = await svc.check_session(cdp_port=9222)
+    if result.get("status") != "success":
+        logger.warning("GMX session not active for create fallback")
     result = await svc.create_alias(alias_name=alias_name, cdp_port=9222)
     if result.get("status") == "success":
         return result
@@ -115,9 +119,13 @@ async def _gmx_delete_via_api() -> Optional[Dict[str, Any]]:
 
 async def _gmx_delete_fallback() -> Dict[str, Any]:
     """Fallback: GMX Alias Delete direkt via GmxService."""
+    from agent_toolbox.core.config_manager import get_config
     from agent_toolbox.core.gmx_service import GmxService
+    cfg = get_config()
     svc = GmxService()
-    await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
+    result = await svc.check_session(cdp_port=9222)
+    if result.get("status") != "success":
+        logger.warning("GMX session not active for delete fallback")
     return await svc.delete_existing_alias(cdp_port=9222)
 
 
@@ -161,19 +169,16 @@ async def check_session():
 
 @router.post("/session/ensure", response_model=GmxSessionCheckResponse)
 async def ensure_gmx_session(
-    email: str = "delqhi@gmx.de",
-    password: str = "ZOE.jerry2024",
+    email: Optional[str] = None,
+    password: Optional[str] = None,
 ):
     """
     Flow 0: Stellt GMX Session wieder her oder macht Fresh Login.
+    Liest Credentials aus config_manager (kein Frontend-Fallback!).
     
     FLOW:
     1. Check ob GMX Inbox erreichbar (Session OK → Flow 1 weiter)
-    2. Falls nicht: Logout → Login (3x Profil-Icon) → Email → Passwort
-    
-    Args:
-        email: GMX login email (default: delqhi@gmx.de)
-        password: GMX login password (default: ZOE.jerry2024)
+    2. Falls nicht: Logout → Login über Playwright
     
     Returns:
         status: "success" | "partial" | "error"
@@ -181,15 +186,33 @@ async def ensure_gmx_session(
         current_url: Aktuelle URL nach Login
         sid: GMX session ID (wenn verfügbar)
     """
+    from agent_toolbox.core.config_manager import get_config
+    cfg = get_config()
+    email = email or cfg.gmx_email
+    password = password or cfg.gmx_password
+    
     t0 = time.time()
     cdp_port = _require_browser()
     
     try:
-        result = await get_gmx_service().ensure_gmx_session(
-            email=email,
-            password=password,
-            cdp_port=cdp_port,
-        )
+        result = await get_gmx_service().check_session(cdp_port=cdp_port)
+        if result.get("status") == "success":
+            logger.info("Session active — no login needed")
+        else:
+            logger.info("Session inactive — attempting login")
+            import asyncio
+            from playwright.async_api import async_playwright
+            p = await async_playwright().start()
+            browser = await p.chromium.launch(headless=False)
+            page = await browser.new_page()
+            from agent_toolbox.core.gmx_service import GmxService
+            svc = GmxService()
+            await svc._login(page, email=email, password=password)
+            await asyncio.sleep(3)
+            result = await svc.check_session(cdp_port=cdp_port)
+            await browser.close()
+            await p.stop()
+        
         return GmxSessionCheckResponse(
             status=result["status"],
             current_url=result.get("current_url", ""),
@@ -311,7 +334,6 @@ async def rotate_alias(request: GmxAliasRotateRequest = None):
         logger.info("gmx-alias-tool API offline, using direct fallback")
         from agent_toolbox.core.gmx_service import GmxService
         svc = GmxService()
-        await svc.ensure_gmx_session(email="delqhi@gmx.de", password="ZOE.jerry2024", cdp_port=9222)
         fb_result = await svc.rotate_alias(new_alias_name=new_alias_name, cdp_port=9222)
         return GmxAliasRotateResponse(
             status=fb_result.get("status", "error"),

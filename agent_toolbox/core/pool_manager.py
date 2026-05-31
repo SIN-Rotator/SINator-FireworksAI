@@ -167,6 +167,7 @@ class PoolManager:
     def get_stats(self) -> Dict[str, Any]:
         """
         Generiert Pool-Statistiken.
+        available = total - used - suspended - leased (nur nicht-geleaste Keys)
         """
         self.reload()
         self.expire_leases()
@@ -174,10 +175,19 @@ class PoolManager:
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
         suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
-        available = total - used - suspended
+        leased = sum(1 for k in self.keys
+                     if not k.get("used", False)
+                     and not k.get("suspended", False)
+                     and k.get("leased_until") is not None
+                     and k.get("leased_until") > now)
+        available = total - used - suspended - leased
 
         keys_list = []
         for k in self.keys:
+            is_leased = (not k.get("used", False)
+                         and not k.get("suspended", False)
+                         and k.get("leased_until") is not None
+                         and k.get("leased_until") > now)
             keys_list.append({
                 "id": k["id"],
                 "alias_email": k["alias_email"],
@@ -189,6 +199,8 @@ class PoolManager:
                 "suspended": k.get("suspended", False),
                 "suspended_at": k.get("suspended_at"),
                 "suspended_reason": k.get("suspended_reason"),
+                "leased": is_leased,
+                "leased_to": k.get("leased_to"),
                 "credits_initial": k.get("credits_initial", 6.0),
                 "credits_remaining": k.get("credits_remaining", 6.0),
                 "credits_checked_at": k.get("credits_checked_at"),
@@ -198,6 +210,7 @@ class PoolManager:
             "total": total,
             "used": used,
             "suspended": suspended,
+            "leased": leased,
             "available": available,
             "keys": keys_list,
         }
