@@ -120,14 +120,26 @@ class GmxService:
                         if (document.body) traverse(document.body);
                         return results;
                     }""")
-                    full_text = " ".join(texts).lower()
-                    if sender_keyword.lower() in full_text or "verification" in full_text or "confirm" in full_text:
+                    full_text = " ".join(texts)
+                    full_lower = full_text.lower()
+                    has_ctx = (sender_keyword.lower() in full_lower or "verification" in full_lower
+                               or "verify" in full_lower or "confirm" in full_lower or "code" in full_lower)
+                    if has_ctx:
+                        # 1) Fireworks Confirm-URL bevorzugt (eindeutiger als ein 6-stelliger Code)
+                        url_m = re.search(r'https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+', full_text)
+                        if url_m:
+                            elapsed = time.time() - start
+                            logger.info(f"OTP-URL in Frame {frame.url[:60]} gefunden")
+                            return {"status": "success", "otp_url": html_module.unescape(url_m.group(0)), "otp_code": None, "execution_time": f"{elapsed:.2f}s"}
+                        # 2) 6-stelliger Code NUR aus Chunks mit Verifizierungs-Kontext (vermeidet False-Positives)
                         for chunk in texts:
-                            m = otp_pattern.search(chunk)
-                            if m:
-                                elapsed = time.time() - start
-                                logger.info(f"OTP in Frame {frame.url[:60]} gefunden: {m.group(0)}")
-                                return {"status": "success", "otp_url": None, "otp_code": m.group(0), "execution_time": f"{elapsed:.2f}s"}
+                            cl = chunk.lower()
+                            if any(k in cl for k in ("code", "verif", "confirm", "bestätig", "einmal")):
+                                m = re.search(r'\b\d{6}\b', chunk) or otp_pattern.search(chunk)
+                                if m:
+                                    elapsed = time.time() - start
+                                    logger.info(f"OTP-Code in Frame {frame.url[:60]} gefunden: {m.group(0)}")
+                                    return {"status": "success", "otp_url": None, "otp_code": m.group(0), "execution_time": f"{elapsed:.2f}s"}
                 except Exception:
                     continue
             await asyncio.sleep(3)
@@ -1092,31 +1104,69 @@ class GmxService:
                     logger.warning(f"GMX session verloren (attempt {attempt+1})")
                     return {"status": "error", "otp_url": None, "error": "Nicht eingeloggt"}
 
-                # Use innerText for shadow-DOM-kompatible Text-Extraktion
-                items_js = r"""
+                # Shadow-DOM + Multi-Frame Scan: Mail kann in OOPIF (z.B. bap.navigator.gmx.net) liegen,
+                # nicht nur im Hauptframe. Wir scannen daher ALLE Frames der Page.
+                scan_js = r"""
                 (() => {
+                    const SENDER = arguments[0];
+                    let out = [];
                     function walk(root) {
-                        let out = [];
-                        for (const el of root.querySelectorAll('*')) {
-                            if (el.tagName.toLowerCase() === 'list-mail-item') {
-                                const txt = (el.innerText || '').toLowerCase();
-                                if (txt.includes('SENDER_FILTER')) {
+                        let nodes;
+                        try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
+                        for (const el of nodes) {
+                            if (el.tagName && el.tagName.toLowerCase() === 'list-mail-item') {
+                                const txt = (el.innerText || el.textContent || '');
+                                if (txt.toLowerCase().includes(SENDER)) {
                                     const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
-                                    out.push({mailId: id, text: el.innerText.trim().slice(0, 300)});
+                                    out.push({mailId: id, text: txt.trim().slice(0, 400)});
                                 }
                             }
-                            if (el.shadowRoot) out = out.concat(walk(el.shadowRoot));
+                            if (el.shadowRoot) walk(el.shadowRoot);
                         }
-                        return out;
+                    }
+                    if (document.body) walk(document.body);
+                    return out;
+                })()
+                """
+                click_js = r"""
+                (() => {
+                    const a = arguments[0] || [];
+                    const targetId = a[0];
+                    const targetText = a[1];
+                    function walk(root) {
+                        let nodes;
+                        try { nodes = root.querySelectorAll('*'); } catch (e) { return false; }
+                        for (const el of nodes) {
+                            if (el.tagName && el.tagName.toLowerCase() === 'list-mail-item') {
+                                const eid = (el.getAttribute('id') || '').replace(/^id/, '');
+                                const txt = (el.innerText || el.textContent || '').trim().slice(0, 400);
+                                if ((targetId && eid === targetId) || (!targetId && txt === targetText)) {
+                                    el.click(); return true;
+                                }
+                            }
+                            if (el.shadowRoot && walk(el.shadowRoot)) return true;
+                        }
+                        return false;
                     }
                     return walk(document.body);
                 })()
                 """
-                items_js = items_js.replace('SENDER_FILTER', sender_filter.lower())
-                items = await pw_page.evaluate(items_js)
+                items = []
+                matched_frame = None
+                frames = list(pw_page.frames)
+                logger.debug(f"[otp] scanning {len(frames)} frame(s): {[f.url[:50] for f in frames]}")
+                for frame in frames:
+                    try:
+                        found = await frame.evaluate(scan_js, sender_filter.lower())
+                    except Exception:
+                        found = []
+                    if found:
+                        items = found
+                        matched_frame = frame
+                        break
 
-                if items:
-                    logger.info(f"Found {len(items)} email(s) matching '{sender_filter}'")
+                if items and matched_frame is not None:
+                    logger.info(f"Found {len(items)} email(s) matching '{sender_filter}' in {matched_frame.url[:60]}")
                     logger.debug(f"Items: {[i.get('text','')[:60] for i in items]}")
 
                     # Check mail list preview for URL
@@ -1126,23 +1176,8 @@ class GmxService:
                             elapsed = time.time() - start_time
                             return {"status": "success", "otp_url": html_module.unescape(urls[0]), "execution_time": f"{elapsed:.2f}s"}
 
-                    # Click first matching email
-                    click_js = r"""
-                    (() => {
-                        function walk(root, id) {
-                            for (const el of root.querySelectorAll('*')) {
-                                if (el.tagName.toLowerCase() === 'list-mail-item') {
-                                    const eid = (el.getAttribute('id') || '').replace(/^id/, '');
-                                    if (eid === id) { el.click(); return true; }
-                                }
-                                if (el.shadowRoot && walk(el.shadowRoot, id)) return true;
-                            }
-                            return false;
-                        }
-                        return walk(document.body, arguments[0]);
-                    })()
-                    """
-                    clicked = await pw_page.evaluate(click_js, items[0].get('mailId'))
+                    # Click first matching email IN ITS FRAME (Playwright evaluate nimmt genau 1 Arg -> Liste)
+                    clicked = await matched_frame.evaluate(click_js, [items[0].get('mailId'), items[0].get('text', '')])
                     if clicked:
                         logger.info("Clicked email — polling for OOPIF...")
                         # Poll OOPIF: 3 tries × 3s = 9s max wait

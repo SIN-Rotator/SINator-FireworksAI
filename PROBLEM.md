@@ -25,6 +25,19 @@ da die komplette Multi-Tab-Architektur unerreichbar war.
 **Fix:** Zeilen 61–135 wieder um 4 Spaces in die Klasse eingerückt. Die Methoden
 gehören jetzt wieder zu `GmxService` (per AST verifiziert, Datei kompiliert).
 
+## ✅ ROBUSTHEIT (zusätzliche Härtung der OTP-Logik)
+Zusätzlich zum Strukturfix wurden die in den Hypothesen genannten Schwachstellen adressiert:
+
+- **`read_otp_via_playwright`** scannt jetzt **alle Frames** der Page statt nur den Hauptframe.
+  Damit wird die Mail auch gefunden, wenn sie in einem OOPIF/iframe liegt
+  (Hypothese #1/#2: `bap.navigator.gmx.net`). Der Klick erfolgt im jeweils
+  matchenden Frame (`matched_frame.evaluate`), Text- ODER ID-basiert.
+- **`read_otp_axtree_and_frames`** erkennt jetzt zuerst die eindeutige Fireworks
+  **Confirm-URL** und akzeptiert einen 6-stelligen Code nur noch aus Text-Chunks mit
+  Verifizierungs-Kontext (`code`/`verify`/`confirm`/...). Das vermeidet die
+  False-Positives des alten `[A-Z0-9]{6}`-Patterns (Hypothese #4), bevorzugt rein
+  numerische Codes (`\d{6}`).
+
 ## Symptom
 Nach Fireworks-Signup wird `read_otp_via_playwright()` auf `navigator.gmx.net/mail` aufgerufen.
 Die Email **kommt bei GMX an** (sie ist im Posteingang sichtbar), aber `read_otp_via_playwright`
