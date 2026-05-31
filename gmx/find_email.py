@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""
+gmx.find_email — Find an email by keyword and open it (Shadow-DOM aware).
+
+This is the library version of the original tools/gmx_open_email.py: it ONLY
+finds and opens an email. It penetrates the GMX webmailer Shadow DOM
+(sc-webmailer-mail-list-h), locates the first mail whose text contains the
+keyword, clicks it and scans the opened mail body for a verify/confirm URL.
+
+It does NOT log in (use gmx.login) and does NOT launch a browser — it attaches
+to the running Chrome via CDP (default port 9222).
+
+CLI:     python3 -m gmx.find_email [--keyword fireworks] [--timeout 8] [--port 9222]
+Compose: from gmx import find_email; res = await find_email()
+
+Returns: {"status": "found" | "not_found" | "not_logged_in" | "error",
+          "verify_url": "https://app.fireworks.ai/...",
+          "matches": int, "frame": "...", "text_preview": "...", "error": "..."}
+"""
+import asyncio
+import re
+import html as html_module
+from typing import Any, Dict
+
+from gmx._lib import run, DEFAULT_CDP_PORT
+
+# Shadow-DOM-penetrating scan: every element whose text contains the keyword,
+# no matter how deeply nested inside (shadow) roots.
+_SCAN_JS = r"""
+(() => {
+    const KW = (arguments[0] || '').toLowerCase();
+    let out = [];
+    function walk(root) {
+        let nodes;
+        try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const el of nodes) {
+            const txt = (el.innerText || el.textContent || '').trim();
+            if (txt && txt.toLowerCase().includes(KW)) {
+                const id = (el.getAttribute('id') || '').replace(/^id/, '') || null;
+                out.push({mailId: id, tag: (el.tagName || '').toLowerCase(),
+                          text: txt.slice(0, 400), hasShadow: !!el.shadowRoot});
+            }
+            if (el.shadowRoot) walk(el.shadowRoot);
+        }
+    }
+    if (document.body) walk(document.body);
+    return out;
+})()
+"""
+
+# Click the shortest (most specific) element matching the keyword.
+_CLICK_JS = r"""
+(() => {
+    const KW = (arguments[0] || '').toLowerCase();
+    let best = null, bestLen = Infinity;
+    function walk(root) {
+        let nodes;
+        try { nodes = root.querySelectorAll('*'); } catch (e) { return; }
+        for (const el of nodes) {
+            const txt = (el.innerText || el.textContent || '').trim();
+            if (txt && txt.toLowerCase().includes(KW) && txt.length < bestLen) {
+                best = el; bestLen = txt.length;
+            }
+            if (el.shadowRoot) walk(el.shadowRoot);
+        }
+    }
+    if (document.body) walk(document.body);
+    if (best) {
+        const clickable = best.closest('a, button, [role="button"], [onclick], li, tr') || best;
+        clickable.click();
+        return true;
+    }
+    return false;
+})()
+"""
+
+# Shadow-DOM-penetrating full-text extraction of a (frame) document.
+_TEXT_JS = r"""
+(() => {
+    let results = [];
+    function traverse(node) {
+        if (!node) return;
+        if (node.shadowRoot) {
+            const st = node.shadowRoot.body ? node.shadowRoot.body.innerText
+                : (node.shadowRoot.documentElement ? node.shadowRoot.documentElement.innerText : '');
+            if (st && st.trim()) results.push(st.trim());
+            traverse(node.shadowRoot);
+        }
+        node.childNodes.forEach(child => {
+            if (child.nodeType === Node.TEXT_NODE && child.textContent && child.textContent.trim()) {
+                results.push(child.textContent.trim());
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                const elText = (child.innerText || child.textContent || '').trim();
+                if (elText) results.push(elText);
+                traverse(child);
+            }
+        });
+    }
+    if (document.body) traverse(document.body);
+    return results.join('\n');
+})()
+"""
+
+_URL_PATTERN = re.compile(
+    r'https?://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)[^\s"\'<>]+'
+)
+
+
+async def find_email(keyword: str = "fireworks", timeout: int = 8,
+                     port: int = DEFAULT_CDP_PORT) -> Dict[str, Any]:
+    """Find the first inbox mail matching keyword, open it, return any verify URL."""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+
+        page = None
+        for ctx in browser.contexts:
+            for pg in ctx.pages:
+                if "navigator.gmx.net" in (pg.url or "") or "gmx.net/mail" in (pg.url or ""):
+                    page = pg
+                    break
+            if page:
+                break
+        if page is None:
+            page = await (browser.contexts[0].new_page() if browser.contexts else browser.new_page())
+
+        await page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(5)
+
+        body = await page.evaluate("() => document.body ? document.body.innerText : ''")
+        if "Nicht eingeloggt" in body or ("anmelden" in body.lower()[:300] and "E-Mail" not in body):
+            return {"status": "not_logged_in", "verify_url": None}
+
+        # 1) Scan all frames (incl. shadow DOM) for the keyword.
+        target_frame, matches = None, []
+        for frame in page.frames:
+            try:
+                found = await frame.evaluate(_SCAN_JS, keyword.lower())
+            except Exception:
+                found = []
+            if found:
+                target_frame, matches = frame, found
+                break
+
+        if not target_frame:
+            return {"status": "not_found", "verify_url": None, "matches": 0}
+
+        # URL already present in the list text?
+        joined = "\n".join(m.get("text", "") for m in matches)
+        m = _URL_PATTERN.search(joined)
+        if m:
+            return {"status": "found", "verify_url": html_module.unescape(m.group(0)),
+                    "matches": len(matches), "frame": target_frame.url[:80], "source": "list"}
+
+        # 2) Open the mail (Shadow DOM aware click).
+        try:
+            clicked = await target_frame.evaluate(_CLICK_JS, keyword.lower())
+        except Exception:
+            clicked = False
+        await asyncio.sleep(timeout)
+
+        # 3) Scan the opened mail body (new OOPIF frame may have appeared).
+        biggest = ""
+        for frame in page.frames:
+            try:
+                text = await frame.evaluate(_TEXT_JS)
+            except Exception:
+                continue
+            if text and len(text) > len(biggest):
+                biggest = text
+            mm = _URL_PATTERN.search(text or "")
+            if mm:
+                return {"status": "found", "verify_url": html_module.unescape(mm.group(0)),
+                        "matches": len(matches), "frame": frame.url[:80], "clicked": clicked,
+                        "source": "body"}
+
+        return {"status": "not_found", "verify_url": None, "matches": len(matches),
+                "clicked": clicked, "text_preview": (biggest or "")[:500]}
+
+
+def _add_args(p):
+    p.add_argument("--keyword", default="fireworks", help="Keyword in the mail text (default: fireworks)")
+    p.add_argument("--timeout", type=int, default=8, help="Seconds to wait after the click (default: 8)")
+
+
+async def _action(args) -> Dict[str, Any]:
+    return await find_email(keyword=args.keyword, timeout=args.timeout, port=args.port)
+
+
+if __name__ == "__main__":
+    run(_action, description="Find and open a GMX email (Shadow-DOM aware)", add_args=_add_args)
