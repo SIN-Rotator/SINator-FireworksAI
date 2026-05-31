@@ -20,6 +20,7 @@ import time
 import logging
 import argparse
 import socket
+import re
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -81,47 +82,36 @@ async def main():
         from gmx_service import GmxService
         gmx = GmxService()
 
-        # ═══ Multi-Tab Architektur — existierende GMX-Tabs wiederverwenden ═══
+        # ═══ Multi-Tab Architektur — EIN Page für GMX + Fireworks, dann zurück ═══
         existing_pages = []
         for ctx in browser.contexts:
             existing_pages.extend(ctx.pages)
+        logger.info(f"Found {len(existing_pages)} pages: {[pg.url[:50] for pg in existing_pages]}")
 
-        # Finde den eingeloggten GMX-Tab (SID + navigator.gmx.net)
+        # Finde existierenden GMX-Tab mit SID
         sid_tab = None
         for pg in existing_pages:
             url = pg.url or ""
             if "sid=" in url and "navigator.gmx.net" in url:
                 sid_tab = pg
-                logger.info(f"Found logged-in GMX tab: {url[:80]}")
+                logger.info(f"Found GMX tab with SID: {url[:80]}")
                 break
 
         if sid_tab:
-            gmx.work_tab = sid_tab
+            work_tab = sid_tab
         else:
-            logger.warning("No existing GMX tab with SID found!")
-            gmx.work_tab = existing_pages[0] if existing_pages else await browser.new_page()
+            # Kein GMX-Tab — work_tab = erste Page (GitHub oder ähnlich)
+            work_tab = existing_pages[0] if existing_pages else await browser.new_page()
+            logger.warning(f"No GMX tab with SID. Using first page: {work_tab.url[:50]}")
 
-        # inbox_tab: existierenden zweiten GMX-Tab suchen, sonst neuen erstellen
-        inbox_tab = None
-        for pg in existing_pages:
-            url = pg.url or ""
-            if pg != sid_tab and "gmx.net" in url and "sid=" in url:
-                inbox_tab = pg
-                logger.info(f"Found second GMX tab: {url[:80]}")
-                break
+        # inbox_tab = work_tab (selber Tab, spart Cookie-Problem)
+        gmx.work_tab = work_tab
+        gmx.inbox_tab = work_tab  # SELBER Tab!
+        inbox_tab = work_tab
 
-        if inbox_tab is None:
-            logger.warning("Creating new inbox_tab — no GMX cookies!")
-            inbox_tab = await browser.new_page()
-        gmx.inbox_tab = inbox_tab
-
-        work_tab = gmx.work_tab
-        inbox_tab = gmx.inbox_tab
         await work_tab.bring_to_front()
-        logger.info(f"work_tab: {work_tab.url[:80]}")
-        logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
 
-        # ═══ Step 0: GMX Session-Verifikation ═══
+        # ═══ Step 0: GMX Session-Verifikation + SID merken ═══
         logger.info("=== GMX Session Verification ===")
         await work_tab.bring_to_front()
         await asyncio.sleep(2)
@@ -136,22 +126,10 @@ async def main():
             else:
                 logger.info("⚠️ Login fehlgeschlagen — continue trotzdem")
 
- # inbox_tab ist existierende eingeloggte GMX Page — nur prüfen
-        if inbox_tab:
-            try:
-                url = inbox_tab.url or ""
-                logger.info(f"inbox_tab URL: {url[:80]}")
-                if "gmx.net" not in url or "navigator.gmx.net/mail" not in url:
-                    logger.info("Navigating inbox_tab to mail")
-                    await inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
-                    await asyncio.sleep(5)
-                    if "navigator.gmx.net/mail" not in inbox_tab.url:
-                        logger.warning("⚠️ inbox_tab nicht im Posteingang")
-            except Exception as e:
-                logger.warning(f"⚠️ inbox_tab check fehlgeschlagen: {e}")
-                inbox_tab = None
-        else:
-            inbox_tab = None
+        # SID aus work_tab URL extrahieren (für OTP-Navigation)
+        sid_match = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
+        gmx_sid = sid_match.group(1) if sid_match else None
+        logger.info(f"GMX SID: {gmx_sid[:20] if gmx_sid else 'None'}...")
 
         # ═══ Step 1: GMX Alias Rotation auf work_tab ═══
         logger.info("=== GMX Alias Rotation ===")
@@ -172,13 +150,41 @@ async def main():
         signup_status = signup_result.get('status')
         logger.info(f"Signup: {signup_status} — {signup_result.get('error', '')}")
 
-        # ═══ Step 3: OTP Poll auf inbox_tab (session-isoliert) ═══
-        logger.info("=== OTP Polling (inbox_tab, bis 180s) ===")
-        otp_result = await gmx.read_otp_axtree_and_frames(sender_keyword="fireworks", timeout=180)
+        # ═══ Step 3: OTP Poll — work_tab hat GMX-Session, zurück navigieren ═══
+        logger.info("=== OTP Polling — zurück zu GMX ===")
+        await work_tab.bring_to_front()
+
+        # Erst SID holen falls nicht schon da
+        if not gmx_sid:
+            gmx_sid = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
+            gmx_sid = gmx_sid.group(1) if gmx_sid else None
+
+        if gmx_sid:
+            await work_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
+        else:
+            await work_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+        await asyncio.sleep(5)
+
+        # Consent handling
+        for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")']:
+            try:
+                btn = work_tab.locator(consent_btn).first
+                if await btn.is_visible(timeout=2000):
+                    await btn.click()
+                    await asyncio.sleep(2)
+                    break
+            except:
+                pass
+
+        logger.info(f"OTP-Tab URL: {work_tab.url[:80]}")
+
+        verify_ok = False
+        otp_result = await gmx.read_otp_axtree_and_frames(
+            sender_keyword="fireworks", timeout=180
+        )
         otp_url = otp_result.get("otp_url")
         otp_code = otp_result.get("otp_code")
 
-        verify_ok = False
         if otp_url:
             logger.info(f"OTP-URL gefunden: {otp_url[:60]}")
             from fireworks_service import verify_account
@@ -187,38 +193,17 @@ async def main():
         elif otp_code:
             logger.info(f"OTP-Code gefunden: {otp_code}")
         else:
-            logger.warning(f"OTP nicht gefunden: {otp_result.get('error')} — versuche read_otp_via_playwright")
-            for fallback_attempt in range(10):
-                await asyncio.sleep(5)
-                # Navigate inbox_tab fresh to handle any consent redirect
-                if inbox_tab:
-                    try:
-                        await inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="networkidle", timeout=15000)
-                        await asyncio.sleep(2)
-                        # Handle consent if present
-                        for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")', 'button:has-text("Akzeptieren")']:
-                            try:
-                                btn = inbox_tab.locator(consent_btn).first
-                                if await btn.is_visible(timeout=2000):
-                                    await btn.click()
-                                    await asyncio.sleep(2)
-                                    break
-                            except:
-                                pass
-                    except Exception as e:
-                        logger.warning(f"inbox_tab navigate failed: {e}")
-                otp_fb = await gmx.read_otp_via_playwright(
-                    browser, sender_filter="fireworks", max_retries=1, retry_delay=3,
-                    existing_page=inbox_tab
-                )
-                if otp_fb.get("status") == "success":
-                    otp_url = otp_fb.get("otp_url")
-                    if otp_url:
-                        from fireworks_service import verify_account
-                        verify_ok = await verify_account(otp_url, browser=browser)
-                        logger.info(f"OTP verify (fallback): {'✅ OK' if verify_ok else '⚠️ Failed'}")
-                    break
-                logger.info(f"Fallback OTP poll {fallback_attempt+1}/10...")
+            logger.warning(f"OTP nicht gefunden — fallback read_otp_via_playwright")
+            # inbox_tab ist bereits auf GMX inbox — nur pollen
+            otp_fb = await gmx.read_otp_via_playwright(
+                browser, sender_filter="fireworks", max_retries=20, retry_delay=8,
+                existing_page=inbox_tab
+            )
+            otp_url = otp_fb.get("otp_url")
+            if otp_url:
+                from fireworks_service import verify_account
+                verify_ok = await verify_account(otp_url, browser=browser)
+                logger.info(f"OTP verify (fallback): {'✅ OK' if verify_ok else '⚠️ Failed'}")
 
         # ═══ Step 4: Fireworks Login + Onboarding auf work_tab ═══
         logger.info("=== Fireworks Login + Onboarding ===")
