@@ -12,7 +12,7 @@ case "${1:-status}" in
     install)
         echo "→ Installing all SINator LaunchAgents..."
 
-        # 1. Chrome — starts with Profile 901 + CDP port 9222
+        # 1. Chrome — starts with Profile 73 (simoneschulze) + CDP port 9222
         cat > "$LA/com.sinator.chrome.plist" << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -25,7 +25,7 @@ case "${1:-status}" in
     <array>
         <string>/Applications/Google Chrome.app/Contents/MacOS/Google Chrome</string>
         <string>--user-data-dir=/Users/jeremy/Library/Application Support/Google Chrome</string>
-        <string>--profile-directory=Profile 901</string>
+        <string>--profile-directory=Profile 73</string>
         <string>--remote-debugging-port=9222</string>
         <string>--no-first-run</string>
         <string>--no-default-browser-check</string>

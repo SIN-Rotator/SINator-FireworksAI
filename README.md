@@ -188,4 +188,4 @@ tail -f /tmp/pool-router-launchd.log
 
 ---
 
-*Stand: 2026-05-28 | 218 Keys | 10 Proxys + Pool-Router | silent swap Fix*
+*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.4 ONE-Browser*

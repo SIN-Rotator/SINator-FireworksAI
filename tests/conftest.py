@@ -2,7 +2,7 @@
 Shared pytest fixtures for SINator integration tests.
 
 Requires:
-    - Chrome running on port 9222 with --profile-directory="Profile 901"
+    - Playwright chromium.launch() (V15.4) — no pre-existing Chrome needed
     - cua-driver daemon running
     - `pip install pytest pytest-asyncio`
 """

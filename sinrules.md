@@ -169,8 +169,8 @@ Popup: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
 
 ```bash
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
-  --profile-directory="Profile 901" \
+  --user-data-dir="/Users/simoneschulze/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 73" \
   --remote-debugging-port=9222 \
   --no-first-run --no-default-browser-check \
   > /tmp/chrome_sinator.log 2>&1 &
