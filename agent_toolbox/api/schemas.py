@@ -14,42 +14,6 @@ from pydantic import BaseModel, Field
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  BROWSER SCHEMAS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class BrowserStartRequest(BaseModel):
-    """Request für Browser-Start."""
-    profile_name: str = Field(default="Profile 901", description="Chrome Profil-Name")
-    cdp_port: int = Field(default=9222, ge=1024, le=65535, description="CDP Debug-Port")
-    headless: bool = Field(default=False, description="Headless-Modus")
-    chrome_path: Optional[str] = Field(default=None, description="Pfad zur Chrome Binary")
-
-
-class BrowserStartResponse(BaseModel):
-    """Response für Browser-Start."""
-    status: str = Field(..., description="success | already_running | error")
-    browser_info: Dict[str, Any] = Field(default_factory=dict, description="Browser-Informationen")
-    temp_profile_dir: Optional[str] = Field(default=None, description="Pfad zum Temp-Profil")
-    execution_time: str = Field(..., description="Ausführungszeit")
-    error: Optional[str] = Field(default=None, description="Fehlermeldung falls status=error")
-
-
-class BrowserStopResponse(BaseModel):
-    """Response für Browser-Stopp."""
-    status: str = Field(..., description="stopped | not_running | error")
-    cleanup_info: Optional[str] = Field(default=None, description="Cleanup-Information")
-    execution_time: str = Field(..., description="Ausführungszeit")
-
-
-class BrowserStatusResponse(BaseModel):
-    """Response für Browser-Status."""
-    is_running: bool = Field(..., description="True wenn Browser aktiv")
-    cdp_port: Optional[int] = Field(default=None, description="CDP-Port")
-    temp_profile: Optional[str] = Field(default=None, description="Temp-Profil-Pfad")
-    page_count: int = Field(default=0, description="Anzahl offener Pages")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  GMX SCHEMAS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -175,42 +139,6 @@ class FireworksApiKeyResponse(BaseModel):
     status: str = Field(..., description="success | failed | error")
     api_key: Optional[str] = Field(default=None, description="Generierter API-Key")
     key_name: str = Field(..., description="Name des Keys")
-    execution_time: str = Field(..., description="Ausführungszeit")
-    error: Optional[str] = Field(default=None, description="Fehlermeldung")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  COOKIE SCHEMAS
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class CookieExtractRequest(BaseModel):
-    """Request für Cookie-Extraktion."""
-    domain_filter: Optional[str] = Field(default="gmx", description="Domain-Filter (None = alle)")
-    save_to_file: bool = Field(default=True, description="Cookies in Datei speichern")
-    filename: str = Field(default="gmx-cookies.json", description="Dateiname für gespeicherte Cookies")
-
-
-class CookieExtractResponse(BaseModel):
-    """Response für Cookie-Extraktion."""
-    status: str = Field(..., description="success | error")
-    cookie_count: int = Field(..., description="Anzahl extrahierter Cookies")
-    stats: Dict[str, Any] = Field(default_factory=dict, description="Cookie-Statistiken")
-    saved_to: Optional[str] = Field(default=None, description="Pfad zur gespeicherten Datei")
-    execution_time: str = Field(..., description="Ausführungszeit")
-    error: Optional[str] = Field(default=None, description="Fehlermeldung")
-
-
-class CookieInjectRequest(BaseModel):
-    """Request für Cookie-Injektion."""
-    filename: str = Field(default="gmx-cookies.json", description="Dateiname der Cookies")
-    verify_session: bool = Field(default=True, description="Session nach Injektion prüfen")
-
-
-class CookieInjectResponse(BaseModel):
-    """Response für Cookie-Injektion."""
-    status: str = Field(..., description="success | failed | error")
-    injected_count: int = Field(..., description="Anzahl injizierter Cookies")
-    session_active: bool = Field(default=False, description="True wenn Session nach Injektion aktiv")
     execution_time: str = Field(..., description="Ausführungszeit")
     error: Optional[str] = Field(default=None, description="Fehlermeldung")
 

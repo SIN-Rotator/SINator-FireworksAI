@@ -82,7 +82,7 @@ async def check_key_credits_via_cdp(api_key: str) -> dict:
 async def check_key_credits_via_playwright(api_key: str) -> dict:
     """
     Playwright-basierte Guthaben-Prüfung.
-    Nutzt existierende Browser-Session (Chrome Profile 901).
+    Nutzt chromium.launch() (V15.4).
 
     Returns:
         {"credits_remaining": float, ...} oder {"credits_remaining": None, "error": "..."}
