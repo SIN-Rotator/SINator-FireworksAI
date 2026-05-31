@@ -109,7 +109,20 @@ async def main():
         # inbox_tab NACH Login zum GMX-Posteingang navigieren
         if gmx_sid:
             await inbox_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
+
+            # Consent handling falls nötig
+            for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")', 'button:has-text("Akzeptieren")']:
+                try:
+                    btn = inbox_tab.locator(consent_btn).first
+                    if await btn.is_visible(timeout=3000):
+                        await btn.click()
+                        await asyncio.sleep(3)
+                        break
+                except:
+                    pass
+
+            await asyncio.sleep(3)
             logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
 
         # ═══ Step 1: GMX Alias Rotation auf work_tab ═══
@@ -131,25 +144,25 @@ async def main():
         signup_status = signup_result.get('status')
         logger.info(f"Signup: {signup_status} — {signup_result.get('error', '')}")
 
-        # ═══ Step 3: OTP Poll — work_tab hat GMX-Session, zurück navigieren ═══
-        logger.info("=== OTP Polling — zurück zu GMX ===")
-        await work_tab.bring_to_front()
+        # ═══ Step 3: OTP Poll — inbox_tab navigieren, dann CDP AXTree OTP ═══
+        logger.info("=== OTP Polling — inbox_tab zu GMX navigieren ===")
 
-        # Erst SID holen falls nicht schon da
+        # Navigiere inbox_tab zu GMX (work_tab ist auf Fireworks)
         if not gmx_sid:
             gmx_sid = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
             gmx_sid = gmx_sid.group(1) if gmx_sid else None
 
+        await inbox_tab.bring_to_front()
         if gmx_sid:
-            await work_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
+            await inbox_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
         else:
-            await work_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+            await inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
         await asyncio.sleep(5)
 
         # Consent handling
         for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")']:
             try:
-                btn = work_tab.locator(consent_btn).first
+                btn = inbox_tab.locator(consent_btn).first
                 if await btn.is_visible(timeout=2000):
                     await btn.click()
                     await asyncio.sleep(2)
@@ -157,7 +170,10 @@ async def main():
             except:
                 pass
 
-        logger.info(f"OTP-Tab URL: {work_tab.url[:80]}")
+        logger.info(f"inbox_tab URL: {inbox_tab.url[:80]}")
+
+        # ═══ Step 3b: CDP AXTree OTP (inbox_tab) ═══
+        logger.info("=== OTP via CDP AXTree (inbox_tab, bis 180s) ===")
 
         # ═══ Step 3: CDP AXTree OTP (durchdringt OOPIFs + ignoriert Ad-Frames) ═══
         logger.info("=== OTP via CDP AXTree (inbox_tab, bis 180s) ===")

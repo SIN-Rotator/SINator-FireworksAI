@@ -119,24 +119,35 @@ class GmxService:
                 try:
                     tree_result = await cdp.send("Accessibility.getFullAXTree", {"pierce": True})
                     nodes = tree_result.get("nodes", [])
-                    logger.debug(f"[CDP-AXTree] {len(nodes)} AXTree nodes gescannt")
+                    logger.debug(f"[CDP-AXTree] {len(nodes)} AXTree nodes gescannt, URL: {self.inbox_tab.url[:60]}")
 
-                    # Session Restore Detection: wenn wenig Nodes + "sitzung/wiederhergestellt" → reload
-                    if len(nodes) < 20:
+                    # Session Restore / Consent / Loading page detection
+                    current_url = self.inbox_tab.url or ""
+                    is_on_inbox = "navigator.gmx.net/mail" in current_url or "bap.navigator.gmx.net/mail" in current_url
+
+                    if len(nodes) < 20 or not is_on_inbox:
+                        # Check for session restore interstitial
+                        session_keywords = ["sitzung", "wiederhergestellt", "cookies", "loading", "bitte warten", "wird geladen"]
                         sample_text = " ".join(
-                            (n.get("name") or {}).get("value", "")
-                            for n in nodes[:10]
+                            f"{(n.get('name') or {}).get('value', '')} {(n.get('description') or {}).get('value', '')}"
+                            for n in nodes[:15]
                         ).lower()
-                        if "sitzung" in sample_text or "wiederhergestellt" in sample_text or "cookies" in sample_text:
-                            logger.warning("[CDP-AXTree] GMX Session Restore-Seite erkannt — lade neu...")
+                        has_session_msg = any(kw in sample_text for kw in session_keywords)
+
+                        if has_session_msg or len(nodes) < 20:
+                            logger.warning(f"[CDP-AXTree] GMX Session/Loading-Seite erkannt (nodes={len(nodes)}, inbox={is_on_inbox}) — lade neu...")
                             try:
-                                await self.inbox_tab.reload(wait_until="domcontentloaded")
+                                await self.inbox_tab.reload(wait_until="domcontentloaded", timeout=15000)
                                 await asyncio.sleep(5)
                                 logger.info("[CDP-AXTree] Page reloaded, continue polling")
                                 continue
                             except Exception as reload_err:
                                 logger.warning(f"[CDP-AXTree] Reload failed: {reload_err}")
-                                await asyncio.sleep(5)
+                                try:
+                                    await self.inbox_tab.goto(current_url, wait_until="domcontentloaded", timeout=15000)
+                                    await asyncio.sleep(5)
+                                except Exception:
+                                    pass
                                 continue
 
                     full_text = ""
