@@ -65,6 +65,31 @@ Ich habe versucht:
 
 ---
 
+## 5. Registry Bug (GEFIXT 2026-06-01)
+
+### Problem
+`browser_snapshot_full_oopif` crashte mit:
+```
+AttributeError: '_RegistryStub' object has no attribute 'counter'
+```
+
+### Ursache
+`_RegistryStub` hat `__len__()` aber kein `counter` property. `accessibility.py:154` nutzte `manager.registry.counter`.
+
+### Fix
+```python
+# Alt:
+ref_count = manager.registry.counter
+# Neu:
+ref_count = len(manager.registry)
+```
+Commit: `a034958` im SIN-Browser-Tools Repo (GEFIXT + GEPUSHT)
+
+### Issue
+https://github.com/OpenSIN-Code/SIN-Browser-Tools/issues/3
+
+---
+
 ## Zusammenfassung der Probleme
 
 | # | Problem | Ursache | Status |
