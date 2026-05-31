@@ -179,31 +179,19 @@ async def main():
         logger.info(f"OTP-Tab URL: {work_tab.url[:80]}")
 
         verify_ok = False
-        otp_result = await gmx.read_otp_axtree_and_frames(
-            sender_keyword="fireworks", timeout=180
+        # WICHTIG: read_otp_via_playwright clickt die Email und extracted verify URL aus OOPIF
+        # read_otp_axtree_and_frames findet nur Preview-Code, nicht die URL im Body!
+        otp_fb = await gmx.read_otp_via_playwright(
+            browser, sender_filter="fireworks", max_retries=25, retry_delay=8,
+            existing_page=work_tab
         )
-        otp_url = otp_result.get("otp_url")
-        otp_code = otp_result.get("otp_code")
-
+        otp_url = otp_fb.get("otp_url")
         if otp_url:
-            logger.info(f"OTP-URL gefunden: {otp_url[:60]}")
             from fireworks_service import verify_account
             verify_ok = await verify_account(otp_url, browser=browser)
-            logger.info(f"Verify via OTP-URL: {'✅ OK' if verify_ok else '⚠️ Failed'}")
-        elif otp_code:
-            logger.info(f"OTP-Code gefunden: {otp_code}")
+            logger.info(f"OTP verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
         else:
-            logger.warning(f"OTP nicht gefunden — fallback read_otp_via_playwright")
-            # inbox_tab ist bereits auf GMX inbox — nur pollen
-            otp_fb = await gmx.read_otp_via_playwright(
-                browser, sender_filter="fireworks", max_retries=20, retry_delay=8,
-                existing_page=inbox_tab
-            )
-            otp_url = otp_fb.get("otp_url")
-            if otp_url:
-                from fireworks_service import verify_account
-                verify_ok = await verify_account(otp_url, browser=browser)
-                logger.info(f"OTP verify (fallback): {'✅ OK' if verify_ok else '⚠️ Failed'}")
+            logger.warning(f"OTP nicht gefunden: {otp_fb.get('error')}")
 
         # ═══ Step 4: Fireworks Login + Onboarding auf work_tab ═══
         logger.info("=== Fireworks Login + Onboarding ===")
