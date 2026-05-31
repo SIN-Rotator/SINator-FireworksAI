@@ -1,7 +1,7 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-26 (V12 — 146 Keys, ~180s avg)
+> Letzte Aktualisierung: 2026-05-31 (V15.5 — frame-aware OTP, GmxService Struktur-Fix)
 
 ---
 
@@ -26,6 +26,7 @@
 | **Playwright `click(force=True)`** | Delete-Icon, Create-Button, PopUpButton, Generate auf New-Tab |
 | **Playwright new-tab** | allEmailAddresses iframe-URL als Top-Level öffnen — umgeht Viewport/Trusted-Event-Issues |
 | **CDP Target** | mailbody-ui.de OOPIF für Email-Inhalt |
+| **Playwright `page.frames` Scan** | OTP-Mail in ALLEN Frames suchen (auch OOPIF `bap.navigator.gmx.net`) — `read_otp_via_playwright` |
 | **CDP Cookie** | `Network.deleteCookies` + `clearBrowserCookies` NUR für Fireworks Domain |
 | **Config Manager** | `get_config()` für GMX Email/Passwort + Fireworks Passwort |
 
@@ -52,6 +53,8 @@
 | `fetch()` zu localhost:8888 aus Tauri WebView | WebView blockiert → Rust Command nutzen |
 | `kimi-k2p5` als Chat-Modell | `reasoning_content` statt `content` → leer |
 | Frontend-Fetch ohne Auth-Token | 401 Unauthorized |
+| OTP-Scan NUR auf Hauptframe | Mail liegt oft in OOPIF/iframe → `page.frames` durchlaufen |
+| GmxService-Methoden auf Modul-Ebene (Spalte 0) | Fallen aus der Klasse → `AttributeError`; immer 4-Space-Indent |
 
 ### MANDATORY PATTERNS
 
@@ -160,6 +163,11 @@ Popup: chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
 ❌ lightmailer-bs.gmx.net URLs → HTTP 500
 ❌ webmailer.gmx.net direkt navigieren
 ```
+
+**OTP lesen (V15.5):** `read_otp_via_playwright` scannt ALLE `page.frames`, nicht nur
+den Hauptframe (Mail liegt teils im OOPIF `bap.navigator.gmx.net`). `read_otp_axtree_and_frames`
+bevorzugt die Fireworks Confirm-URL und akzeptiert einen 6-stelligen Code nur mit
+Verifizierungs-Kontext (kein blindes `[A-Z0-9]{6}`).
 
 ---
 
