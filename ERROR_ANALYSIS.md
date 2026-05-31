@@ -110,6 +110,24 @@ https://github.com/OpenSIN-Code/SIN-Browser-Tools/issues/3
 
 ---
 
+## 6. Session sterben bei Chrome-Neustart
+
+### Problem
+GMX Tab zeigt `https://www.gmx.net/?status=inactive` → Session expired.
+
+### Ursache
+Chrome-Neustart (egal ob durch User oder Agent) löscht/expired die GMX-Session.
+
+### Lösung
+1. **Session Backup** aus `backup/session/gmx-cookies-master.json` wiederherstellen
+2. **Oder** Chrome NIE neu starten während Rotation läuft
+3. **Oder** Cookie-Injection in fresh Bot-Chrome
+
+### Issue
+Dokumentiert in GMX_OOPIF_PROBLEM.md
+
+---
+
 ## Relevant Files
 - `GMX_OOPIF_PROBLEM.md` - Vorherige Analyse
 - Chrome Profile 73: `/Users/simoneschulze/Library/Application Support/Google Chrome`
