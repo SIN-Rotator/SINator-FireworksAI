@@ -125,7 +125,7 @@ class GmxService:
                     current_url = self.inbox_tab.url or ""
                     is_on_inbox = "navigator.gmx.net/mail" in current_url or "bap.navigator.gmx.net/mail" in current_url
 
-                    if len(nodes) < 20 or not is_on_inbox:
+                    if len(nodes) < 20 or not is_on_inbox or "logoutlounge" in current_url:
                         # Check for session restore interstitial
                         session_keywords = ["sitzung", "wiederhergestellt", "cookies", "loading", "bitte warten", "wird geladen"]
                         sample_text = " ".join(
@@ -134,8 +134,8 @@ class GmxService:
                         ).lower()
                         has_session_msg = any(kw in sample_text for kw in session_keywords)
 
-                        if has_session_msg or len(nodes) < 20:
-                            logger.warning(f"[CDP-AXTree] GMX Session/Loading-Seite erkannt (nodes={len(nodes)}, inbox={is_on_inbox}) — lade neu...")
+                        if has_session_msg or len(nodes) < 20 or "logoutlounge" in current_url:
+                            logger.warning(f"[CDP-AXTree] GMX Session/Loading-Seite erkannt (nodes={len(nodes)}, inbox={is_on_inbox}, url={current_url[:60]}) — lade neu...")
                             try:
                                 await self.inbox_tab.reload(wait_until="domcontentloaded", timeout=15000)
                                 await asyncio.sleep(5)

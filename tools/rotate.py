@@ -83,14 +83,18 @@ async def main():
         from gmx_service import GmxService
         gmx = GmxService()
 
-        # ═══ Multi-Tab Architektur — Bot-Chrome frische Tabs ═══
-        logger.info("Creating work_tab and inbox_tab...")
-        work_tab = await browser.new_page()
-        inbox_tab = await browser.new_page()
+        # ═══ Multi-Tab Architektur — EIN Context für beide Tabs ═══
+        logger.info("Creating context, work_tab and inbox_tab...")
+        # EIN Context für beide Tabs (teilt Cookies nach Login)
+        ctx = await browser.new_context()
+        work_tab = await ctx.new_page()
+        inbox_tab = await ctx.new_page()
         gmx.work_tab = work_tab
         gmx.inbox_tab = inbox_tab
 
         await work_tab.bring_to_front()
+        logger.info(f"work_tab: {work_tab.url[:80]}")
+        logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
 
         # ═══ Step 0: GMX Login auf work_tab (Bot-Chrome hat keine Session) ═══
         logger.info("=== GMX Login ===")
@@ -101,14 +105,17 @@ async def main():
             logger.error("❌ GMX Login failed")
             return
 
-        # SID aus work_tab URL extrahieren
+        # SID aus work_tab URL extrahieren (von bap.navigator.gmx.net)
         sid_match = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
         gmx_sid = sid_match.group(1) if sid_match else None
+        gmx_work_url = work_tab.url  # Original URL merken (bap.navigator.gmx.net)
         logger.info(f"GMX SID: {gmx_sid[:20] if gmx_sid else 'None'}...")
+        logger.info(f"GMX work URL: {gmx_work_url[:80]}")
 
-        # inbox_tab NACH Login zum GMX-Posteingang navigieren
+        # inbox_tab NACH Login zum GMX-Posteingang navigieren (EXAKTE URL von work_tab)
         if gmx_sid:
-            await inbox_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
+            # Navigate to SAME URL as work_tab (bap.navigator.gmx.net, nicht navigator.gmx.net!)
+            await inbox_tab.goto(gmx_work_url, wait_until="domcontentloaded")
             await asyncio.sleep(3)
 
             # Consent handling falls nötig
@@ -147,16 +154,9 @@ async def main():
         # ═══ Step 3: OTP Poll — inbox_tab navigieren, dann CDP AXTree OTP ═══
         logger.info("=== OTP Polling — inbox_tab zu GMX navigieren ===")
 
-        # Navigiere inbox_tab zu GMX (work_tab ist auf Fireworks)
-        if not gmx_sid:
-            gmx_sid = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
-            gmx_sid = gmx_sid.group(1) if gmx_sid else None
-
+        # inbox_tab navigieren (work_tab ist auf Fireworks)
         await inbox_tab.bring_to_front()
-        if gmx_sid:
-            await inbox_tab.goto(f"https://navigator.gmx.net/mail?sid={gmx_sid}", wait_until="domcontentloaded")
-        else:
-            await inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+        await inbox_tab.goto(gmx_work_url, wait_until="domcontentloaded")
         await asyncio.sleep(5)
 
         # Consent handling
