@@ -228,13 +228,6 @@ for attempt in range(25):
 ```
 agent_toolbox/
 ├── core/
-<<<<<<< HEAD
-│   ├── fireworks_service.py    V6: Playwright+CUA Hybrid (655 lines)
-│   ├── gmx_service.py          Playwright-native (910 lines)
-│   ├── pool_manager.py         Pool-Stats + Key-Management (518 lines)
-│   ├── config_manager.py       GMX+FW Credentials (46 lines)
-│   └── cua_helper.py           CUA Window Detection (nur für Onboarding)
-=======
 │   ├── fireworks_service.py    V6: Playwright+CUA Hybrid + launch()
 │   ├── gmx_service.py          Playwright-native, launch() statt connect_over_cdp
 │   ├── pool_manager.py         Pool-Stats + Key-Management
@@ -242,7 +235,6 @@ agent_toolbox/
 │   ├── config_manager.py       GMX+FW Credentials
 │   ├── cua_helper.py           CUA Window Detection (nur für Onboarding)
 │   └── cdp_client.py           Raw CDP WebSocket (OOPIF fallback)
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 ├── api/
 │   └── routes/
 │       ├── gmx.py              GMX API
@@ -261,16 +253,9 @@ proxy/
 ├── config.py                   Proxy Configuration
 └── start-multi.sh              Startet Pool-Router + 10 Proxys
 
-<<<<<<< HEAD
-tools/
-├── rotate.py                   V7: Playwright-native (108 lines)
-├── gmx_alias_tool.py          GMX Alias CLI (read-only verified)
-└── test_fireworks_api.py      API-Test
-=======
 scripts/
 ├── pool-router.py              Pool-Router (ThreadingMixIn)
 └── pool-router.plist           LaunchAgent
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 
 tools/
 ├── rotate.py                   V8: ONE Browser Rotation
@@ -280,7 +265,6 @@ tools/
 ├── swap_key.py                Key Swap CLI
 ├── install.sh                 Service Installer
 └── manage_services.sh         Service Management
-```
 
 ---
 
@@ -299,21 +283,13 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-<<<<<<< HEAD
-*Last Updated: 2026-05-29 (V14 — Playwright-native Migration)*
-=======
 *Last Updated: 2026-05-31 (V15.4 — ONE Browser, OOPIF Frames, Chrome 148 Fix)*
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-<<<<<<< HEAD
-This project is indexed by GitNexus as **SINator-FireworksAI** (2044 symbols, 3656 relationships, 123 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
-=======
 This project is indexed by GitNexus as **SINator-FireworksAI** (3253 symbols, 5007 relationships, 133 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 

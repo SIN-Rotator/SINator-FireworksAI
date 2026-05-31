@@ -4,9 +4,6 @@
 
 ---
 
-<<<<<<< HEAD
-## 🛑 BANNED: Tauri v2 Patterns (2026-05-25)
-=======
 ## 🚫 BANNED: Playwright-native Anti-Patterns (2026-05-31) — V15.4
 
 | ❌ Verboten | Grund |
@@ -33,7 +30,6 @@
 ---
 
 ## 🚫 BANNED: Tauri v2 Patterns (2026-05-25)
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 
 | ❌ Verboten | Grund |
 |------------|-------|
@@ -83,11 +79,7 @@
 
 ## 🛑 BANNED: OTP/Email-Lesung (2026-05-12)
 
-<<<<<<< HEAD
-**GMX MailCheck Extension ist DER EINZIG ZULÄSSIGE WEG für OTP.**
-=======
 **GMX Email-Körper (OOPIF) via Playwright-Frames (V15.4):** `page.frames` sucht native nach `mailbody-ui.de`. CDP `attach_to_iframe()` ist Fallback via Playwright-Browser-WS.
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 
 | ❌ Verboten | Grund |
 |------------|-------|
@@ -96,15 +88,6 @@
 | Shadow DOM Traversal für Email-Zugriff | Wicket blockiert alle JS-Events |
 | `read_otp()` OHNE Extension-Methode | HTTP-API ist tot |
 
-<<<<<<< HEAD
-**✅ Erlaubt:**
-- `_read_otp_via_extension()` — Extension-Popup öffnen, Email per JS klicken, iframe navigieren
-- Fallback: `_read_otp_via_http()` — existiert noch aber gibt 403
-
----
-
-## 🛑 BANNED: GMX Anti-Patterns (2026-05-12 v3)
-=======
 **✅ Erlaubt:** Playwright `page.frames` nach OOPIF suchen → Verify-URL extrahieren. CDP `attach_to_iframe()` via Playwright-Browser-WS als Fallback.
 
 ---
@@ -112,17 +95,9 @@
 ## 🚫 BANNED: Chrome Session Management (2026-05-11 — HISTORISCH)
 
 > V15.4 nutzt `chromium.launch()` — diese Bans gelten nur falls jemand noch `connect_over_cdp()` versucht.
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 
 Diese Ansätze wurden ALLE ausprobiert. JEDER einzelne ist gescheitert:
 
-<<<<<<< HEAD
-| ❌ Verboten | Symptom |
-|------------|---------|
-| `client.dom_search()` auf 3c.gmx.net | Hängt (kein CDP Response) |
-| `client.node_describe()` auf 3c.gmx.net | `parentId=None` |
-| `client.node_content_box()` auf 3c.gmx.net | Hängt |
-=======
 ---
 
 ## 🚫 BANNED: CDP-Only Anti-Patterns (HISTORISCH — 2026-05-21)
@@ -133,7 +108,6 @@ Diese Ansätze wurden ALLE ausprobiert. JEDER einzelne ist gescheitert:
 |--------------------------|-------|
 | CDP `Runtime.evaluate` auf GMX accessible pages | Gibt `{}` zurück wenn Accessibility-Mode aktiv |
 | CDP `Page.navigate` zu GMX URLs | Triggert Bot-Detection (Akamai/DataDome) |
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
 | CDP `Input.dispatchKeyEvent` | GMX React-Inputs ignorieren |
 | JS `.click()` auf Delete-Icon | Wicket ignoriert |
 | JS `dispatchEvent(MouseEvent)` auf Delete-Icon | Wicket prüft `isTrusted` |
@@ -291,7 +265,6 @@ page = await browser.new_page()
 
 ---
 
-<<<<<<< HEAD
 ## ❌ BANNED: CDP JavaScript für Button/Link/Checkbox Klicks
 
 ```python
@@ -462,6 +435,5 @@ await new_pg.goto(iframe_url)
 | Chromium launch via Agent | Chrome bereits offen; App-Tool crashed |
 
 **✅ Erlaubt:** CUA direkt für OS-Level-Klicks (kein LLM-Agent nötig)
-=======
+
 *Last Updated: 2026-05-31 (V15.4 — ONE Browser, Playwright frames statt CDP OOPIF)*
->>>>>>> acf9862 (docs: fix outdated docs — V15.4 cleanup)
