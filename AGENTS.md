@@ -1,6 +1,6 @@
-# AGENTS.md — SINator Fireworks AI Rotator V16.0 (2026-05-31)
+# AGENTS.md — SINator Fireworks AI Rotator V17.0 (2026-06-01)
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-29
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-01
 
 ```bash
 python tools/rotate.py
@@ -17,6 +17,29 @@ python tools/rotate.py
 **Config Repos:**
   • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
   • **Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
+
+---
+
+## 🔧 V17.0 CHANGES (2026-06-01) — GMX Email Click Fix
+
+### SIN-Browser-Tools Issues Fixed
+- **Issue #3** (closed): `registry.counter` → `len(registry)`
+- **Issue #4** (closed): `browser_click_by_text` mit strukturierter Ref-Suche statt Regex
+- **Issue #5** (closed): Stale Registry nach DOM-Mutation → Live-Locator Fallback
+- **Issue #6** (closed): `browser_snapshot_full_oopif` nutzt jetzt `UnifiedFrameTraverser`
+- **Issue #7** (closed): `FrameInfo` hatte kein `.frame`-Feld → jetzt ergänzt
+- **Issue #9** (merged): 24 neue Smoke-Tests + Dialog-Manager Regression-Fix
+- **Issue #10** (merged): Legacy `core.py` gelöscht, dedupliziert
+
+### GMX Email Click — locator statt evaluate().click()
+- **Problem:** `element.evaluate('el.click()')` auf Shadow DOM Custom Elements funktioniert NICHT
+- **Lösung:** `frame.locator('list-mail-item').first.click(timeout=5000)` ✅
+- **GMX Struktur:** `mail-list-container > shadowRoot > list-mail-list > shadowRoot > list-mail-item`
+- **Email lesen:** Shadow DOM pierce via `frame.evaluate()` mit `walkShadow()` JS
+
+### Immortal Commit
+- Tag `v17.0-gmx-email-locator-click` auf main für Ewigkeit
+- File: `tools/gmx_email_click_test.py` + `tools/gmx_email_click_test.doc.md`
 
 ---
 
@@ -222,11 +245,48 @@ spending limit or failure to pay past invoices.
 - Fix: 25×8s = 200s Polling in `signup_fireworks()`
 - Fallback: `partial` status — Account ist unverified aber oft loginbar
 
-### OTP-Extraktion — ✅ GEFIXT (V15.5)
-- **War:** `read_otp_via_playwright` scannte nur den Hauptframe → Mail in OOPIF/iframe
-  (`bap.navigator.gmx.net`) wurde nie gefunden; zusätzlich waren 4 GmxService-Methoden
-  durch fehlerhafte Einrückung aus der Klasse gefallen (`AttributeError`).
-- **Jetzt:** Frame-übergreifender Scan + Confirm-URL-Erkennung + Kontext-validierter Code.
+### OTP-Extraktion — ✅ GEFIXT (V17.0)
+- **Problem:** GMX Emails in multi-level Shadow DOM: `mail-list-container > shadowRoot > list-mail-list > shadowRoot > list-mail-item`
+- **Alte Methode:** `element.evaluate('el.click()')` — funktioniert NICHT auf Shadow DOM Custom Elements
+- **Lösung:** Playwright `locator('list-mail-item').click()` — funktioniert ✅
+- **Email-Lesen:** Shadow DOM pierce via `frame.evaluate()` mit rekursivem `walk()` (max_depth=5)
+- **Snapshot-Problem:** `browser_snapshot_full_oopif` findet 9 refs, 0 email items — nutze Shadow DOM JS pierce statt accessibility tree
+
+### GMX Email Click (NEU V17.0)
+```python
+# 1. Navigate to mail list
+spa = SPAWaker()
+await spa.wake_gmx_mail(gmx_page)
+await browser_snapshot_full_oopif(pierce=True)  # Refresh refs nach wake
+await browser_click_by_text('E-Mail', role='button')
+await asyncio.sleep(8)
+
+# 2. Get mail iframe
+mail_frame = gmx_page.frame('mail')
+
+# 3. Email items via Shadow DOM pierce
+items = await mail_frame.evaluate("""
+(function() {
+    var mlc = document.querySelector('mail-list-container');
+    if (!mlc || !mlc.shadowRoot) return [];
+    var mll = mlc.shadowRoot.querySelector('list-mail-list');
+    if (!mll || !mll.shadowRoot) return [];
+    var lis = mll.shadowRoot.querySelectorAll('list-mail-item');
+    var r = [];
+    lis.forEach(function(li) {
+        var txt = (li.innerText || '').trim();
+        if (txt.length > 5) r.push(txt.substring(0, 100));
+    });
+    return r;
+})()
+""")
+
+# 4. Click via LOCATOR (NICHT evaluate().click())
+await mail_frame.locator('list-mail-item').first.click(timeout=5000)
+
+# 5. Read body
+body = await mail_frame.evaluate(WALK_SHADOW_JS)
+```
 
 ### Unverified Account = API Key Blocked
 - Account erstellt, aber unverified → API Key Seite redirected zu `/login`
