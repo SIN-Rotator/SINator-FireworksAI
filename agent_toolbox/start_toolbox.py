@@ -33,7 +33,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "agent_toolbox" / "core"))  # cua_helper, gmx_service, etc.
 
-from agent_toolbox.api.routes.browser import router as browser_router
 from agent_toolbox.api.routes.gmx import router as gmx_router
 from agent_toolbox.api.routes.fireworks import router as fireworks_router
 from agent_toolbox.api.routes.pool import router as pool_router, lease_router
@@ -129,7 +128,7 @@ if not _SINATOR_TOKEN:
 async def auth_middleware(request, call_next):
     # Public paths — no auth required
     public_paths = ("/health", "/docs", "/redoc", "/openapi.json", "/")
-    public_prefixes = ("/api/v1/browser/", "/api/v1/pool/", "/api/v1/pool-lease", "/api/v1/rotation/", "/api/v1/config")
+    public_prefixes = ("/api/v1/pool/", "/api/v1/pool-lease", "/api/v1/rotation/", "/api/v1/config")
     if request.url.path in public_paths or any(request.url.path.startswith(p) for p in public_prefixes):
         return await call_next(request)
 
@@ -148,7 +147,6 @@ async def auth_middleware(request, call_next):
     return await call_next(request)
 
 # Routen registrieren
-app.include_router(browser_router, prefix="/api/v1")
 app.include_router(gmx_router, prefix="/api/v1")
 app.include_router(fireworks_router, prefix="/api/v1")
 app.include_router(pool_router, prefix="/api/v1")
