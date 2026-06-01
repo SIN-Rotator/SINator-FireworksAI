@@ -42,7 +42,7 @@ aiohttp-based async proxy that fronts Fireworks AI inference endpoints. Manages 
 | Middleware | Purpose |
 |-----------|---------|
 | `_cors_middleware` | CORS headers for all origins |
-| `_pool_auth_middleware` | Bearer token auth on `/inference/` and `/v1/` paths (optional, controlled by `SINATOR_AUTH_TOKEN`) |
+| `_pool_auth_middleware` | Bearer token auth on `/inference/` and `/v1/` paths. Bypassed for localhost (127.0.0.1/::1). External access must go through the pool-router (which enforces auth at entry). |
 
 ## Key Rotation Logic
 
@@ -60,3 +60,9 @@ aiohttp-based async proxy that fronts Fireworks AI inference endpoints. Manages 
 | `SIN_NO_BACKUP` | `false` | Disable backup key pre-fetching |
 | `SIN_BACKEND_WAIT` | `5` | Seconds to wait for backend on startup |
 | `SIN_PROXY_PORT` | `8888` | Proxy listen port |
+
+## Infrastructure (v19.2)
+
+- **Bind:** `127.0.0.1` (localhost only) — no external access. All traffic arrives via pool-router (`:9998`), which enforces Bearer auth.
+- **Tunnel:** Cloudflare Tunnel (`sinator`) routes `sinatorpool-router.delqhi.com` → `localhost:9998`.
+- **Flow:** Client → CF Tunnel → pool-router (auth) → proxy (localhost, no auth) → Fireworks API.

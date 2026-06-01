@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.1 (2026-06-01)
+# AGENTS.md — SINator Fireworks AI Rotator V19.2 (2026-06-01)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-01
 
@@ -8,11 +8,12 @@ python tools/rotate.py
 # → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
-**Pool:** 242 Keys (242 verfügbar, 0 used, 0 suspended)
+**Pool:** 242 Keys (0 available, 7 leased, 10 used, 225 suspended)
 **Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
+**CF Tunnel:** `sinator` — `cloudflared tunnel run sinator --config config-sinator.yml`
 **Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
-**API Key (alle Macs gleich):** `<DEIN_API_KEY>`
+**API Key (alle Macs gleich):** `7avN1KkfInNqcOMn2CtwLTvx`
 **Services:** com.sinator.backend (:8000), com.sinator.pool-router (:9998), 10× pool-proxy (:8888-:8897), Pages (:8040)
 **Config Repos:**
   • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
@@ -20,7 +21,35 @@ python tools/rotate.py
 
 ---
 
-## 🔧 V19.1 CHANGES (2026-06-01) — 100% SIN-Browser-Tools, E2E Fixed
+## 🔧 V19.2 CHANGES (2026-06-01) — Security: Auth Enforcement + Tunnel
+
+### Security Hardening
+| Change | Before | After |
+|--------|--------|-------|
+| Pool-Router Auth | ❌ no validation | Bearer via `SINATOR_AUTH_TOKEN` (401 on bad/missing) |
+| Proxy Bind | `0.0.0.0` (all interfaces) | `127.0.0.1` (localhost only) |
+| opencode.json apiKey | `fw_HJknMPsmyKfGAAqqBNGGkJ` (dummy) | `7avN1KkfInNqcOMn2CtwLTvx` (real) |
+| CF Tunnel | nicht aktiv | `sinator` tunnel → `sinatorpool-router.delqhi.com` → :9998 |
+| Plists | `~/.sin-pool/` + `~/.hermes/` | Repo paths (`proxy/server.py`, `scripts/pool-router.py`) |
+
+### Auth Flow
+```
+Client → CF Tunnel → pool-router (auth check ✓) → proxy (localhost bypass) → Fireworks API
+```
+- `/health` is public (no auth)
+- `/v1/models`, `/v1/chat/completions` require Bearer token
+- Proxy localhost bypass means pool-router-validated requests pass freely to proxy
+
+### Tunnel Command
+```bash
+cloudflared tunnel --config ~/.cloudflared/config-sinator.yml run sinator &
+```
+Config: `~/.cloudflared/config-sinator.yml` — ingress routes `sinatorpool-router.delqhi.com` → `localhost:9998`
+
+### Pool Stats (2026-06-01)
+- **242 total, 0 available, 7 leased, 10 used, 225 suspended**
+- 0 available = alle nicht-suspended Keys von Proxies geleast
+- Neue Rotation nötig
 
 ### Core Change: Zero Raw Playwright Calls
 `fireworks_service.py` now uses **100% SIN-Browser-Tools** — no `page.evaluate()`, no `page.locator()`, no `page.goto()`. All operations go through:

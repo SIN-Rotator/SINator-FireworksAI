@@ -22,9 +22,20 @@ Multi-proxy request router that distributes API calls across 10 local pool proxi
 | `ThreadedPoolServer` | `ThreadingMixIn` + `TCPServer` for concurrent requests |
 | `main()` | Prints banner and runs `serve_forever()` — only invoked under `if __name__ == "__main__"` |
 
+## Request Auth (v19.2)
+
+> **All non-`/health` requests MUST carry `Authorization: Bearer {SINATOR_AUTH_TOKEN}`.**  
+> The pool-router returns 401 for invalid/missing tokens.  
+> `/health` is public (unauthenticated).  
+
+For local requests (pool-router→proxy bypass): proxies trust `127.0.0.1` (localhost bypass), so the Token only needs validating once when hitting the pool-router. External requests via Cloudflare Tunnel must supply the Bearer token.  
+With CF Tunnel, this chain is: Client → CF Tunnel → pool-router → proxy (localhost) → Fireworks.  
+
 ## Routing Logic
 
-1. Request arrives on port `9998`.
+1. Health check on `GET /health` → bypasses auth, returns pool status.
+2. All other requests → `_is_authenticated()` validates Bearer token.
+3. `_proxy`/`_try_pools` iterates pools `:8888` → `:8889` → ... → `:8897`.
 2. `_try_pools` iterates pools `:8888` → `:8889` → ... → `:8897`.
 3. Pools with ≥3 failures in the last 60s are **skipped** (cooldown).
 4. On success → `_record_success` (decays oldest failure).
@@ -42,7 +53,7 @@ Multi-proxy request router that distributes API calls across 10 local pool proxi
 | `POOL_ROUTER_COOLDOWN` | `60` | Cooldown window (s) |
 | `POOL_ROUTER_MAX_FAILURES` | `3` | Failures before cooldown |
 | `CF_WORKER_URL` | _(empty)_ | Cloudflare Worker base URL; empty disables fallback |
-| `SINATOR_AUTH_TOKEN` | _(empty)_ | Bearer token added to fallback requests if client sent none |
+| `SINATOR_AUTH_TOKEN` | _(empty)_ | Bearer token required on all non-/health paths
 
 ## Known Caveats
 
