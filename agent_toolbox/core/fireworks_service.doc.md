@@ -36,14 +36,18 @@ Fireworks limits Account ID to 20 characters. Generated as `sin` + 8 random alph
 
 ## Key Decisions
 
-### Why `browser_press("Enter")` instead of `browser_click_by_text("Next")` for login submit?
-The Fireworks login page has a carousel with "Next slide" button that matches `has_text="Next"`. Playwright's locator finds the carousel button first (disabled), causing timeout. Enter key bypasses this.
+### Why `browser_press("Enter")` instead of `browser_click_by_text("Next")` for signup/login submit?
+The Fireworks page has a carousel "Next slide" button (disabled) that appears before the form's "Next" button in the DOM. `browser_click_by_text("Next", role="button")` matches the carousel button first. Enter key bypasses this entirely.
+**CRITICAL:** Do NOT replace Enter key with JS dispatchEvent or `browser_click_by_text` — this was tried and broke the flow (s. tag `v19.1-working-revert`).
 
 ### Why native React setter instead of `browser_fill()`?
 `browser_fill()` → `browser_type()` → `page.type()` for CSS selectors. `page.type()` doesn't clear existing React state. Native setter + synthetic events properly update React's internal state.
 
 ### Why `_playwright_onboarding` takes no parameters?
 It operates on the currently active page in SIN-Browser-Tools manager. The page is already on `/onboarding` after login redirect.
+
+### Why button text uses partial match (`indexOf`) not strict equality?
+Fireworks button labels change over time (e.g., "Submit" → "Submit to get $5 Credits"). Strict `===` breaks silently. The old code used `'Submit' in txt` — restored in `v19.1-working-revert`.
 
 ## Flow Sequence
 ```
@@ -58,3 +62,5 @@ It operates on the currently active page in SIN-Browser-Tools manager. The page 
 ## Known Issues
 - `browser_click_checkbox_by_text()` may not trigger React state updates for custom button-based checkboxes (e.g., Fireworks Terms). Fallback: `browser_console()` with direct DOM click.
 - Onboarding redirect detection relies on URL containing `home`/`account`/`settings` — may break if Fireworks changes URL structure.
+- Submit button in onboarding is often disabled (React validation pending). `browser_click_by_text("Submit")` + fallback texts fails silently. Fixed with `browser_press("Enter")` as final fallback — bypasses disabled state.
+- The Enter key pattern matches login/signup flow (same reason: carousel "Next slide" button conflict).

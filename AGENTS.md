@@ -8,7 +8,7 @@ python tools/rotate.py
 # → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
-**Pool:** 235 Keys (235 verfügbar, 0 used, 0 suspended)
+**Pool:** 242 Keys (242 verfügbar, 0 used, 0 suspended)
 **Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
 **Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
@@ -36,12 +36,65 @@ python tools/rotate.py
 | "Next" clicks carousel button | `browser_press("Enter")` after password | Login submits properly |
 | Onboarding stuck on page 1 | Terms checkbox via `browser_click_checkbox_by_text()` | Page 2 loads |
 | Continue doesn't advance | Native React setter for Account/First/Last | Form validates |
+| Submit button disabled (React pending) | JS dispatchEvent fallback + `browser_press("Enter")` | Submit geht immer durch |
+| `browser_click_by_text("Submit")` matched nicht | `indexOf('Submit') !== -1` statt `===` | Button mit beliebigem Text suffix |
 
 ### `_BrowserHandle` Duck-Type
 Replaces `BrowserManager` (which hardcodes `--start-maximized`). Provides `_page`, `_context`, `_browser`, `_playwright` for SIN-Browser-Tools compatibility. Window size: 1200×800.
 
 ### Immortal Tags
 - `v19.1-e2e-sin-tools` — Full E2E flow working
+- `v19.1-fix-signup-enter` — Enter key fix for signup (proven working baseline)
+- `v19.1-working-revert` — HEAD (3485aa4) nach Revert auf v19.1-fix-signup-enter
+- `v19.1-fix-onboarding-enter` — Enter key fallback für onboarding Submit
+
+---
+
+## ⚠️ LEARNINGS 2026-06-01 — Was schiefging und wie es richtig geht
+
+### 1. `browser_press("Enter")` NIEMALS durch `browser_click_by_text("Next")` ersetzen
+
+**Symptom:** Nach Email-Fill in Signup/Login → Enter sendet Formular → Password-Felder erscheinen nicht → Page zeigt "Build. Tune. Scale" (Homepage).
+
+**Warum:** Fireworks hat carousel "Next slide" Button (disabled) VOR dem echten "Next"-Button im DOM. `browser_click_by_text("Next", role="button")` matched den carousel Button (disabled) → kein Submit.
+
+**Richtig:** `browser_press("Enter")` — immer, in Signup UND Login. Form-Submit per Enter ist der einzig reliable Weg.
+
+**Tag:** `v19.1-fix-signup-enter` ist der proven working baseline.
+
+### 2. Button-Text Matching: `includes()` statt `===`
+
+**Symptom:** Onboarding Submit-Button wird nicht gefunden → kein Redirect → /onboarding bleibt → API Key fails.
+
+**Warum:** `browser_click_by_text("Submit", role="button")"` matched exakten Text "Submit". Fireworks Button heißt aber "Submit to get $5 Credits". Strict equality schlägt fehl. Auch der Fallback `browser_click_by_text("Get $5", role="button")"` matched nicht weil "Submit to get $5 Credits" !== "Get $5".
+
+**Richtig:** JS dispatchEvent mit `.indexOf('Submit') !== -1` (partial match) — wie der alte pre-v19.1 Code mit `'Submit' in txt`. Genutzt für Continue UND Submit in `_playwright_onboarding`.
+
+### 3. Onboarding Submit: Enter-Key als Fallback für disabled Button
+
+**Symptom:** Submit-Button ist disabled (React validation pending) → `browser_click_by_text` wirft Exception → Fallback-Texte matchen nicht → kein Submit.
+
+**Richtig:** Nach erfolglosem `browser_click_by_text` + Fallback-Texte → Enter-Key (`browser_press("Enter")`) — bypassed disabled state, triggert Form-Submit native.
+
+### 4. JS dispatchEvent nur für disabled-Button-Fallback, NICHT für Signup/Login
+
+**Symptom:** `dispatchEvent(new MouseEvent('click', ...))` für Signup "Next" → Password-Felder erscheinen nicht.
+
+**Warum:** React SPA erwartet native Form-Submit (Enter-Key) für Email-Validierung. JS dispatchEvent dispatht nur click, kein form submit → Validierung läuft nicht.
+
+**Richtig:**
+- Signup/Login Email → `browser_press("Enter")`
+- Onboarding Continue/Submit → `browser_click_by_text` + JS dispatchEvent Fallback (disabled bypass) + Enter als letzter Fallback
+
+### 5. Kein Code ändern ohne Vergleich mit proven Tag
+
+**Regel:** Jeder Commit/Eingriff muss gegen `v19.1-fix-signup-enter` validiert werden. Wenn der Tag funktioniert, meine Änderungen aber nicht → Fehler liegt bei mir.
+
+**Check:**
+```bash
+git diff v19.1-fix-signup-enter -- agent_toolbox/core/fireworks_service.py
+# Sollte 0 sein (keine Änderungen zum working state)
+```
 
 ---
 

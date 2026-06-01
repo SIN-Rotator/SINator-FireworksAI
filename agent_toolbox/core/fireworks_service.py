@@ -419,7 +419,7 @@ async def _playwright_onboarding() -> None:
     from sin_browser_tools.tools.interaction import (
         browser_fill, browser_click_by_text, browser_click_checkbox_by_text,
     )
-    from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate
+    from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate, browser_press
     from sin_browser_tools.tools.extraction import browser_console
 
     await browser_console("""document.querySelectorAll('.cky-overlay,.cky-consent-container,.cky-modal,[class*="cky-"]').forEach(e => e.remove()); document.body.style.overflow = 'visible';""")
@@ -467,7 +467,21 @@ async def _playwright_onboarding() -> None:
             await browser_console("""var b=document.querySelectorAll('button'); for(var i=0;i<b.length;i++){var r=b[i].getAttribute('role')||'';var a=b[i].getAttribute('aria-checked');if(r==='checkbox'||a!==null){b[i].click();return;}}""")
             await asyncio.sleep(0.5)
 
-    await browser_click_by_text("Continue", role="button")
+    try:
+        await browser_click_by_text("Continue", role="button")
+    except Exception:
+        await browser_console("""(() => {
+            var b = document.querySelectorAll('button');
+            for(var i=0;i<b.length;i++){
+                var t = b[i].textContent.trim();
+                if(t.indexOf('Continue') !== -1 || t.indexOf('Next') !== -1){
+                    b[i].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+                    return true;
+                }
+            }
+            return false;
+        })()""")
+        logger.info("Continue clicked via JS dispatchEvent (disabled bypass)")
     await asyncio.sleep(3)
 
     for uc in [
@@ -495,7 +509,15 @@ async def _playwright_onboarding() -> None:
                 break
             except Exception:
                 continue
-    await asyncio.sleep(4)
+    await asyncio.sleep(2)
+
+    # If still on onboarding, Submit button was disabled — use Enter key (bypasses disabled state)
+    url = (await browser_get_url())["url"]
+    if 'onboarding' in url:
+        await browser_press("Enter")
+        logger.info("Enter key sent as Submit fallback (disabled bypass)")
+        await asyncio.sleep(3)
+    await asyncio.sleep(1)
 
     for _ in range(15):
         await asyncio.sleep(1)

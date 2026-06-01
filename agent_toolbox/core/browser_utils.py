@@ -1,3 +1,10 @@
+"""Legacy Playwright utilities for React inputs, SPA transitions, and cookie consent.
+
+DEPRECATED: Use SIN-Browser-Tools instead (browser_fill, browser_console, etc.).
+Kept for reference and fallback if SIN-Tools approach fails.
+
+Docs: browser_utils.doc.md
+"""
 import logging
 import asyncio
 import re

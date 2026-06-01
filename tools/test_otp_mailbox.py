@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Test: MailCheck Extension OTP + Frame-Traversal auf aktuellen Posteingang."""
-import sys, asyncio, logging
+"""Test: GMX OTP extraction via mailbox frame traversal + MailCheck extension.
+
+Docs: test_otp_mailbox.doc.md
+"""
+import sys, os, asyncio, logging
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
@@ -12,7 +15,7 @@ async def main():
     from gmx_service import GmxService
     from playwright.async_api import async_playwright
 
-    CDP_PORT = 9222  # Existing Chrome with GMX session
+    CDP_PORT = 9222  # Profile 73 — persistent GMX session
 
     async with async_playwright() as p:
         browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{CDP_PORT}")
@@ -29,11 +32,13 @@ async def main():
         logger.info(f"Inbox: {'✅' if ok else '❌'}")
 
         # ── TEST 1: Frame-Traversal auf inbox_tab ──
+        # Uses frame-aware scan that traverses mail → shadow DOM → detail-body iframe
         logger.info("\n=== TEST 1: read_otp_axtree_and_frames() ===")
         otp = await gmx.read_otp_axtree_and_frames(sender_keyword="fireworks", timeout=30)
         logger.info(f"OTP Result: {otp}")
 
         # ── TEST 2: MailCheck Extension ──
+        # chrome-extension://... OOPIF — invisible to Playwright frames, requires CDP
         logger.info("\n=== TEST 2: read_fireworks_verification_email() ===")
         verify_url = await gmx.read_fireworks_verification_email(cdp_port=CDP_PORT)
         logger.info(f"Verify URL: {verify_url}")
