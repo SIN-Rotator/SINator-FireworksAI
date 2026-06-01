@@ -569,15 +569,21 @@ async def create_api_key(key_name: str = "sinator-key", **kwargs) -> Dict[str, A
         url = (await browser_get_url())["url"]
         if 'login' in url.lower():
             logger.warning(f"Redirected to login — retrying ({url[:60]})")
+            # Try to log in directly from this page (it has redirectURI)
+            try:
+                await browser_press("Enter")  # might submit a pre-filled form
+            except Exception:
+                pass
+            await asyncio.sleep(1)
             await browser_navigate("https://app.fireworks.ai/settings/users/api-keys")
             await asyncio.sleep(3)
         else:
             break
 
     url = (await browser_get_url())["url"]
-    if 'login' in url.lower():
-        logger.error("Cannot access API keys — still on login page")
-        return {"status": "error", "error": "Not logged in"}
+    if 'login' in url.lower() or 'onboarding' in url.lower():
+        logger.error(f"Cannot access API keys — still on {url[:60]}")
+        return {"status": "error", "error": f"Not past login/onboarding: {url[:60]}"}
 
     logger.info(f"API Keys page loaded: {url[:80]}")
 
