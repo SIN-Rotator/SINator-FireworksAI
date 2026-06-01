@@ -24,6 +24,10 @@ import socket
 import re
 from pathlib import Path
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from playwright.async_api import Browser, Page
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
 
