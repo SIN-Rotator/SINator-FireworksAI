@@ -419,7 +419,7 @@ async def _playwright_onboarding() -> None:
     from sin_browser_tools.tools.interaction import (
         browser_fill, browser_click_by_text, browser_click_checkbox_by_text,
     )
-    from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate, browser_press
+    from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate
     from sin_browser_tools.tools.extraction import browser_console
 
     await browser_console("""document.querySelectorAll('.cky-overlay,.cky-consent-container,.cky-modal,[class*="cky-"]').forEach(e => e.remove()); document.body.style.overflow = 'visible';""")
@@ -467,21 +467,7 @@ async def _playwright_onboarding() -> None:
             await browser_console("""var b=document.querySelectorAll('button'); for(var i=0;i<b.length;i++){var r=b[i].getAttribute('role')||'';var a=b[i].getAttribute('aria-checked');if(r==='checkbox'||a!==null){b[i].click();return;}}""")
             await asyncio.sleep(0.5)
 
-    try:
-        await browser_click_by_text("Continue", role="button")
-    except Exception:
-        await browser_console("""(() => {
-            var b = document.querySelectorAll('button');
-            for(var i=0;i<b.length;i++){
-                var t = b[i].textContent.trim();
-                if(t.indexOf('Continue') !== -1 || t.indexOf('Next') !== -1){
-                    b[i].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
-                    return true;
-                }
-            }
-            return false;
-        })()""")
-        logger.info("Continue clicked via JS dispatchEvent (disabled bypass)")
+    await browser_click_by_text("Continue", role="button")
     await asyncio.sleep(3)
 
     for uc in [
@@ -500,79 +486,30 @@ async def _playwright_onboarding() -> None:
             await asyncio.sleep(0.2)
         await asyncio.sleep(0.2)
 
-    # Submit — try button click FIRST, then JS dispatchEvent on any submit-like element
-    submit_clicked = False
     try:
         await browser_click_by_text("Submit", role="button")
-        submit_clicked = True
     except Exception:
-        pass
-
-    if not submit_clicked:
-        for txt in ("Get $5", "Finish", "Continue", "Next"):
+        for txt in ("Get $5", "Finish", "Continue"):
             try:
                 await browser_click_by_text(txt, role="button")
-                submit_clicked = True
                 break
             except Exception:
                 continue
+    await asyncio.sleep(4)
 
-    # If button click didn't work, try JS form.submit() directly
-    if not submit_clicked:
-        await browser_console("""(() => {
-            var forms = document.forms;
-            for (var i=0; i<forms.length; i++) {
-                forms[i].requestSubmit();
-                return 'submit_via_form';
-            }
-            return 'no_form';
-        })()""")
-        logger.info("Submit via form.requestSubmit()")
-
-    await asyncio.sleep(2)
-
-    # Try Enter key as final fallback
-    url = (await browser_get_url())["url"]
-    if 'onboarding' in url:
-        await browser_press("Enter")
-        logger.info("Enter key sent as Submit fallback")
-        await asyncio.sleep(2)
-
-    # Wait for redirect (15s with check every 1s)
     for _ in range(15):
         await asyncio.sleep(1)
         url = (await browser_get_url())["url"]
         if any(x in url for x in ['home', 'account', 'settings', 'api-keys', 'models']):
             logger.info(f"Onboarding redirect: {url[:60]}")
             return
-
-    # Server didn't redirect — submit may have failed. Try native form submit
-    await browser_console("""(() => {
-        var forms = document.forms;
-        for (var i=0; i<forms.length; i++) {
-            forms[i].submit();
-            return 'native_submit_retry';
-        }
-        return 'no_form';
-    })()""")
-    logger.info("Retry: native form.submit()")
-    await asyncio.sleep(3)
-
-    for _ in range(10):
-        await asyncio.sleep(1)
-        url = (await browser_get_url())["url"]
-        if any(x in url for x in ['home', 'account', 'settings', 'api-keys', 'models']):
-            logger.info(f"Onboarding redirect (retry): {url[:60]}")
-            return
-
-    # Still no redirect — force navigate and hope server accepts it
-    logger.warning("No redirect after onboarding, force navigate")
-    await browser_navigate("https://app.fireworks.ai/settings/users/api-keys")
-    await asyncio.sleep(3)
-    url = (await browser_get_url())["url"]
-    if 'onboarding' in url:
-        logger.warning("Server bounced back to onboarding — form not submitted")
-    return
+    else:
+        logger.warning("Playwright onboarding — kein Redirect, force navigate")
+        try:
+            await browser_navigate("https://app.fireworks.ai/settings/users/api-keys")
+            await asyncio.sleep(2)
+        except Exception:
+            pass
 
 
 # ── API Key ─────────────────────────────────────────────────────────────────
