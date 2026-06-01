@@ -251,7 +251,7 @@ class PoolProxy:
         """Verify key via lightweight chat request — more accurate than /models."""
         try:
             body = {
-                "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+                "model": "accounts/fireworks/models/deepseek-v4-flash",
                 "messages": [{"role": "user", "content": "hi"}],
                 "max_tokens": 1,
                 "stream": False,
