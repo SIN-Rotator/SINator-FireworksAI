@@ -446,23 +446,27 @@ async def _playwright_onboarding() -> None:
     # ── Step 2: Fill text fields via browser_type (delay=30ms triggers React) ─
     import random, string
 
-    # Account ID — sin + 8 random = 11 chars (under 20-char limit)
+    # Account ID — DO NOT TOUCH (Fireworks pre-fills it with a unique suggestion,
+    # editing it triggers a "max 20 chars" validation error)
     has_aid = int((await browser_console("document.querySelectorAll('input[name=accountId]').length"))["result"])
     if has_aid > 0:
-        aid = "sin" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
-        try:
-            await browser_type('input[name="accountId"]', aid)
-        except Exception as e:
-            logger.warning(f"browser_type accountId failed: {e} — falling back to console setter")
-            await browser_console(f"""(() => {{
-                var inp = document.querySelector('input[name="accountId"]');
-                var setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-                setter.call(inp, '{aid}');
-                inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-                inp.dispatchEvent(new Event('change', {{bubbles: true}}));
-            }})()""")
-        await asyncio.sleep(0.3)
-        logger.info(f"Account ID filled: {aid}")
+        # Just verify the pre-filled value is there; DO NOT overwrite
+        current_aid = await browser_console("""(() => {
+            var inp = document.querySelector('input[name="accountId"]');
+            return inp ? (inp.value || '') : '';
+        })()""")
+        current_aid = (current_aid.get("result") or "").strip()
+        if current_aid:
+            logger.info(f"Account ID pre-filled by Fireworks: '{current_aid}' (using as-is, NOT overwriting)")
+        else:
+            # Field is empty — fill with a safe 11-char value
+            aid = "sin" + "".join(random.choices(string.ascii_lowercase + string.digits, k=8))
+            try:
+                await browser_type('input[name="accountId"]', aid)
+            except Exception as e:
+                logger.warning(f"browser_type accountId failed: {e}")
+            await asyncio.sleep(0.3)
+            logger.info(f"Account ID filled: {aid}")
 
     # First name
     has_fn = int((await browser_console("document.querySelectorAll('input[name=firstName]').length || document.querySelectorAll('input[name=first]').length"))["result"])
