@@ -147,6 +147,9 @@ async def main():
         logger.info("=== OTP Polling (User Chrome) ===")
         await work_tab.bring_to_front()
         await work_tab.goto(gmx_work_url, wait_until="domcontentloaded")
+        await asyncio.sleep(2)
+        # Refresh once so the verify email from the Fireworks signup shows up
+        await work_tab.reload(wait_until="domcontentloaded")
         await asyncio.sleep(3)
 
         verify_ok = False
