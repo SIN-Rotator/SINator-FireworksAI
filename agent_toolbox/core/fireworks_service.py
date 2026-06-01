@@ -542,23 +542,40 @@ async def _playwright_onboarding() -> None:
     await asyncio.sleep(0.3)
 
     # ── Step 4: Continue (Page 1 → Page 2) ─────────────────────────────────
+    # First check the URL — if validation fails the page may not be ready
+    cur_url = (await browser_get_url())["url"]
+    cur_text = (await browser_console("document.body.innerText") or {}).get("result", "")[:300]
+    logger.info(f"Before Continue: url={cur_url}, body text starts: {cur_text[:200]!r}")
+
+    # Try click via several strategies
+    clicked_continue = False
     try:
-        await browser_click_by_text("Continue", role="button")
-    except Exception:
+        r = await browser_click_by_text("Continue", role="button")
+        if r.get("status") == "clicked":
+            clicked_continue = True
+    except Exception as e:
+        logger.warning(f"browser_click_by_text('Continue') failed: {e}")
+
+    if not clicked_continue:
         # Fallback: dispatchEvent on any button containing "Continue"
+        logger.info("Trying JS dispatchEvent on Continue button")
         await browser_console("""(() => {
             var b = document.querySelectorAll('button');
             for(var i=0;i<b.length;i++){
                 var t = b[i].textContent.trim();
                 if(t.indexOf('Continue') !== -1 || t.indexOf('Next') !== -1){
                     b[i].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
-                    return true;
+                    return t;
                 }
             }
-            return false;
+            return 'no_button';
         })()""")
         logger.info("Continue clicked via JS dispatchEvent (disabled bypass)")
     await asyncio.sleep(3)
+
+    # Verify we left page 1
+    after_url = (await browser_get_url())["url"]
+    logger.info(f"After Continue: url={after_url}")
 
     # ── Step 5: Use-case checkboxes (Page 2) ─────────────────────────────────
     for uc in [
