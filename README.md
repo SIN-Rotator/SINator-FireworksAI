@@ -42,6 +42,7 @@ Der Router (:9998) verteilt auf 10 Proxys (:8888-:8897), jeder mit eigenem API-K
 | 429 permanent (Spending-Limit) | Key swap → suspended |
 | 5xx | Nächster Proxy |
 | Kein Key verfügbar | **1s interne Retry** (max 300× = 5 Min), kein sofortiger 503 |
+| Alle Pools tot (Mac offline) | **Cloudflare Worker Fallback** (D1-Key-Rotation) — falls `CF_WORKER_URL` gesetzt |
 
 ### Key-Status
 
@@ -53,6 +54,30 @@ Der Router (:9998) verteilt auf 10 Proxys (:8888-:8897), jeder mit eigenem API-K
 | `suspended` | Von Fireworks gesperrt |
 
 `available = total - used - suspended - leased`
+
+## Cloudflare-Fallback (Issue #24)
+
+Der Mac bleibt primär. Geht er offline (CF DNS Health Check schlägt fehl), übernimmt **ein** Cloudflare Worker mit einer D1-Datenbank statt der 10 lokalen Proxys — Key-Rotation läuft im Worker.
+
+| Aspekt | Lösung |
+|--------|--------|
+| Smart Router | CF DNS prüft Mac → Mac tot = Worker übernimmt |
+| Proxys | 1 Worker statt 10 (Key-Rotation in D1) |
+| Storage | D1 Database statt `pool.json` |
+| Sync | Mac → CF nach jeder Rotation (`scripts/sync_to_cf.py`) |
+| Free Tier | 100k req/Tag (~10 User) |
+
+```bash
+# Router mit Fallback starten
+export CF_WORKER_URL="https://sinator-fallback.<account>.workers.dev"
+export SINATOR_AUTH_TOKEN="<client-bearer>"
+python3 scripts/pool-router.py
+
+# Pool nach Rotation nach D1 syncen
+CF_WORKER_URL=... CF_SYNC_TOKEN=... python3 scripts/sync_to_cf.py
+```
+
+Deploy-Schritte, D1-Schema und die Antworten auf die 5 offenen Fragen (Auth, Rate Limiting, Key-Sync, DNS, Mac-Wiederkehr): siehe [`cloudflare/README.md`](cloudflare/README.md).
 
 ## Setup
 

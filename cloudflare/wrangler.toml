@@ -1,0 +1,38 @@
+#:schema node_modules/wrangler/config-schema.json
+# SINator Fallback Worker — Issue #24
+# Deploy:  cd cloudflare && wrangler deploy
+name = "sinator-pool-router"
+main = "worker.js"
+compatibility_date = "2025-05-01"
+
+# Free tier. No usage_model needed — Workers Free includes 100k req/day.
+workers_dev = true
+
+# ── D1: Pool key database (replaces data/fireworksai-pool.json) ──────────────
+# Create once:  wrangler d1 create sinator-pool
+# then paste the returned database_id below.
+[[d1_databases]]
+binding = "DB"
+database_name = "sinator-pool"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# ── KV: optional model-id cache (10M reads/day free) ─────────────────────────
+# Create once:  wrangler kv namespace create MODEL_CACHE
+# Seed:         wrangler kv key put --binding=MODEL_CACHE model_ids '["accounts/..."]'
+[[kv_namespaces]]
+binding = "MODEL_CACHE"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+
+# ── Custom domain (Question #4: primary = fallback DNS) ──────────────────────
+# Point sinatorpool-router.delqhi.com at this Worker. The Smart Router decides
+# Mac-vs-Worker on the *client* side via a health-check (see cloudflare/README.md).
+# [[routes]]
+# pattern = "sinatorpool-router.delqhi.com"
+# custom_domain = true
+
+# Secrets are NOT stored here. Set them with:
+#   wrangler secret put SINATOR_AUTH_TOKEN   # Bearer token for clients
+#   wrangler secret put SYNC_TOKEN           # Bearer token for Mac → /pool/push
+[vars]
+# placeholder so `wrangler dev` works before secrets are set; override in prod
+PLACEHOLDER = "set-secrets-with-wrangler-secret-put"

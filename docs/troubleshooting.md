@@ -80,6 +80,31 @@ pgrep -f pool-router.py
 
 Alle 7 Checks müssen grün sein.
 
+## Cloudflare-Fallback greift nicht (Issue #24)
+
+**Symptom:** Mac ist offline, aber Requests laufen weiter in „All pools exhausted" / 503 statt zum Worker zu gehen.
+
+```bash
+# 1. Ist CF_WORKER_URL im Router-Prozess gesetzt?
+ps eww $(pgrep -f pool-router.py) | tr ' ' '\n' | grep CF_WORKER_URL
+
+# 2. Worker erreichbar?
+curl -s "$CF_WORKER_URL/health"          # erwartet: {"status":"ok",...}
+
+# 3. Client-Auth ok? (401 = Token fehlt/falsch)
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $SINATOR_AUTH_TOKEN" \
+  "$CF_WORKER_URL/v1/models"
+
+# 4. Pool in D1 vorhanden? (leerer Pool = Worker hat keine Keys)
+curl -s -H "Authorization: Bearer $SINATOR_AUTH_TOKEN" "$CF_WORKER_URL/pool/stats"
+```
+
+- **Fallback ist nur Notnagel:** er greift erst, wenn *alle* lokalen Pools tot/in Cooldown sind. Solange ein lokaler Pool lebt, geht nichts zum Worker — das ist gewollt.
+- **Worker liefert 502 / leere Antwort:** D1 ist leer oder alle Keys `suspended`. Erst syncen: `CF_WORKER_URL=... CF_SYNC_TOKEN=... python3 scripts/sync_to_cf.py`.
+- **`/pool/push` gibt 401:** `CF_SYNC_TOKEN` (lokal) ≠ `SYNC_TOKEN` (im Worker als Secret gesetzt).
+- **Mac kommt zurück:** nichts zu tun — sobald ein lokaler Pool wieder lebt, übernimmt der Router automatisch wieder; nächster `sync_to_cf.py`-Lauf bringt D1 auf Stand.
+
 ## Auth-Fehler
 
 ```bash

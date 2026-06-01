@@ -24,6 +24,8 @@ Configuration loading for the Pool Proxy — reads from environment variables wi
 | `LEASE_BACKUP` | `SIN_LEASE_BACKUP` | `false` |
 | `MAX_RETRIES` | `SIN_MAX_RETRIES` | `3` |
 | `CACHE_DIR` | `SIN_CACHE_DIR` | `~/.sin-pool` |
+| `CF_WORKER_URL` | `CF_WORKER_URL` | _(empty)_ — Cloudflare Worker fallback base URL (Issue #24) |
+| `CF_SYNC_TOKEN` | `CF_SYNC_TOKEN` | _(empty)_ — token for Mac→D1 push via `scripts/sync_to_cf.py` |
 
 ## Pool API URL Resolution
 
