@@ -269,10 +269,23 @@ async def verify_account(verify_url: str, **kwargs) -> bool:
         await asyncio.sleep(2)
         url = (await browser_get_url())["url"]
         logger.info(f"Verify URL opened: {url[:80]}")
+        # DIAG: screenshot after verify URL load
+        try:
+            os.makedirs("/tmp/onboarding-diag", exist_ok=True)
+            from sin_browser_tools.core import manager
+            await manager.page.screenshot(path="/tmp/onboarding-diag/verify-loaded.png")
+        except Exception as e:
+            logger.warning(f"DIAG verify shot failed: {e}")
         for _ in range(10):
             await asyncio.sleep(1)
             url = (await browser_get_url())["url"]
             if 'onboarding' in url.lower() or 'home' in url.lower() or 'account' in url.lower():
+                # DIAG: screenshot when redirect detected
+                try:
+                    from sin_browser_tools.core import manager
+                    await manager.page.screenshot(path=f"/tmp/onboarding-diag/verify-redirected-{url.replace('/','_')[:40]}.png")
+                except Exception:
+                    pass
                 return True
         return True
     except Exception as e:
@@ -416,8 +429,23 @@ async def _playwright_onboarding() -> None:
     from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate, browser_press
     from sin_browser_tools.tools.extraction import browser_console
 
-    await browser_console("""document.querySelectorAll('.cky-overlay,.cky-consent-container,.cky-modal,[class*="cky-"]').forEach(e => e.remove()); document.body.style.overflow = 'visible';""")
-    await asyncio.sleep(1)
+    # ── DIAGNOSTIC: capture screenshots before each step ───────────────────
+    import os
+    diag_dir = "/tmp/onboarding-diag"
+    os.makedirs(diag_dir, exist_ok=True)
+    diag_step = [0]
+
+    async def _shot(label):
+        diag_step[0] += 1
+        path = f"{diag_dir}/step{diag_step[0]:02d}-{label}.png"
+        try:
+            from sin_browser_tools.core import manager
+            await manager.page.screenshot(path=path)
+            logger.info(f"DIAG shot: {path}")
+        except Exception as e:
+            logger.warning(f"DIAG shot failed: {e}")
+
+    await _shot("00_onboarding_start")
 
     has_aid = int((await browser_console("document.querySelectorAll('input[name=accountId]').length"))["result"])
     if has_aid > 0:
@@ -431,6 +459,7 @@ async def _playwright_onboarding() -> None:
             inp.dispatchEvent(new Event('change', {{bubbles: true}}));
         }})()""")
         await asyncio.sleep(0.3)
+    await _shot("01_after_accountid")
 
     has_fn = int((await browser_console("document.querySelectorAll('input[name=firstName]').length || document.querySelectorAll('input[name=first]').length"))["result"])
     if has_fn > 0:
@@ -451,8 +480,9 @@ async def _playwright_onboarding() -> None:
             setter.call(inp, 'Cheetah');
             inp.dispatchEvent(new Event('input', {bubbles: true}));
             inp.dispatchEvent(new Event('change', {bubbles: true}));
-        })()""")
+        }})()""")
         await asyncio.sleep(0.3)
+    await _shot("02_after_name_fields")
 
     tc = await browser_click_checkbox_by_text("Terms of Service")
     if not tc.get("success"):
@@ -460,6 +490,7 @@ async def _playwright_onboarding() -> None:
         if not tc2.get("success"):
             await browser_console("""var b=document.querySelectorAll('button'); for(var i=0;i<b.length;i++){var r=b[i].getAttribute('role')||'';var a=b[i].getAttribute('aria-checked');if(r==='checkbox'||a!==null){b[i].click();return;}}""")
             await asyncio.sleep(0.5)
+    await _shot("03_after_terms")
 
     try:
         await browser_click_by_text("Continue", role="button")
@@ -477,6 +508,7 @@ async def _playwright_onboarding() -> None:
         })()""")
         logger.info("Continue clicked via JS dispatchEvent (disabled bypass)")
     await asyncio.sleep(3)
+    await _shot("04_after_continue")
 
     for uc in [
         "Prototype with open models",
@@ -493,6 +525,7 @@ async def _playwright_onboarding() -> None:
                 pass
             await asyncio.sleep(0.2)
         await asyncio.sleep(0.2)
+    await _shot("05_after_usecases")
 
     try:
         await browser_click_by_text("Submit", role="button")
@@ -504,6 +537,7 @@ async def _playwright_onboarding() -> None:
             except Exception:
                 continue
     await asyncio.sleep(2)
+    await _shot("06_after_submit")
 
     # If still on onboarding, the button click was disabled. Try form.requestSubmit() + Enter.
     url = (await browser_get_url())["url"]
@@ -524,6 +558,7 @@ async def _playwright_onboarding() -> None:
             logger.info("Enter key sent as Submit fallback (disabled bypass)")
             await asyncio.sleep(3)
     await asyncio.sleep(1)
+    await _shot("07_after_requestsubmit_enter")
 
     for _ in range(15):
         await asyncio.sleep(1)
