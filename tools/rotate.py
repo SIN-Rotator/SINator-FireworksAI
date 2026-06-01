@@ -125,7 +125,7 @@ async def main():
         # ══════════════════════════════════════════════════════════════
         logger.info("=== Launching Bot Chrome via SIN-Browser-Tools ===")
         from fireworks_service import launch, cleanup_bot, signup_fireworks
-        from fireworks_service import verify_account, login_fireworks, create_api_key
+        from fireworks_service import verify_account, create_api_key
 
         launch_result = await launch()
         fw_mgr = launch_result.get("browser_manager")
@@ -166,13 +166,17 @@ async def main():
         else:
             logger.warning(f"OTP nicht gefunden: {otp_result.get('error')}")
 
-        # Step 4: Login + Onboarding
-        logger.info("=== Fireworks Login + Onboarding ===")
-        login_result = await login_fireworks(alias, args.password)
-        if login_result.get('status') == 'success':
-            logger.info(f"Login OK: {login_result.get('steps_completed', [])}")
+        # Step 4: Onboarding (session is set by verify_account — no re-login needed)
+        logger.info("=== Fireworks Onboarding (no re-login after OTP confirm) ===")
+        from sin_browser_tools.tools.navigation import browser_get_url
+        from sin_browser_tools.tools.interaction import browser_click_by_text
+        from fireworks_service import _playwright_onboarding
+        url = (await browser_get_url())["url"]
+        if 'onboarding' in url:
+            await _playwright_onboarding()
+            logger.info("Onboarding complete")
         else:
-            logger.info(f"Login: {login_result.get('status')} - {login_result.get('error', '')}")
+            logger.info(f"Already past onboarding, URL: {url[:60]}")
 
         # Step 5: API Key
         logger.info("=== API Key ===")
