@@ -97,6 +97,7 @@ Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt. `status=inactive` URLs �
 ### Pool-Router + 10 Proxys
 - EIN Pool-Router (:9998) → 10 Proxy-Instanzen (:8888-:8897)
 - Auto-Failover bei 413/429/412/5xx
+- **CF-Fallback (Issue #24):** alle Pools tot/Cooldown → Cloudflare Worker (D1-Key-Rotation), falls `CF_WORKER_URL` gesetzt. Siehe `cloudflare/`
 
 ### Double-Key-Waste Fix (Atomic Report+Lease)
 - `pool_manager.report_key()` leaset Ersatz-Key atomar
@@ -137,12 +138,14 @@ Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt. `status=inactive` URLs �
 - `start-multi.sh` startet korrekt aus Repo, aber alte Proxys müssen zuerst sterben
 - **Cloudflare/deployment muss PROXY aus Repo starten, nicht aus ~/.sin-pool/**
 
-### Cloudflare Deployment (MUSS noch geklärt werden)
-- **Problem:** Mac muss aus sein → Pool/Router/Backend müssen auf Server laufen
-- **Lösung:** Deployment auf VPS/Cloud (Hetzner, etc.) oder Cloudflare Workers
-- **Voraussetzung:** `proxy/`, `scripts/pool-router.py`, `agent_toolbox/` auf Server
-- **GMX-Problem:** Chrome Profile 73 ist lokal — Rotation nur vom Mac aus möglich
-- **Architektur:** Server = Pool+Proxy+API, Mac = Rotation (GMX braucht Chrome)
+### Cloudflare Deployment (Issue #24 — umgesetzt, Deploy ausstehend)
+- **Problem:** Mac muss aus sein → Serving muss ohne Mac weiterlaufen
+- **Lösung:** Cloudflare Worker + D1 als Fallback (`cloudflare/worker.js`, `cloudflare/schema.sql`).
+  Mac bleibt primär; CF DNS Health Check → Mac tot = Worker übernimmt.
+- **Key-Sync:** `scripts/sync_to_cf.py` pusht den Pool nach jeder Rotation nach D1 (Mac = Source of Truth)
+- **GMX-Problem bleibt:** Chrome Profile 73 ist lokal — neue Keys werden weiterhin nur am Mac erzeugt; der Worker serviert nur den zuletzt gesyncten Pool
+- **Free Tier:** 100k req/Tag (~10 User)
+- **Ausstehend:** `wrangler deploy` + D1-Migration mit echten CF-Credentials (siehe `cloudflare/README.md`)
 
 ---
 
@@ -231,8 +234,15 @@ proxy/
 └── start-multi.sh              Startet Pool-Router + 10 Proxys
 
 scripts/
-├── pool-router.py              Pool-Router (ThreadingMixIn)
-└── pool-router.plist           LaunchAgent
+├── pool-router.py              Pool-Router (ThreadingMixIn) + CF-Fallback
+├── pool-router.plist           LaunchAgent
+└── sync_to_cf.py               Mac → Cloudflare D1 Pool-Sync (Issue #24)
+
+cloudflare/                     Worker-Fallback (Issue #24)
+├── worker.js                   1 Worker statt 10 Proxys, Key-Rotation in D1
+├── schema.sql                  D1 pool_keys Tabelle (ersetzt pool.json)
+├── wrangler.toml               Worker-Config (D1/KV Bindings)
+└── README.md                   Deploy + 5 offene Fragen
 
 tools/
 ├── rotate.py                   V19.1: Full E2E flow (GMX + Fireworks)

@@ -8,8 +8,10 @@
 
 | Variable | Standard | Beschreibung |
 |----------|----------|-------------|
-| `SINATOR_AUTH_TOKEN` | — | Auth-Token für API-Zugriff (optional, wenn gesetzt muss jeder Request `Authorization: Bearer <token>` mitsenden) |
+| `SINATOR_AUTH_TOKEN` | — | Auth-Token für API-Zugriff (optional, wenn gesetzt muss jeder Request `Authorization: Bearer <token>` mitsenden); wird vom Router auch an den CF-Fallback weitergereicht |
 | `PORT` | `8000` | Backend-HTTP-Port |
+| `CF_WORKER_URL` | — | Cloudflare-Worker Fallback-URL (Issue #24). Leer = Fallback deaktiviert |
+| `CF_SYNC_TOKEN` | — | Token für Mac→D1 Push via `scripts/sync_to_cf.py` (`SYNC_TOKEN` im Worker) |
 
 ---
 
