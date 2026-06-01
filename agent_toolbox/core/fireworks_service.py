@@ -9,126 +9,229 @@ Bot Chrome (BrowserManager) bleibt GEÖFFNET bis API Key generiert.
 import asyncio
 import logging
 import re
+import weakref
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 
+class _BrowserHandle:
+    """Duck-type wrapper that looks like BrowserManager to SIN-Browser-Tools."""
+    def __init__(self, page, context, browser, pw):
+        self._page = page
+        self._context = context
+        self._browser = browser
+        self._playwright = pw
+        self._started = True
+        self._dialog_queue = asyncio.Queue()
+        self._pending_dialog = None
+        self._dialog_pages = weakref.WeakSet()
+        self._registry_stub = None
+        self._browser_pid = None
+
+    @property
+    def page(self):
+        return self._page
+
+    @property
+    def context(self):
+        return self._context
+
+    async def cleanup(self):
+        try:
+            await self._context.close()
+        except Exception:
+            pass
+        try:
+            await self._browser.close()
+        except Exception:
+            pass
+        try:
+            await self._playwright.stop()
+        except Exception:
+            pass
+
+    def set_active_page(self, p):
+        self._page = p
+        self._context = p.context
+
+    async def new_page(self):
+        return await self._context.new_page()
+
+    @property
+    def active_page(self):
+        return self._page
+
+    def clear_active_page(self):
+        self._page = None
+
+    async def get_next_dialog(self, timeout=5.0, consume=True):
+        return None
+
+    def _setup_dialog_handler(self):
+        pass
+
+
 async def launch() -> Dict[str, Any]:
-    """Start Bot Chrome via SIN-Browser-Tools BrowserManager.
+    from playwright.async_api import async_playwright
+    from sin_browser_tools.core.manager import manager
 
-    Bot Chrome bleibt GEÖFFNET bis zur erfolgreichen API-Key-Generierung.
-    Der Aufrufer MUSS cleanup_bot() am Ende aufrufen.
-    """
-    from sin_browser_tools.core.manager import BrowserManager, manager
-    from sin_browser_tools.tools.navigation import browser_navigate
-    from sin_browser_tools.tools.interaction import (
-        browser_type, browser_click, browser_fill,
-        browser_click_by_text, browser_snapshot,
+    pw = await async_playwright().start()
+    browser = await pw.chromium.launch(
+        headless=False,
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-infobars",
+            "--window-size=1200,800",
+        ],
     )
+    context = await browser.new_context(
+        viewport={"width": 1200, "height": 800},
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        locale="de-DE",
+        timezone_id="Europe/Berlin",
+        accept_downloads=True,
+        bypass_csp=True,
+        ignore_https_errors=True,
+    )
+    page = await context.new_page()
 
-    fw_mgr = BrowserManager(headless=False, stealth=True)
-    await fw_mgr.start_local()
-    manager._set_instance(fw_mgr)
+    # Stealth patches via add_init_script
+    await page.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
+        window.chrome = { runtime: {} };
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) =>
+            parameters.name === 'notifications'
+                ? Promise.resolve({ state: Notification.permission })
+                : originalQuery(parameters);
+    """)
+
+    handle = _BrowserHandle(page, context, browser, pw)
+    manager._set_instance(handle)
     logger.info("Bot Chrome launched (stays open until API key success)")
-    return {"status": "launched", "browser_manager": fw_mgr}
+    return {"status": "launched", "browser_manager": handle}
 
 
 async def cleanup_bot(browser_manager=None) -> None:
     """Cleanup Bot Chrome only if no API key was generated."""
     if browser_manager:
         try:
-            from sin_browser_tools.core import manager as mgr
+            from sin_browser_tools.core import manager
             await browser_manager.cleanup()
-            mgr.manager._set_instance(None)
+            manager._set_instance(None)
             logger.info("Bot Chrome cleaned up")
         except Exception as e:
             logger.warning(f"Bot Chrome cleanup error: {e}")
 
 
 async def signup_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]:
-    """Create new Fireworks account via signup form.
-    Returns {status, steps_completed} — OTP reading delegated to rotate.py.
-    """
     from sin_browser_tools.tools.navigation import browser_navigate
-    from sin_browser_tools.tools.interaction import (
-        browser_type, browser_click, browser_fill,
-        browser_click_by_text, browser_wait_for_text,
+    from sin_browser_tools.tools.interaction import browser_click_by_text
+    from agent_toolbox.core.browser_utils import (
+        fill_react_input, wait_for_spa_transition,
     )
-    from sin_browser_tools.tools.interaction import browser_click_checkbox_by_text
 
     steps = []
 
-    # /signup
     await browser_navigate("https://app.fireworks.ai/signup")
     await asyncio.sleep(3)
+    pg = __page()
+    logger.info(f"Signup page loaded: {pg.url[:80]}")
 
-    # Cookie banner
-    try:
-        await browser_click_by_text("Accept All", role="button")
-        await asyncio.sleep(2)
-    except:
-        pass
+    await pg.evaluate("""() => {
+        document.querySelectorAll('.cky-overlay, .cky-consent-container, .cky-modal, .cky-preference-center')
+            .forEach(el => el.remove());
+        document.body.style.overflow = 'visible';
+    }""")
+    await asyncio.sleep(1)
 
-    # Email
-    await browser_fill("input[name='email']", email)
+    if not await fill_react_input(pg, 'input[name="email"]', email):
+        logger.error("Email fill failed")
+        return {"status": "error", "error": "email_fill_failed", "steps_completed": steps}
     steps.append("email_filled")
     await asyncio.sleep(1)
 
-    # Next
-    try:
-        await browser_click_by_text("Next", role="button")
-    except:
-        for btn in await __page().locator('button[type="submit"]').all():
-            if 'Next' in (await btn.text_content() or ''):
-                await btn.click(force=True)
-                break
-    await asyncio.sleep(2)
+    await pg.evaluate("""() => {
+        const next = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Next');
+        if (next) next.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    }""")
+    logger.info("Next clicked via JS dispatchEvent")
+
+    for _ in range(12):
+        await asyncio.sleep(1)
+        pws = await pg.locator('input[type="password"]').all()
+        if len(pws) >= 2:
+            break
+        body = await pg.evaluate("() => document.body.innerText")
+        if 'captcha' in body.lower() or 'verify you are human' in body.lower():
+            logger.error("CAPTCHA detected")
+            return {"status": "error", "error": "captcha", "steps_completed": steps}
+    else:
+        body = await pg.evaluate("() => document.body.innerText.substring(0, 1000)")
+        logger.error(f"Password fields not found. Page text: {body[:300]}")
+        return {"status": "error", "error": "no_password_fields", "steps_completed": steps}
     steps.append("next_clicked")
 
-    # Passwords (React — type with delay)
-    pws = await __page().locator('input[type="password"]').all()
-    if len(pws) >= 2:
-        for pw in pws[:2]:
-            await pw.click()
+    pw_input = confirm_input = None
+    for p in pws:
+        name = (await p.get_attribute('name') or '')
+        if name == 'password':
+            pw_input = p
+        elif name == 'confirmPassword':
+            confirm_input = p
+
+    for inp in [pw_input, confirm_input]:
+        if inp:
+            await inp.click()
             await asyncio.sleep(0.2)
-            await pw.fill("")
-            await pw.type(password, delay=40)
+            await inp.fill("")
+            await inp.type(password, delay=40)
             await asyncio.sleep(0.3)
-        await asyncio.sleep(1)
-        steps.append("passwords_filled")
+    steps.append("passwords_filled")
 
-        # Create Account
-        try:
-            await browser_click_by_text("Create Account", role="button")
-        except:
-            for btn in await __page().locator('button[type="submit"]').all():
-                if 'Create Account' in (await btn.text_content() or ''):
-                    await btn.click(force=True)
-                    break
-        logger.info("Create Account clicked")
+    await pg.evaluate("""() => {
+        const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === 'Create Account');
+        if (btn) btn.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
+    }""")
+    logger.info("Create Account clicked via JS dispatchEvent")
 
-        # Wait for page to advance
-        for _ in range(15):
-            await asyncio.sleep(1)
-            url = __page().url
-            if '/signup' not in url or 'verify' in url:
-                logger.info(f"Page advanced to: {url[:60]}")
-                break
-        steps.append("create_clicked")
+    if await wait_for_spa_transition(pg, "verify", timeout=25):
+        logger.info("Verify page detected")
+    else:
+        pg = __page()
+        if 'verify' in pg.url or 'confirm' in pg.url:
+            logger.info(f"Verify URL: {pg.url[:60]}")
+        else:
+            text = await pg.evaluate("() => document.body.innerText")
+            if 'verify' in text.lower() or 'check your email' in text.lower():
+                logger.info("Verify text detected")
+            else:
+                logger.warning(f"No verify — URL: {pg.url[:60]}")
+    steps.append("create_clicked")
 
-    logger.info("Signup complete — OTP reading delegated to rotate.py")
     return {"status": "signup_done", "steps_completed": steps}
 
 
 async def verify_account(verify_url: str, **kwargs) -> bool:
-    """Open Fireworks verify URL to confirm account."""
     from sin_browser_tools.tools.navigation import browser_navigate
+    from agent_toolbox.core.browser_utils import wait_for_spa_transition
 
     try:
         await browser_navigate(verify_url)
-        await asyncio.sleep(3)
-        logger.info(f"Verify URL opened: {__page().url[:80]}")
+        await asyncio.sleep(2)
+        pg = __page()
+        logger.info(f"Verify URL opened: {pg.url[:80]}")
+        await wait_for_spa_transition(pg, "onboarding", timeout=10)
         return True
     except Exception as e:
         logger.error(f"Verify error: {e}")
@@ -136,76 +239,71 @@ async def verify_account(verify_url: str, **kwargs) -> bool:
 
 
 async def login_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]:
-    """Login to Fireworks + handle onboarding (Playwright-native, kein CUA).
-
-    Bot Chrome Seite bleibt erhalten — keine neue Page.
-    Onboarding wird via Playwright-Locators gemacht (checkbox click, type, etc.).
-    """
     from sin_browser_tools.tools.navigation import browser_navigate
-    from sin_browser_tools.tools.interaction import (
-        browser_type, browser_fill, browser_click_by_text,
+    from sin_browser_tools.tools.interaction import browser_click_by_text
+    from agent_toolbox.core.browser_utils import (
+        accept_cookieyes_via_js, fill_react_input, wait_for_spa_transition,
     )
 
     steps = []
+    pg = __page()
 
-    # Login page
     await browser_navigate("https://app.fireworks.ai/login")
     await asyncio.sleep(2)
 
-    # Cookie
-    try:
-        await browser_click_by_text("Accept All", role="button")
-        await asyncio.sleep(1)
-    except:
-        pass
+    if not await accept_cookieyes_via_js(pg):
+        try:
+            for btn in await pg.locator('button').all():
+                txt = (await btn.text_content() or '').strip()
+                if txt in ('Accept All', 'Reject All'):
+                    await btn.click(force=True)
+                    break
+            await asyncio.sleep(1)
+        except:
+            pass
 
-    # Email Login link
     for attempt in range(3):
         try:
-            em = __page().locator('a:has-text("Email Login")').first
+            em = pg.locator('a:has-text("Email Login")').first
             if await em.count() > 0:
                 await em.click()
             else:
                 await browser_navigate("https://app.fireworks.ai/login?useEmail=true")
             await asyncio.sleep(2)
-            if await __page().locator('input[name="email"]').first.count() > 0:
+            if await pg.locator('input[name="email"]').first.count() > 0:
                 break
         except:
             await asyncio.sleep(2)
     steps.append("login_page")
 
-    # Fill credentials
-    await __page().locator('input[name="email"]').first.fill(email)
-    await __page().locator('input[name="password"]').first.fill(password)
+    await fill_react_input(pg, 'input[name="email"]', email)
+    await fill_react_input(pg, 'input[name="password"]', password)
     steps.append("credentials_filled")
 
-    # Submit
+    pg = __page()
     try:
         await browser_click_by_text("Next", role="button")
     except:
-        for btn in await __page().locator('button[type="submit"]').all():
+        for btn in await pg.locator('button[type="submit"]').all():
             if 'Next' in (await btn.text_content() or ''):
                 await btn.click(force=True)
                 break
     await asyncio.sleep(2)
     steps.append("form_submitted")
 
-    # Onboarding
-    if 'onboarding' in __page().url:
+    if 'onboarding' in pg.url:
         logger.info("Onboarding via Playwright (no CUA)")
-        await _playwright_onboarding(__page())
+        await _playwright_onboarding(pg)
         steps.append("onboarding_complete")
 
-    # Wait for redirect after login
     for _ in range(12):
         await asyncio.sleep(2)
-        url = __page().url
+        url = pg.url
         if any(x in url for x in ['home', 'account', 'settings', 'api-keys', 'models']):
             logger.info(f"Redirect detected: {url[:60]}")
             steps.append("login_success")
             return {"status": "success", "steps_completed": steps}
 
-    # Force navigate to check login state
     for url in [
         "https://app.fireworks.ai/settings/users/api-keys",
         "https://app.fireworks.ai/",
@@ -213,7 +311,7 @@ async def login_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]
         try:
             await browser_navigate(url)
             await asyncio.sleep(2)
-            if 'login' not in __page().url.lower():
+            if 'login' not in pg.url.lower():
                 steps.append("login_success")
                 return {"status": "success", "steps_completed": steps}
         except:
@@ -223,44 +321,33 @@ async def login_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]
 
 
 async def _playwright_onboarding(page) -> None:
-    """Playwright-native onboarding — fill names, terms, use-cases, submit."""
-    from sin_browser_tools.tools.interaction import browser_click_checkbox_by_text
+    from agent_toolbox.core.browser_utils import (
+        fill_react_input, click_react_checkbox, wait_for_spa_transition,
+    )
 
-    # First Name
     fn = page.locator('input[name="firstName"]').first
     if await fn.count() == 0:
         fn = page.locator('input[name="first"]').first
     if await fn.count() > 0:
-        await fn.click()
-        await asyncio.sleep(0.2)
-        await fn.type("Super", delay=50)
+        await fill_react_input(page, 'input[name="firstName"], input[name="first"]', "Super")
         await asyncio.sleep(0.5)
 
-    # Last Name
     ln = page.locator('input[name="lastName"]').first
     if await ln.count() == 0:
         ln = page.locator('input[name="last"]').first
     if await ln.count() > 0:
-        await ln.click()
-        await asyncio.sleep(0.2)
-        await ln.type("Cheetah", delay=50)
+        await fill_react_input(page, 'input[name="lastName"], input[name="last"]', "Cheetah")
         await asyncio.sleep(0.5)
 
-    # Terms
-    for cb in await page.locator('input[type="checkbox"]').all():
-        lbl = (await cb.get_attribute('aria-label') or '').lower()
-        n_id = (await cb.get_attribute('id') or '').lower()
-        if 'terms' in lbl or 'agree' in lbl or 'terms' in n_id:
-            await cb.click(force=True)
-            await asyncio.sleep(0.5)
-            break
-    else:
-        terms = page.locator('label:has-text("Terms")').first
-        if await terms.count() > 0:
-            await terms.click(force=True)
-            await asyncio.sleep(0.5)
+    if not await click_react_checkbox(page, "Terms"):
+        for cb in await page.locator('input[type="checkbox"]').all():
+            lbl = (await cb.get_attribute('aria-label') or '').lower()
+            n_id = (await cb.get_attribute('id') or '').lower()
+            if 'terms' in lbl or 'agree' in lbl or 'terms' in n_id:
+                await cb.click(force=True)
+                await asyncio.sleep(0.5)
+                break
 
-    # Continue
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Continue' in txt or 'Next' in txt:
@@ -268,19 +355,10 @@ async def _playwright_onboarding(page) -> None:
             await asyncio.sleep(2)
             break
 
-    # Use-cases
     for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
-        for inp in await page.locator('input[type="checkbox"]').all():
-            i_id = (await inp.get_attribute('id') or '').lower()
-            if 'cky' in i_id:
-                continue
-            label = await inp.get_attribute('aria-label') or ''
-            if uc.lower() in label.lower():
-                await inp.click(force=True)
-                await asyncio.sleep(0.3)
-                break
+        await click_react_checkbox(page, uc)
+        await asyncio.sleep(0.3)
 
-    # Submit
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Submit' in txt or 'Get $5' in txt:
@@ -288,12 +366,11 @@ async def _playwright_onboarding(page) -> None:
             await asyncio.sleep(4)
             break
 
-    # Wait for redirect
-    for _ in range(10):
-        await asyncio.sleep(2)
-        if any(x in page.url for x in ['home', 'account', 'settings', 'models']):
-            logger.info("Playwright onboarding complete")
-            return
+    if await wait_for_spa_transition(page, "home", timeout=15):
+        logger.info("Playwright onboarding complete")
+        return
+    if await wait_for_spa_transition(page, "account", timeout=15):
+        return
 
     logger.warning("Playwright onboarding — kein Redirect, force navigate")
     try:
@@ -383,17 +460,17 @@ async def create_api_key(key_name: str = "sinator-key", **kwargs) -> Dict[str, A
         logger.error("API Key dialog never appeared")
         return {"status": "error", "error": "Dialog not found"}
 
-    # Generate key
+    from agent_toolbox.core.browser_utils import fill_react_input
+
     for retry in range(3):
         suffix = f"-{retry}" if retry > 0 else ""
         name = key_name + suffix
 
-        # Fill name
         inp = pg.locator('input[name="name"]').first
-        await inp.click()
-        await asyncio.sleep(0.2)
-        await inp.fill("")
-        await inp.type(name, delay=40)
+        if await inp.count() > 0:
+            await inp.click()
+            await asyncio.sleep(0.2)
+        await fill_react_input(pg, 'input[name="name"]', name)
         await asyncio.sleep(1)
 
         # Wait for Generate to be enabled
@@ -443,8 +520,8 @@ class _PageAccessor:
     _instance = None
 
     def __call__(self):
-        from sin_browser_tools.core import manager as mgr
-        return mgr.manager.page
+        from sin_browser_tools.core import manager
+        return manager.page
 
 
 __page = _PageAccessor()

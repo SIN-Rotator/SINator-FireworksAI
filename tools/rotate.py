@@ -134,7 +134,14 @@ async def main():
         # Step 2: Fireworks Signup
         logger.info("=== Fireworks Signup ===")
         signup_result = await signup_fireworks(alias, args.password)
-        logger.info(f"Signup: {signup_result.get('status')} - steps: {signup_result.get('steps_completed', [])}")
+        steps_done = signup_result.get('steps_completed', [])
+        logger.info(f"Signup: {signup_result.get('status')} - steps: {steps_done}")
+        if signup_result.get('status') == 'error':
+            logger.error(f"Signup failed: {signup_result.get('error')} — aborting")
+            return
+        if 'passwords_filled' not in steps_done or 'create_clicked' not in steps_done:
+            logger.error(f"Signup incomplete (steps: {steps_done}) — no account created, aborting")
+            return
 
         # Step 3: OTP Poll (User Chrome)
         logger.info("=== OTP Polling (User Chrome) ===")
