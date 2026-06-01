@@ -434,15 +434,47 @@ async def _playwright_onboarding() -> None:
     from sin_browser_tools.tools.extraction import browser_console
 
     import os
-    # ── Step 1: Reject cookie banner so it doesn't block the form ──────────
+    # ── Step 1: AGGRESSIVELY remove cookie banner ──────────────────────────
+    # The banner has a "Customise" mode that shows hundreds of partner toggles
+    # and completely covers the form. We must nuke it before doing anything.
+    # First, scroll to top so all "Reject All" buttons are potentially visible.
+    await browser_console("""(() => {
+        // Scroll to top so the top Reject All button is in view
+        window.scrollTo(0, 0);
+    })()""")
+    await asyncio.sleep(0.3)
+
+    # Try clicking Reject All (top-of-page button, which is visible)
     try:
         await browser_click_by_text("Reject All", role="button")
         await asyncio.sleep(0.5)
+        logger.info("Cookie banner rejected via 'Reject All' click")
+    except Exception as e:
+        logger.warning(f"Reject All click failed: {e}")
+
+    # AGGRESSIVE: remove all cky-* elements via JS (catches anything that wasn't removed)
+    await browser_console("""(() => {
+        // Aggressive cky-* removal
+        document.querySelectorAll('.cky-overlay,.cky-consent-container,.cky-modal,.cky-preference-center,[class*="cky-"]').forEach(e => e.remove());
+        // Also remove any iframe-based cky banners
+        document.querySelectorAll('iframe[src*="cky"]').forEach(e => e.remove());
+        // Restore body scroll
+        document.body.style.overflow = 'visible';
+        document.documentElement.style.overflow = 'visible';
+    })()""")
+    await asyncio.sleep(0.5)
+
+    # Verify cky-* elements are gone
+    cky_count = (await browser_console("document.querySelectorAll('[class*=cky]').length") or {}).get("result", "0")
+    logger.info(f"Cookie banner: {cky_count} cky elements remaining (should be 0)")
+
+    # DIAG: screenshot after cookie banner removal
+    try:
+        from sin_browser_tools.core import manager
+        os.makedirs("/tmp/onboarding-diag", exist_ok=True)
+        await manager.page.screenshot(path="/tmp/onboarding-diag/after-cookie-cleanup.png")
     except Exception:
-        # Banner might be cky-* overlays — strip via JS
-        await browser_console("""document.querySelectorAll('.cky-overlay,.cky-consent-container,.cky-modal,[class*="cky-"]').forEach(e => e.remove()); document.body.style.overflow = 'visible';""")
-        await asyncio.sleep(0.5)
-    logger.info("Cookie banner handled")
+        pass
 
     # ── Step 2: Fill text fields via browser_type (delay=30ms triggers React) ─
     import random, string
@@ -537,10 +569,85 @@ async def _playwright_onboarding() -> None:
         logger.warning(f"Checkbox '{match_text}' NOT clicked")
         return False
 
-    # Terms checkbox
-    if not await _click_checkbox_any_strategy("agree"):
-        await _click_checkbox_any_strategy("terms")
-    await asyncio.sleep(0.3)
+    # Terms checkbox — try multiple strategies
+    # First, try the sin_browser_tools' browser_click_checkbox_by_text (uses sophisticated walker)
+    terms_clicked = False
+    try:
+        from sin_browser_tools.tools.interaction import browser_click_checkbox_by_text as _sbt_click_cb
+        r = await _sbt_click_cb("I agree to the Terms of Service and Privacy Policy")
+        if r.get("success"):
+            terms_clicked = True
+            logger.info("Terms clicked via browser_click_checkbox_by_text")
+    except Exception as e:
+        logger.warning(f"browser_click_checkbox_by_text failed: {e}")
+
+    if not terms_clicked:
+        # Fallback: my own 4-strategy
+        if not await _click_checkbox_any_strategy("agree"):
+            await _click_checkbox_any_strategy("terms")
+    await asyncio.sleep(0.5)
+
+    # DIAG: check Terms checkbox state after click
+    try:
+        from sin_browser_tools.core import manager
+        os.makedirs("/tmp/onboarding-diag", exist_ok=True)
+        await manager.page.screenshot(path="/tmp/onboarding-diag/after-terms.png")
+        cb_state = await browser_console("""(() => {
+            // Find all input[type=checkbox] on the page
+            var all = document.querySelectorAll('input[type="checkbox"]');
+            var matches = [];
+            for (var i=0; i<all.length; i++) {
+                matches.push({
+                    aria: all[i].getAttribute('aria-label') || '',
+                    checked: all[i].checked,
+                    disabled: all[i].disabled,
+                    id: all[i].id || '',
+                    name: all[i].name || '',
+                    parent_text: (all[i].closest('label') || {}).textContent || ''
+                });
+            }
+            return matches;
+        })()""")
+        logger.info(f"DIAG ALL checkboxes: {cb_state}")
+    except Exception as e:
+        logger.warning(f"DIAG Terms: {e}")
+
+    # DIAG: check Terms checkbox state after click
+    try:
+        from sin_browser_tools.core import manager
+        os.makedirs("/tmp/onboarding-diag", exist_ok=True)
+        await manager.page.screenshot(path="/tmp/onboarding-diag/after-terms.png")
+        cb_state = await browser_console("""(() => {
+            // Find Terms checkbox and report its checked state
+            var inputs = document.querySelectorAll('input[type="checkbox"]');
+            var matches = [];
+            for (var i=0; i<inputs.length; i++) {
+                var lbl = (inputs[i].getAttribute('aria-label') || '').toLowerCase();
+                if (lbl.indexOf('agree') !== -1 || lbl.indexOf('terms') !== -1) {
+                    matches.push({
+                        aria: lbl,
+                        checked: inputs[i].checked,
+                        disabled: inputs[i].disabled
+                    });
+                }
+            }
+            // Also check role=checkboxes
+            var roles = document.querySelectorAll('[role="checkbox"]');
+            for (var j=0; j<roles.length; j++) {
+                var al = (roles[j].getAttribute('aria-label') || '').toLowerCase();
+                if (al.indexOf('agree') !== -1 || al.indexOf('terms') !== -1) {
+                    matches.push({
+                        role_aria: al,
+                        checked: roles[j].getAttribute('aria-checked'),
+                        cls: (roles[j].className || '').slice(0, 50)
+                    });
+                }
+            }
+            return matches;
+        })()""")
+        logger.info(f"DIAG Terms checkbox state: {cb_state}")
+    except Exception as e:
+        logger.warning(f"DIAG Terms: {e}")
 
     # DIAG: screenshot before Continue
     try:
@@ -646,24 +753,30 @@ async def _playwright_onboarding() -> None:
             return 'no_form';
         })()""")
         logger.info("Form submitted via requestSubmit()")
-        await asyncio.sleep(2)
+        await asyncio.sleep(5)
         url = (await browser_get_url())["url"]
         if 'onboarding' in url:
             await browser_press("Enter")
             logger.info("Enter key sent as Submit fallback (disabled bypass)")
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
-    for _ in range(15):
+    for _ in range(45):  # 45s wait — server-side processing can be slow
         await asyncio.sleep(1)
         url = (await browser_get_url())["url"]
         if any(x in url for x in ['home', 'account', 'settings', 'api-keys', 'models']):
             logger.info(f"Onboarding redirect: {url[:60]}")
             return
     else:
-        logger.warning("Playwright onboarding — kein Redirect, force navigate")
+        logger.warning("Playwright onboarding — kein Redirect nach 45s, force navigate")
         try:
             await browser_navigate("https://app.fireworks.ai/settings/users/api-keys")
-            await asyncio.sleep(2)
+            # Wait a bit longer for the force-navigate to take effect
+            for _ in range(15):
+                await asyncio.sleep(1)
+                url = (await browser_get_url())["url"]
+                if any(x in url for x in ['home', 'account', 'settings', 'api-keys', 'models']):
+                    logger.info(f"Force-nav redirect: {url[:60]}")
+                    return
         except Exception:
             pass
 
