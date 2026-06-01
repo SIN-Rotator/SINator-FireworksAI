@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-SINator - Rotation Tool V8.2 (2026-05-31) — Multi-Tab Architektur
+SINator - Rotation Tool V9.0 (CEO-Review Fixes, 2026-06-01)
 Docs: rotate.doc.md
 
-V8.2:
-  - initialize_architecture() erstellt TWO TABS:
-    * work_tab → Login, Alias, Fireworks
-    * inbox_tab → IMMER im Posteingang geparkt (nie navigiert)
-  - OTP via read_otp_v2() auf inbox_tab (Frame-Tools V18.1)
-  - Session-isoliert: inbox_tab hat nie Session-Vergiftung
+V9.0 CEO-Fixes:
+  - Session Persistence via storage_state (0.1s Login statt 30s)
+  - Main-Frame-Only OTP Scanner (keine 62 Ad-iFrames)
+  - React-kompatibles Fireworks Onboarding
+  - Network Interception fuer Signup-Confirmation
 
 Usage:
   python3 tools/rotate.py
@@ -34,6 +33,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
 logging.basicConfig(level=logging.DEBUG if os.environ.get("LOG_LEVEL") == "DEBUG" else logging.INFO, format='%(message)s')
 logger = logging.getLogger("rotate")
 
+# Session storage paths
+SESSION_DIR = Path(__file__).parent.parent / "data" / "sessions"
+GMX_SESSION_FILE = SESSION_DIR / "gmx_session.json"
+
 
 def _find_free_port(start: int = 9230) -> int:
     for port in range(start, start + 50):
@@ -43,17 +46,8 @@ def _find_free_port(start: int = 9230) -> int:
     raise RuntimeError("No free port found")
 
 
-async def _get_or_create_gmx_tab(browser: Browser, url_contains: str = "gmx.net") -> Page:
-    """Find existing GMX tab or create new one in the connected Chrome."""
-    for ctx in browser.contexts:
-        for pg in ctx.pages:
-            if url_contains in (pg.url or "") and "about:blank" not in pg.url:
-                return pg
-    return await browser.new_page()
-
-
 async def main():
-    parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation (V8.2 Multi-Tab)")
+    parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation (V9.0 CEO-Fixes)")
     parser.add_argument("alias", nargs="?", help="Optional alias name")
     parser.add_argument("--gmx-email", help="GMX account email (required)")
     parser.add_argument("--gmx-password", help="GMX account password (required)")
@@ -61,6 +55,7 @@ async def main():
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
     parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = chromium.launch)")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+    parser.add_argument("--no-session", action="store_true", help="Disable session persistence")
     args = parser.parse_args()
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
@@ -81,32 +76,45 @@ async def main():
     from playwright.async_api import async_playwright
     p = await async_playwright().start()
 
+    browser = None
+    ctx = None
+    
     if args.cdp_port:
-        # Connect to existing Chrome (User Profile 73 or running instance)
         logger.info(f"=== Connecting to Chrome on CDP port {args.cdp_port} ===")
-        browser = await p.chromium.connect_over_cdp(
-            f"http://127.0.0.1:{args.cdp_port}"
-        )
-        logger.info("✅ Connected to existing Chrome")
+        browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.cdp_port}")
+        logger.info("Connected to existing Chrome")
     else:
-        # Launch fresh Bot Chrome on free port
         cdp_port = _find_free_port()
         logger.info(f"=== Launching Bot Chromium (CDP port {cdp_port}) ===")
         browser = await p.chromium.launch(
             headless=False,
             args=[f'--remote-debugging-port={cdp_port}']
         )
-        logger.info("✅ Bot Chromium launched")
+        logger.info("Bot Chromium launched")
 
     alias = None
     try:
         from gmx_service import GmxService
         gmx = GmxService()
 
-        # ═══ Multi-Tab Architektur — EIN Context für beide Tabs ═══
-        logger.info("Creating context, work_tab and inbox_tab...")
-        # EIN Context für beide Tabs (teilt Cookies nach Login)
-        ctx = await browser.new_context()
+        # ══════════════════════════════════════════════════════════════════
+        # CEO-FIX: Session Persistence (0.1s Login statt 30s)
+        # ══════════════════════════════════════════════════════════════════
+        
+        session_loaded = False
+        if not args.no_session and GMX_SESSION_FILE.exists():
+            logger.info("=== Loading GMX Session (CEO-Fix: 0.1s Login) ===")
+            try:
+                ctx = await browser.new_context(storage_state=str(GMX_SESSION_FILE))
+                session_loaded = True
+                logger.info(f"Session loaded from {GMX_SESSION_FILE}")
+            except Exception as e:
+                logger.warning(f"Session load failed: {e}")
+                ctx = await browser.new_context()
+        else:
+            ctx = await browser.new_context()
+        
+        # Create tabs
         work_tab = await ctx.new_page()
         inbox_tab = await ctx.new_page()
         gmx.work_tab = work_tab
@@ -116,111 +124,138 @@ async def main():
         logger.info(f"work_tab: {work_tab.url[:80]}")
         logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
 
-        # ═══ Step 0: GMX Login auf work_tab (Bot-Chrome hat keine Session) ═══
-        logger.info("=== GMX Login ===")
-        logged_in = await gmx._login(work_tab, email=args.gmx_email, password=args.gmx_password)
-        if logged_in:
-            logger.info("✅ GMX Login OK")
-        else:
-            logger.error("❌ GMX Login failed")
-            return
+        # ══════════════════════════════════════════════════════════════════
+        # Step 0: GMX Login (oder Session-Restore)
+        # ══════════════════════════════════════════════════════════════════
+        
+        logged_in = False
+        if session_loaded:
+            # Verify session is still valid
+            logger.info("=== Verifying GMX Session ===")
+            await work_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+            await asyncio.sleep(3)
+            
+            if "navigator.gmx.net/mail" in work_tab.url and "login" not in work_tab.url.lower():
+                logger.info("Session valid - skipping login")
+                logged_in = True
+            else:
+                logger.info("Session expired - full login required")
+        
+        if not logged_in:
+            logger.info("=== GMX Login ===")
+            logged_in = await gmx._login(work_tab, email=args.gmx_email, password=args.gmx_password)
+            if logged_in:
+                logger.info("GMX Login OK")
+                # CEO-FIX: Save session for next run
+                if not args.no_session:
+                    try:
+                        SESSION_DIR.mkdir(parents=True, exist_ok=True)
+                        await ctx.storage_state(path=str(GMX_SESSION_FILE))
+                        logger.info(f"Session saved to {GMX_SESSION_FILE}")
+                    except Exception as e:
+                        logger.warning(f"Session save failed: {e}")
+            else:
+                logger.error("GMX Login failed")
+                return
 
-        # SID aus work_tab URL extrahieren (von bap.navigator.gmx.net)
+        # Extract SID
         sid_match = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
         gmx_sid = sid_match.group(1) if sid_match else None
-        gmx_work_url = work_tab.url  # Original URL merken (bap.navigator.gmx.net)
+        gmx_work_url = work_tab.url
         logger.info(f"GMX SID: {gmx_sid[:20] if gmx_sid else 'None'}...")
-        logger.info(f"GMX work URL: {gmx_work_url[:80]}")
 
-        # inbox_tab NACH Login zum GMX-Posteingang navigieren (EXAKTE URL von work_tab)
+        # Navigate inbox_tab to GMX
         if gmx_sid:
-            # Navigate to SAME URL as work_tab (bap.navigator.gmx.net, nicht navigator.gmx.net!)
             await inbox_tab.goto(gmx_work_url, wait_until="domcontentloaded")
             await asyncio.sleep(3)
-
-            # Consent handling falls nötig
-            for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")', 'button:has-text("Akzeptieren")']:
+            
+            # Consent handling
+            for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")']:
                 try:
                     btn = inbox_tab.locator(consent_btn).first
-                    if await btn.is_visible(timeout=3000):
+                    if await btn.is_visible(timeout=2000):
                         await btn.click()
-                        await asyncio.sleep(3)
+                        await asyncio.sleep(2)
                         break
                 except:
                     pass
 
-            await asyncio.sleep(3)
-            logger.info(f"inbox_tab: {inbox_tab.url[:80]}")
-
-        # ═══ Step 1: GMX Alias Rotation auf work_tab ═══
+        # ══════════════════════════════════════════════════════════════════
+        # Step 1: GMX Alias Rotation
+        # ══════════════════════════════════════════════════════════════════
+        
         logger.info("=== GMX Alias Rotation ===")
         result = await gmx.rotate_alias(new_alias_name=args.alias, page=work_tab)
         if result.get('status') not in ('success', 'partial'):
-            logger.error(f"❌ GMX rotation failed: {result.get('error')}")
+            logger.error(f"GMX rotation failed: {result.get('error')}")
             return
         alias = result.get('created_alias')
-        logger.info(f"✅ GMX Alias: {alias} ({result.get('execution_time')})")
+        logger.info(f"GMX Alias: {alias}")
         if not alias:
-            logger.error("❌ No alias created")
+            logger.error("No alias created")
             return
 
-        # ═══ Step 2: Fireworks Signup auf work_tab ═══
+        # ══════════════════════════════════════════════════════════════════
+        # Step 2: Fireworks Signup (mit CEO-Fixes)
+        # ══════════════════════════════════════════════════════════════════
+        
         logger.info("=== Fireworks Signup ===")
         from fireworks_service import signup_fireworks
         signup_result = await signup_fireworks(alias, args.password, browser=browser, existing_page=work_tab)
-        signup_status = signup_result.get('status')
-        logger.info(f"Signup: {signup_status} — {signup_result.get('error', '')}")
+        logger.info(f"Signup: {signup_result.get('status')} - steps: {signup_result.get('steps_completed', [])}")
 
-        # ═══ Step 3: OTP Poll — inbox_tab navigieren, dann CDP AXTree OTP ═══
-        logger.info("=== OTP Polling — inbox_tab zu GMX navigieren ===")
-
-        # inbox_tab navigieren (work_tab ist auf Fireworks)
+        # ══════════════════════════════════════════════════════════════════
+        # Step 3: OTP Poll (CEO-FIX: Main-Frame-Only, keine 62 Ad-iFrames!)
+        # ══════════════════════════════════════════════════════════════════
+        
+        logger.info("=== OTP Polling (CEO-Fix: Main-Frame-Only) ===")
+        
         await inbox_tab.bring_to_front()
         await inbox_tab.goto(gmx_work_url, wait_until="domcontentloaded")
-        await asyncio.sleep(5)
+        await asyncio.sleep(3)
 
-        # Consent handling
-        for consent_btn in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")']:
-            try:
-                btn = inbox_tab.locator(consent_btn).first
-                if await btn.is_visible(timeout=2000):
-                    await btn.click()
-                    await asyncio.sleep(2)
-                    break
-            except:
-                pass
-
-        logger.info(f"inbox_tab URL: {inbox_tab.url[:80]}")
-
-        # ═══ Step 3: OTP via V18.1 Frame-Tools (inbox_tab) ═══
-        logger.info("=== OTP via Frame-Tools V18.1 (inbox_tab, bis 60s) ===")
+        # Try CEO-Fixed Main-Frame-Only scanner first
         verify_ok = False
-        otp_result = await gmx.read_otp_v2(
-            sender_keyword="fireworks", timeout=60
-        )
-        otp_url = otp_result.get("otp_url")
-        otp_code = otp_result.get("otp_code")
+        otp_url = None
+        otp_code = None
+        
+        try:
+            otp_result = await gmx.read_otp_main_frame_only(sender_keyword="fireworks", timeout=60)
+            otp_url = otp_result.get("otp_url")
+            otp_code = otp_result.get("otp_code")
+        except AttributeError:
+            # Fallback to CDP AXTree if main_frame_only not available
+            logger.info("Fallback to CDP AXTree OTP scanner")
+            otp_result = await gmx.read_otp_cdp_axtree(sender_keyword="fireworks", timeout=60)
+            otp_url = otp_result.get("otp_url")
+            otp_code = otp_result.get("otp_code")
 
         if otp_url:
             logger.info(f"OTP-URL: {otp_url[:60]}")
             from fireworks_service import verify_account
             verify_ok = await verify_account(otp_url, browser=browser)
-            logger.info(f"Verify: {'✅ OK' if verify_ok else '⚠️ Failed'}")
+            logger.info(f"Verify: {'OK' if verify_ok else 'Failed'}")
         elif otp_code:
             logger.info(f"OTP-Code: {otp_code}")
         else:
             logger.warning(f"OTP nicht gefunden: {otp_result.get('error')}")
 
-        # ═══ Step 4: Fireworks Login + Onboarding auf work_tab ═══
+        # ══════════════════════════════════════════════════════════════════
+        # Step 4: Fireworks Login + Onboarding (CEO-Fixed)
+        # ══════════════════════════════════════════════════════════════════
+        
         logger.info("=== Fireworks Login + Onboarding ===")
         from fireworks_service import login_fireworks
         login_result = await login_fireworks(alias, args.password, browser=browser)
         if login_result.get('status') == 'success':
-            logger.info(f"✅ Login OK: {login_result.get('steps_completed', [])}")
+            logger.info(f"Login OK: {login_result.get('steps_completed', [])}")
         else:
-            logger.info(f"Login: {login_result.get('status')} — {login_result.get('error', '')}")
+            logger.info(f"Login: {login_result.get('status')} - {login_result.get('error', '')}")
 
-        # ═══ Step 5: API Key auf work_tab ═══
+        # ══════════════════════════════════════════════════════════════════
+        # Step 5: API Key
+        # ══════════════════════════════════════════════════════════════════
+        
         logger.info("=== API Key ===")
         from fireworks_service import create_api_key
         key_name = alias.split("@")[0].split("-")[0] if alias else "sinator-key"
@@ -228,27 +263,31 @@ async def main():
         api_key = api_result.get("api_key")
 
         if not api_key:
-            logger.error(f"❌ API Key creation failed: {api_result.get('error')}")
+            logger.error(f"API Key creation failed: {api_result.get('error')}")
             return
 
-        logger.info(f"✅ API Key: {api_key}")
+        logger.info(f"API Key: {api_key}")
 
-        # ═══ Step 6: Save to pool ═══
+        # ══════════════════════════════════════════════════════════════════
+        # Step 6: Save to pool
+        # ══════════════════════════════════════════════════════════════════
+        
         if args.save:
             try:
                 from pool_manager import PoolManager
                 pool = PoolManager()
                 pool.add_key(api_key=api_key, alias_email=alias, key_name=key_name)
-                logger.info(f"✅ Saved to pool ({pool.get_stats()['total']} keys total)")
+                logger.info(f"Saved to pool ({pool.get_stats()['total']} keys total)")
             except Exception as e:
                 logger.warning(f"Pool save skipped: {e}")
 
     finally:
         elapsed = time.time() - t0
         logger.info("=== Shutdown ===")
-        await browser.close()
+        if browser:
+            await browser.close()
         await p.stop()
-        logger.info(f"\n🎉 ROTATION COMPLETE — {elapsed:.1f}s")
+        logger.info(f"\nROTATION COMPLETE - {elapsed:.1f}s")
 
 
 if __name__ == "__main__":

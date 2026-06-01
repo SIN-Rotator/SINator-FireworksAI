@@ -1502,3 +1502,95 @@ def get_gmx_service() -> GmxService:
     if _gmx_service is None:
         _gmx_service = GmxService()
     return _gmx_service
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # CEO-FIX: Main-Frame-Only OTP Scanner (keine 62 Ad-iFrames mehr!)
+    # ══════════════════════════════════════════════════════════════════════
+
+    async def read_otp_main_frame_only(self, sender_keyword: str = "fireworks", timeout: int = 120) -> Dict[str, Any]:
+        """CEO-FIX: OTP-Suche NUR im Main-Frame (keine Ad-iFrames!).
+        
+        Das alte read_otp_axtree_and_frames scannte ALLE frames inkl. 62 Ad-Tracker
+        (Doubleclick, Criteo, Adform, Safeframe), was zu:
+          - Massiven Timeouts
+          - Memory-Leaks
+          - EPIPE-Crashs (Playwright-Treiber bricht ab)
+        
+        Diese Version scannt NUR den Main-Frame und optional den 'mail' Frame.
+        """
+        if self.inbox_tab is None:
+            logger.error("inbox_tab nicht initialisiert")
+            return {"status": "error", "otp_url": None, "error": "inbox_tab missing"}
+
+        logger.info(f"[Main-Frame-OTP] Start (Keyword: {sender_keyword}, timeout: {timeout}s)")
+        
+        pattern_url = re.compile(
+            r"https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+"
+        )
+        pattern_otp = re.compile(r"\b[A-Z0-9]{6}\b")
+        
+        start_time = time.time()
+        deadline = start_time + timeout
+        
+        while time.time() < deadline:
+            try:
+                # ONLY scan main frame + 'mail' frame (keine Ad-iFrames!)
+                frames_to_scan = [self.inbox_tab.main_frame]
+                
+                # Add 'mail' frame if it exists
+                for f in self.inbox_tab.frames:
+                    if f.name == "mail":
+                        frames_to_scan.append(f)
+                        break
+                
+                logger.debug(f"[Main-Frame-OTP] Scanning {len(frames_to_scan)} frames (NOT {len(self.inbox_tab.frames)} total)")
+                
+                for frame in frames_to_scan:
+                    try:
+                        text = await frame.evaluate("() => document.body ? document.body.innerText : ''")
+                        text_lower = text.lower()
+                        
+                        # Check for sender keyword
+                        if sender_keyword.lower() in text_lower:
+                            # Check for verify URL
+                            url_match = pattern_url.search(text)
+                            if url_match:
+                                elapsed = time.time() - start_time
+                                logger.info(f"[Main-Frame-OTP] URL found after {elapsed:.1f}s")
+                                return {
+                                    "status": "success",
+                                    "otp_url": html_module.unescape(url_match.group(0)),
+                                    "otp_code": None,
+                                    "execution_time": f"{elapsed:.2f}s",
+                                }
+                            
+                            # Check for OTP code
+                            otp_match = pattern_otp.search(text)
+                            if otp_match:
+                                elapsed = time.time() - start_time
+                                logger.info(f"[Main-Frame-OTP] OTP code: {otp_match.group(0)}")
+                                return {
+                                    "status": "success",
+                                    "otp_url": None,
+                                    "otp_code": otp_match.group(0),
+                                    "execution_time": f"{elapsed:.2f}s",
+                                }
+                    except Exception as e:
+                        logger.debug(f"[Main-Frame-OTP] Frame scan error: {e}")
+                        continue
+                
+                # Wait before next poll
+                elapsed = time.time() - start_time
+                remaining = deadline - time.time()
+                sleep_t = min(5, remaining) if remaining > 0 else 0
+                if sleep_t > 0:
+                    logger.info(f"[Main-Frame-OTP] No mail yet. Waiting {sleep_t:.0f}s... (elapsed: {elapsed:.0f}s)")
+                    await asyncio.sleep(sleep_t)
+                    
+            except Exception as e:
+                logger.warning(f"[Main-Frame-OTP] Poll error: {e}")
+                await asyncio.sleep(3)
+        
+        logger.warning("[Main-Frame-OTP] Timeout")
+        return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "Timeout"}
