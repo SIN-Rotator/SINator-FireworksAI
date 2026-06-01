@@ -68,7 +68,8 @@ def find_cua_window(
         windows = json.loads(res.stdout).get("windows", [])
 
         def _match(w):
-            if w.get("app_name", "").lower() != app_name.lower():
+            a = w.get("app_name", "").lower()
+            if "chrome" not in a and "chromium" not in a:
                 return False
             if target_pid and w.get("pid") != target_pid:
                 return False
@@ -98,20 +99,21 @@ def find_cua_window(
                     )
                     return w["pid"], w["window_id"]
 
-        # Activate Chrome and retry
-        logger.info("Activating Chrome and retrying...")
-        _activate_chrome()
-        time.sleep(1)
-        res2 = subprocess.run(
-            ["cua-driver", "call", "list_windows"],
-            capture_output=True, text=True, timeout=10,
-            input=json.dumps({"query": "Chrome"}),
-        )
-        windows2 = json.loads(res2.stdout).get("windows", [])
-        for w in windows2:
-            if _match(w):
-                logger.info("CUA window found after activate: pid=%s wid=%s", w["pid"], w["window_id"])
-                return w["pid"], w["window_id"]
+        # Activate Chrome and retry (up to 3 attempts)
+        for retry in range(3):
+            logger.info(f"CUA window retry {retry+1}/3...")
+            _activate_chrome()
+            time.sleep(2)
+            res2 = subprocess.run(
+                ["cua-driver", "call", "list_windows"],
+                capture_output=True, text=True, timeout=10,
+                input=json.dumps({"query": "Chrome"}),
+            )
+            windows2 = json.loads(res2.stdout).get("windows", [])
+            for w in windows2:
+                if _match(w):
+                    logger.info("CUA window found at retry %d: pid=%s wid=%s", retry+1, w["pid"], w["window_id"])
+                    return w["pid"], w["window_id"]
 
         logger.warning(
             "CUA window not found: app=%s keywords=%s",
