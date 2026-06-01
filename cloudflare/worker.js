@@ -48,16 +48,19 @@ const PERMANENT_ERROR_KEYWORDS = [
 const MAX_SWAPS = 4; // wie viele tote Keys wir pro Request überspringen
 
 const FALLBACK_MODELS = [
+  // Exakt wie in der OpenCode-Config (SIN-Code-FireworksAI-OpenCode-Config)
+  "fireworks/deepseek-v4-pro",
   "accounts/fireworks/models/deepseek-v4-flash",
-  "accounts/fireworks/models/deepseek-v4-pro",
-  "accounts/fireworks/models/glm-5p1",
+  "fireworks/glm-5p1",
+  "accounts/fireworks/routers/glm-5p1-fast",
+  "fireworks/kimi-k2p6",
+  "accounts/fireworks/routers/kimi-k2p6-turbo",
+  "accounts/fireworks/models/kimi-k2p5",
+  "accounts/fireworks/models/qwen3p6-plus",
+  "fireworks/minimax-m2p7",
+  "accounts/fireworks/models/minimax-m2p5",
   "accounts/fireworks/models/gpt-oss-120b",
   "accounts/fireworks/models/gpt-oss-20b",
-  "accounts/fireworks/models/kimi-k2p5",
-  "accounts/fireworks/models/kimi-k2p6",
-  "accounts/fireworks/models/minimax-m2p5",
-  "accounts/fireworks/models/minimax-m2p7",
-  "accounts/fireworks/models/qwen3p6-plus",
 ];
 
 const CORS_HEADERS = {
