@@ -1,5 +1,31 @@
 # Troubleshooting
 
+## Proxys laufen mit veralteter Version (Issue #26)
+
+**Symptom:** Repo-Fixes (normalizeBody, FALLBACK_MODELS, etc.) werden nicht aktiv.
+
+```bash
+# Pruefen welche Version laeuft:
+ps aux | grep -E "sin-pool|pool-router" | grep -v grep
+# FALSCH: .../Python /Users/jeremy/.sin-pool/server.py
+# RICHTIG: .../Python /Users/jeremy/dev/SINator-fireworksai/proxy/server.py
+
+# Installierte Version pruefen:
+cat ~/.sin-pool/.version
+```
+
+**Ursache:** LaunchAgents mit `KeepAlive: true` starten von `~/.sin-pool/` (nicht vom Repo).
+
+**Loesung:**
+```bash
+# Option 1: Development (laeuft direkt aus Repo)
+./proxy/start-multi.sh
+
+# Option 2: Production (synct installierte Version)
+./proxy/update-installed.sh
+launchctl load ~/Library/LaunchAgents/com.sin.pool-proxy.plist
+```
+
 ## Installer-Fehler
 
 ### "Patch may already be applied"

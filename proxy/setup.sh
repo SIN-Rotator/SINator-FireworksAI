@@ -1,6 +1,8 @@
 #!/bin/bash
 # Pool Proxy Installer for Miner MacBooks
 # Usage: ./setup.sh [tunnel_url]
+#
+# Issue #26: Now syncs from repo instead of copying (keeps ~/.sin-pool/ updatable)
 set -e
 
 TUNNEL_URL="${1:-}"
@@ -8,22 +10,28 @@ INSTALL_DIR="$HOME/.sin-pool"
 PLIST_NAME="com.sin.pool-proxy"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 OPENCODE_CONFIG="$HOME/.config/opencode/opencode.json"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "=== SINator Pool Proxy Setup ==="
+echo "Repo: $REPO_ROOT"
 echo ""
 
 # 1. Create install directory
 mkdir -p "$INSTALL_DIR"
 echo "[1/6] Install dir: $INSTALL_DIR"
 
-# 2. Copy proxy files
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 2. Copy proxy files (Issue #26: always fresh from repo)
+echo "[2/6] Syncing proxy files from repo..."
 for f in server.py pool_client.py key_cache.py config.py __init__.py; do
     if [ -f "$SCRIPT_DIR/$f" ]; then
         cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/"
+        echo "  - $f"
     fi
 done
-echo "[2/6] Proxy files copied"
+# Write version marker for debugging
+echo "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo 'unknown') $(date +%Y-%m-%d_%H:%M)" > "$INSTALL_DIR/.version"
+echo "  Version: $(cat "$INSTALL_DIR/.version")"
 
 # 3. Ask for tunnel URL if not provided
 if [ -z "$TUNNEL_URL" ]; then

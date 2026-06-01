@@ -26,6 +26,7 @@ key rotation and silent dead-key swap.
 |--------|---------|
 | `fetch(request, env)` | Router — dispatches by path, enforces auth |
 | `nextKey(env, exclude)` | Pick least-used `active` key from D1 (excludes already-tried IDs) |
+| `normalizeBody(env, body)` | Expand short model aliases (e.g., `"glm-5p1"` → `"accounts/fireworks/routers/glm-5p1-fast"`); matches against FALLBACK_MODELS + KV cache |
 | `markKey(env, id, status)` | Set key status (`active` / `suspended` / `used`) + bump `use_count` |
 | `proxyToFireworks(...)` | Forward request with current key; rotate on dead-key statuses |
 | `pushKeys(env, keys)` | Batched D1 upsert for Mac sync |
@@ -34,7 +35,8 @@ key rotation and silent dead-key swap.
 ## Rotation Logic
 
 1. `nextKey` selects the least-used `active` key.
-2. Request is forwarded to Fireworks with `Authorization: Bearer <key>`.
+2. Request body is normalized: short model aliases (e.g. `"glm-5p1"`) are expanded to full paths matching OpenCode config (e.g. `"accounts/fireworks/routers/glm-5p1-fast"`).
+3. Request is forwarded to Fireworks with `Authorization: Bearer <key>`.
 3. On `401/402/403/412` or a **permanent** `429` (spending limit) → `markKey(..., 'suspended')`, retry with next key.
 4. SSE streams are passed through unchanged (network I/O only — no Worker CPU-limit issue on the free tier).
 5. If all keys are exhausted → return the last upstream error.
@@ -44,6 +46,8 @@ key rotation and silent dead-key swap.
 | Item | Value |
 |------|-------|
 | Free Tier | 100k req/day (~10 users) |
+| Models list | FALLBACK_MODELS (hardcoded) + KV cache hit = OpenCode config model IDs |
+| Model alias expansion | Short form (`"glm-5p1"`) → full path matching FALLBACK_MODELS suffix |
 | Models cache TTL | 1h (KV) |
 | Dead-key statuses | `401, 402, 403, 412`, permanent `429` |
 
