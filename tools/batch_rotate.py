@@ -34,6 +34,7 @@ async def rotate_one():
         "--gmx-password", cfg.gmx_password,
         "--password", cfg.fireworks_password,
         "--cdp-port", "9222",
+        "--debug",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(ROTATE_SCRIPT.parent.parent),
@@ -69,8 +70,9 @@ async def main():
                 log(f"✅ #{successes}/{TARGET} complete")
             else:
                 failures += 1
-                last_err = [l for l in result["output"] if "failed" in l.lower() or "error" in l.lower()]
-                log(f"❌ #{successes + 1} FAILED: {last_err[-1] if last_err else 'unknown'}")
+                log(f"❌ #{successes + 1} FAILED — FULL OUTPUT:")
+                for l in result["output"]:
+                    log(f"  | {l}")
                 if failures >= 3:
                     log("⚠️  3 consecutive failures — STOPPING. Check Chrome/GMX session.")
                     break

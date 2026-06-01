@@ -289,7 +289,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
         for attempt in range(8):
             await asyncio.sleep(2)
             try:
-                if any(x in page.url for x in ['home', 'account', 'settings']):
+                if any(x in page.url for x in ['home', 'account', 'settings']) and 'login' not in page.url:
                     logger.info(f"Redirect detected ({page.url[:60]})")
                     steps.append("login_success")
                     return {"status": "success", "steps_completed": steps}
@@ -307,7 +307,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
                 await asyncio.sleep(2)
                 fresh_url = fresh.url
-                if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
+                if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']) and 'login' not in fresh_url:
                     steps.append("login_success")
                     return {"status": "success", "steps_completed": steps}
                 logger.warning(f"Fresh page landed on: {fresh_url[:60]}")
@@ -346,34 +346,49 @@ async def _fireworks_playwright_onboarding(page) -> None:
         await ln.click(); await asyncio.sleep(0.2)
         await ln.type("Cheetah", delay=50); await asyncio.sleep(0.5)
     
-    terms = None
-    for cb in await page.locator('input[type="checkbox"]').all():
-        lbl = (await cb.get_attribute('aria-label') or '').lower()
-        n_id = (await cb.get_attribute('id') or '').lower()
-        if 'terms' in lbl or 'agree' in lbl or 'terms' in n_id:
-            terms = cb
-            break
-    if not terms:
-        terms = page.locator('label:has-text("Terms")').first
-    if await terms.count() > 0:
-        await terms.click(force=True); await asyncio.sleep(0.5)
+    # Helper: click a checkbox by matching text in aria-label, label text, or parent text
+    async def _click_checkbox(match_text: str) -> bool:
+        # 1. input[type="checkbox"] with aria-label
+        for inp in await page.locator('input[type="checkbox"]').all():
+            lbl = (await inp.get_attribute('aria-label') or '').lower()
+            if match_text.lower() in lbl:
+                await inp.click(force=True); return True
+        # 2. [role="checkbox"] with aria-label
+        for el in await page.locator('[role="checkbox"]').all():
+            lbl = (await el.get_attribute('aria-label') or '').lower()
+            if match_text.lower() in lbl:
+                await el.click(force=True); return True
+        # 3. Label containing the match text
+        lbl = page.locator(f'label:has-text("{match_text}")').first
+        if await lbl.count() > 0:
+            cb = lbl.locator('input[type="checkbox"], [role="checkbox"]').first
+            if await cb.count() > 0:
+                await cb.click(force=True); return True
+            await lbl.click(force=True); return True
+        # 4. Click any element containing the text (last resort)
+        el = page.locator(f':has-text("{match_text}")').first
+        if await el.count() > 0:
+            await el.click(force=True); return True
+        return False
     
+    # Terms checkbox
+    if not await _click_checkbox("agree"):
+        if not await _click_checkbox("terms"):
+            logger.warning("Terms checkbox not found")
+    
+    # Continue button
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Continue' in txt or 'Next' in txt:
             await btn.click(force=True); await asyncio.sleep(2)
             break
     
+    # Use-case checkboxes
     for uc in ["Prototype", "Flexible capacity", "Conversational", "Search"]:
-        for inp in await page.locator('input[type="checkbox"]').all():
-            i_id = (await inp.get_attribute('id') or '').lower()
-            if 'cky' in i_id:
-                continue
-            label = await inp.get_attribute('aria-label') or ''
-            if uc.lower() in label.lower():
-                await inp.click(force=True); await asyncio.sleep(0.3)
-                break
+        if not await _click_checkbox(uc):
+            logger.warning(f"Use-case checkbox '{uc}' not found")
     
+    # Submit button
     for btn in await page.locator('button').all():
         txt = (await btn.text_content() or '').strip()
         if 'Submit' in txt or 'Get $5' in txt:
@@ -382,7 +397,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
     
     for _ in range(10):
         await asyncio.sleep(2)
-        if any(x in page.url for x in ['home', 'account', 'settings']):
+        if any(x in page.url for x in ['home', 'account', 'settings']) and 'login' not in page.url:
             logger.info("Playwright onboarding complete")
             return
     logger.warning("Playwright onboarding — kein Redirect, force navigate")

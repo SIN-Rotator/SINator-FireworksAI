@@ -321,7 +321,7 @@ class GmxService:
             if not items:
                 return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "no Fireworks email found"}
 
-            latest = sorted(items, key=lambda x: -x['idx'])[0]
+            latest = sorted(items, key=lambda x: x['idx'])[0]  # idx 0 = top = newest
             logger.info(f"[OTP-v2] Klicke Mail #{latest['idx']}: {latest['text'][:80]}")
 
             # 4. Click via locator (force=True wegen webmailer-mail-detail overlay)

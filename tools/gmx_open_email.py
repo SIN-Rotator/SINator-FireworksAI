@@ -43,7 +43,7 @@ function() {
             result.push({idx: idx, text: (li.innerText || '').trim().substring(0, 200)});
         }
     });
-    return result.sort(function(a,b){return b.idx - a.idx;});
+    return result.sort(function(a,b){return a.idx - b.idx;});  // idx 0 = top = newest
 }
 """
 

@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+logging.basicConfig(level=logging.DEBUG if os.environ.get("LOG_LEVEL") == "DEBUG" else logging.INFO, format='%(message)s')
 logger = logging.getLogger("rotate")
 
 
@@ -56,7 +56,12 @@ async def main():
     parser.add_argument("--password", help="Fireworks account password (required)")
     parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
     parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = chromium.launch)")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     args = parser.parse_args()
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        for h in logging.getLogger().handlers:
+            h.setLevel(logging.DEBUG)
 
     from agent_toolbox.core.config_manager import get_config
     cfg = get_config()
@@ -68,16 +73,26 @@ async def main():
         args.password = cfg.fireworks_password
 
     t0 = time.time()
-    cdp_port = args.cdp_port or _find_free_port()
 
     from playwright.async_api import async_playwright
     p = await async_playwright().start()
-    logger.info(f"=== Launching Bot Chromium (CDP port {cdp_port}) ===")
-    browser = await p.chromium.launch(
-        headless=False,
-        args=[f'--remote-debugging-port={cdp_port}']
-    )
-    logger.info("✅ Bot Chromium launched")
+
+    if args.cdp_port:
+        # Connect to existing Chrome (User Profile 73 or running instance)
+        logger.info(f"=== Connecting to Chrome on CDP port {args.cdp_port} ===")
+        browser = await p.chromium.connect_over_cdp(
+            f"http://127.0.0.1:{args.cdp_port}"
+        )
+        logger.info("✅ Connected to existing Chrome")
+    else:
+        # Launch fresh Bot Chrome on free port
+        cdp_port = _find_free_port()
+        logger.info(f"=== Launching Bot Chromium (CDP port {cdp_port}) ===")
+        browser = await p.chromium.launch(
+            headless=False,
+            args=[f'--remote-debugging-port={cdp_port}']
+        )
+        logger.info("✅ Bot Chromium launched")
 
     alias = None
     try:
@@ -230,8 +245,6 @@ async def main():
         await browser.close()
         await p.stop()
         logger.info(f"\n🎉 ROTATION COMPLETE — {elapsed:.1f}s")
-        if alias:
-            logger.info(f" Alias: {alias}")
 
 
 if __name__ == "__main__":
