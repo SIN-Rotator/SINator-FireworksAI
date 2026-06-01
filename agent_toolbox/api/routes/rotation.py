@@ -41,16 +41,16 @@ async def full_rotation(request: RotationRequest):
     except Exception as e:
         logger.warning(f"AppleScript window: {e}")
 
- from agent_toolbox.core.config_manager import get_config
- cfg = get_config()
- fireworks_pw = request.fireworks_password or cfg.fireworks_password
- cmd = [
- "python3", str(ROTATE_SCRIPT),
- "--gmx-email", cfg.gmx_email,
- "--gmx-password", cfg.gmx_password,
- "--password", fireworks_pw,
- "--cdp-port", "9222",
- ]
+    from agent_toolbox.core.config_manager import get_config
+    cfg = get_config()
+    fireworks_pw = request.fireworks_password or cfg.fireworks_password
+    cmd = [
+        "python3", str(ROTATE_SCRIPT),
+        "--gmx-email", cfg.gmx_email,
+        "--gmx-password", cfg.gmx_password,
+        "--password", fireworks_pw,
+        "--cdp-port", "9222",
+    ]
     if request.new_alias_name:
         cmd.append(request.new_alias_name)
 
