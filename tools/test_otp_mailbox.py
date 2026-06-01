@@ -21,7 +21,7 @@ async def main():
 
         # Login auf work_tab
         logger.info("=== GMX Login ===")
-        logged_in = await gmx._login(gmx.work_tab, email="delqhi@gmx.de", password="ZOE.jerry2024")
+        logged_in = await gmx._login(gmx.work_tab, email=os.environ.get("GMX_EMAIL", ""), password=os.environ.get("GMX_PASSWORD", ""))
         logger.info(f"Login: {'✅' if logged_in else '⚠️'}")
 
         # inbox_tab zum Posteingang navigieren

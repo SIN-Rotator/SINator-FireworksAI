@@ -212,9 +212,9 @@ class PoolProxy:
             )
             self.cache.clear_primary()
             # Use the replacement key returned by report() (already leased atomically)
-            if report_result and report_result.get("new_key"):
+            if report_result and report_result.get("new_api_key"):
                 key_info = {
-                    "api_key": report_result["new_key"],
+                    "api_key": report_result["new_api_key"],
                     "key_id": report_result.get("new_key_id", ""),
                     "lease_id": report_result.get("lease_id", ""),
                     "expires_at": report_result.get("expires_at", 0),
