@@ -69,9 +69,16 @@ mail_frame = page.frames.find(f => f.name == "mail")
 await mail_frame.locator('list-mail-item').nth(FW_IDX).click(timeout=5000)
 # → ✅ Email öffnet sich in der Detail-Ansicht
 
-# === SCHRITT 4: Body lesen (via frame.evaluate + _WALK_JS) ===
-data = await mail_frame.evaluate(_WALK_JS, {"selector": None, "pierceShadow": True, ...})
-# → 20+ Items aus dem Detail-Container (inkl. verify_url/OTP)
+# === SCHRITT 4: Body lesen (scan ALL Playwright frames) ===
+# Nach Click erscheint <detail-body> mit einem <iframe> im webmailer.
+# Der Body wird in einem separaten Playwright-Frame (about:blank) geladen.
+# Scan alle Frames nach "Verify Your Email Address" / verify URL:
+for f in page.frames:
+    txt = await f.evaluate("document.body ? document.body.innerText : ''")
+    if 'confirm' in txt or 'confirmation_code' in txt:
+        verify_url = re.search(r'https://app\.fireworks\.ai/signup/confirm\?[^\s]+', txt)
+        otp = re.search(r'confirmation_code=(\d{6})', txt)
+        # → verify_url + otp gefunden! ✅
 ```
 
 **GMX Shadow DOM Struktur (bestätigt):**
@@ -81,20 +88,24 @@ page → iframe#mail (webmailer.gmx.net)
     → shadowRoot
       → list-mail-list
         → shadowRoot
-          → list-mail-item (50 Stück) ← HIER SIND DIE EMAILS
+          → list-mail-item (50 Stück) ← EMAIL LISTE
       → list-toolbar
-      → div.list-mail-list-detail-container ← HIER IST DER BODY (nach Klick)
+      → div.list-mail-list-detail-container
+        → div.list-mail-details
+          → webmailer-mail-detail (Header: Subject, From, Date)
+            → shadowRoot
+              → detail-body
+                → iframe.detail-body--full-height ← EMAIL BODY (separater Playwright Frame)
 ```
 
 ### Key Learnings
 1. `browser_snapshot_in_frame` findet **50 email items** (vorher `browser_snapshot_full_oopif`: 0)
 2. `selector="list-mail-item"` matched durch open Shadow Roots
-3. `frame.locator('list-mail-item').nth(N).click()` funktioniert (locator, nicht evaluate!)
+3. `frame.locator('list-mail-item').nth(N).click(force=True)` funktioniert (locator, nicht evaluate!)
 4. `browser_eval_in_frame` für JS-Strukturabfrage — besser als AX-Tree für Shadow DOM
-5. Frame-Tools ersetzen KEIN Playwright direkt — `page.frames` + `frame.evaluate` + `frame.locator` bleiben nötig für Click-Interaktion
-
-### Noch offen: Email Body Reading
-Der `.list-mail-list-detail-container` liefert nach Klick noch leeren Content. Detail-Container hat eigene Shadow DOM-Struktur (mail-detail-container + mail-content). Muss weiter getestet werden — vermutlich Lazy-Loading nach Click.
+5. Frame-Tools ersetzen KEIN Playwright direkt — `page.frames` + `frame.evaluate` + `frame.locator` bleiben nötig
+6. **Email Body** lädt in **separatem Playwright-Frame** (about:blank, kein Name, kein URL-Match) — NICHT im mail-Frame! Scan alle page.frames.
+7. `click(force=True)` nötig wenn `webmailer-mail-detail` Pointer-Events intercepts
 
 ### Immortal Tag
 - Tag `v18.0-gmx-email-lesbar` auf main für Ewigkeit
