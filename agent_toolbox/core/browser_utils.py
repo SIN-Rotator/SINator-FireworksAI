@@ -21,34 +21,20 @@ FIREWORKS_SESSION_FILE = SESSION_DIR / "fireworks_session.json"
 
 
 async def accept_cookieyes_via_js(page) -> bool:
-    """Accept CookieYes via JS API injection (React-kompatibel).
-    
-    NICHT element.remove() verwenden - das zerstoert React State!
-    Stattdessen triggern wir die CookieYes API oder setzen localStorage.
-    """
     try:
         result = await page.evaluate("""() => {
-            // Method 1: CookieYes API
             if (window.CookieYes && typeof window.CookieYes.acceptAll === 'function') {
                 window.CookieYes.acceptAll();
                 return {method: 'api', success: true};
             }
-            
-            // Method 2: CookieYes consent object
             if (window.CookieYes && window.CookieYes.consent) {
                 window.CookieYes.consent.acceptAll();
                 return {method: 'consent_api', success: true};
             }
-            
-            // Method 3: localStorage injection (fallback)
             try {
                 const consent = {
-                    necessary: true,
-                    functional: true,
-                    analytics: true,
-                    performance: true,
-                    advertisement: true,
-                    timestamp: Date.now()
+                    necessary: true, functional: true, analytics: true,
+                    performance: true, advertisement: true, timestamp: Date.now()
                 };
                 localStorage.setItem('cookieyes-consent', JSON.stringify(consent));
                 localStorage.setItem('cky-consent', 'yes:' + btoa(JSON.stringify(consent)));
@@ -57,178 +43,104 @@ async def accept_cookieyes_via_js(page) -> bool:
                 return {method: 'none', success: false, error: e.message};
             }
         }""")
-        
         if result.get('success'):
             logger.info(f"CookieYes accepted via {result.get('method')}")
             return True
-        else:
-            logger.warning(f"CookieYes JS injection failed: {result}")
-            return False
+        logger.warning(f"CookieYes JS injection failed: {result}")
+        return False
     except Exception as e:
         logger.warning(f"CookieYes accept error: {e}")
         return False
 
 
 async def wait_for_spa_transition(page, target_text: str, timeout: int = 30) -> bool:
-    """Wait for SPA DOM transition via MutationObserver (nicht URL-based!).
-    
-    React SPAs aendern die URL nicht bei Step-Transitions.
-    Wir warten auf das Erscheinen von spezifischem Text im DOM.
-    """
     try:
-        result = await page.evaluate(f"""(targetText, timeoutMs) => {{
-            return new Promise((resolve) => {{
-                // Check if already present
-                if (document.body.innerText.includes(targetText)) {{
-                    resolve({{found: true, method: 'immediate'}});
-                    return;
-                }}
-                
-                const deadline = Date.now() + timeoutMs;
-                const observer = new MutationObserver((mutations, obs) => {{
-                    if (document.body.innerText.includes(targetText)) {{
-                        obs.disconnect();
-                        resolve({{found: true, method: 'observer'}});
-                    }} else if (Date.now() > deadline) {{
-                        obs.disconnect();
-                        resolve({{found: false, method: 'timeout'}});
-                    }}
-                }});
-                
-                observer.observe(document.body, {{
-                    childList: true,
-                    subtree: true,
-                    characterData: true
-                }});
-                
-                // Timeout fallback
-                setTimeout(() => {{
-                    observer.disconnect();
-                    if (document.body.innerText.includes(targetText)) {{
-                        resolve({{found: true, method: 'timeout_check'}});
-                    }} else {{
-                        resolve({{found: false, method: 'timeout'}});
-                    }}
-                }}, timeoutMs);
-            }});
-        }}""", target_text, timeout * 1000)
-        
+        JS = """(args) => {
+            var t = args.target_text, ms = args.timeout_ms, deadline = Date.now() + ms;
+            if (document.body.innerText.includes(t)) return {found: true, method: 'immediate'};
+            return new Promise(function(resolve) {
+                var obs = new MutationObserver(function() {
+                    if (document.body.innerText.includes(t)) { obs.disconnect(); resolve({found: true, method: 'observer'}); }
+                    else if (Date.now() > deadline) { obs.disconnect(); resolve({found: false, method: 'timeout'}); }
+                });
+                obs.observe(document.body, {childList: true, subtree: true, characterData: true});
+                setTimeout(function() {
+                    obs.disconnect();
+                    resolve({found: document.body.innerText.includes(t), method: 'timeout_check'});
+                }, ms);
+            });
+        }"""
+        result = await page.evaluate(JS, {"target_text": target_text, "timeout_ms": timeout * 1000})
         if result.get('found'):
             logger.info(f"SPA transition detected: '{target_text[:30]}...' via {result.get('method')}")
             return True
-        else:
-            logger.warning(f"SPA transition timeout waiting for: '{target_text[:30]}...'")
-            return False
+        logger.warning(f"SPA transition timeout waiting for: '{target_text[:30]}...'")
+        return False
     except Exception as e:
         logger.warning(f"SPA transition error: {e}")
         return False
 
 
 async def fill_react_input(page, selector: str, value: str) -> bool:
-    """Fill React input with proper event dispatching.
-    
-    React inputs brauchen native Event-Simulation, nicht nur .value = x
-    """
     try:
-        result = await page.evaluate(f"""(selector, value) => {{
-            const input = document.querySelector(selector);
-            if (!input) return {{success: false, error: 'Element not found'}};
-            
-            // Get the native value setter
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        JS = """(args) => {
+            var sel = args.selector, val = args.value;
+            var input = document.querySelector(sel);
+            if (!input) return {success: false, error: 'Element not found'};
+            var nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                 window.HTMLInputElement.prototype, "value"
             ).set;
-            
-            // Set value via native setter
-            nativeInputValueSetter.call(input, value);
-            
-            // Dispatch React-compatible events
-            input.dispatchEvent(new Event('input', {{bubbles: true}}));
-            input.dispatchEvent(new Event('change', {{bubbles: true}}));
-            
-            return {{success: true, value: input.value}};
-        }}""", selector, value)
-        
+            nativeInputValueSetter.call(input, val);
+            input.dispatchEvent(new Event('input', {bubbles: true}));
+            input.dispatchEvent(new Event('change', {bubbles: true}));
+            return {success: true, value: input.value};
+        }"""
+        result = await page.evaluate(JS, {"selector": selector, "value": value})
         if result.get('success'):
             logger.debug(f"React input filled: {selector}")
             return True
-        else:
-            logger.warning(f"React input fill failed: {result}")
-            return False
+        logger.warning(f"React input fill failed: {result}")
+        return False
     except Exception as e:
         logger.warning(f"React input error: {e}")
         return False
 
 
 async def click_react_checkbox(page, label_text: str) -> bool:
-    """Click React checkbox by label text (avoids <a> tag trap in labels).
-    
-    NICHT auf Label klicken wenn es Links enthaelt!
-    Stattdessen das for-Attribut parsen und Ziel-Element direkt klicken.
-    """
     try:
-        result = await page.evaluate(f"""(labelText) => {{
-            // Find label containing the text
-            const labels = document.querySelectorAll('label');
-            for (const label of labels) {{
-                if (label.textContent.includes(labelText)) {{
-                    // Check if label contains <a> tags (TOS trap!)
-                    if (label.querySelector('a')) {{
-                        // Don't click label - find the target element instead
-                        const forAttr = label.getAttribute('for');
-                        if (forAttr) {{
-                            const target = document.getElementById(forAttr);
-                            if (target) {{
-                                target.click();
-                                return {{success: true, method: 'for_attribute'}};
-                            }}
-                        }}
-                        // Try finding checkbox inside label
-                        const cb = label.querySelector('input[type="checkbox"], [role="checkbox"]');
-                        if (cb) {{
-                            cb.click();
-                            return {{success: true, method: 'nested_checkbox'}};
-                        }}
-                    }} else {{
-                        // Safe to click label
-                        label.click();
-                        return {{success: true, method: 'label_click'}};
-                    }}
-                }}
-            }}
-            
-            // Fallback: find [role="checkbox"] with aria-label
-            const checkboxes = document.querySelectorAll('[role="checkbox"]');
-            for (const cb of checkboxes) {{
-                const ariaLabel = cb.getAttribute('aria-label') || '';
-                if (ariaLabel.toLowerCase().includes(labelText.toLowerCase())) {{
-                    cb.click();
-                    return {{success: true, method: 'aria_label'}};
-                }}
-            }}
-            
-            // Last resort: find div/span with checkbox-like behavior
-            const all = document.querySelectorAll('div, span');
-            for (const el of all) {{
-                if (el.textContent.trim() === labelText || 
-                    el.textContent.includes(labelText)) {{
-                    const cb = el.querySelector('input[type="checkbox"], [role="checkbox"]');
-                    if (cb) {{
-                        cb.click();
-                        return {{success: true, method: 'container_checkbox'}};
-                    }}
-                }}
-            }}
-            
-            return {{success: false, error: 'Checkbox not found'}};
-        }}""", label_text)
-        
+        JS = """(args) => {
+            var lt = args.label_text;
+            var labels = document.querySelectorAll('label');
+            for (var i = 0; i < labels.length; i++) {
+                var label = labels[i];
+                if (!label.textContent.includes(lt)) continue;
+                if (label.querySelector('a')) {
+                    var forAttr = label.getAttribute('for');
+                    if (forAttr) {
+                        var target = document.getElementById(forAttr);
+                        if (target) { target.click(); return {success: true, method: 'for_attribute'}; }
+                    }
+                    var cb = label.querySelector('input[type="checkbox"], [role="checkbox"]');
+                    if (cb) { cb.click(); return {success: true, method: 'nested_checkbox'}; }
+                } else {
+                    label.click();
+                    return {success: true, method: 'label_click'};
+                }
+            }
+            var cbs = document.querySelectorAll('[role="checkbox"]');
+            for (var i = 0; i < cbs.length; i++) {
+                var cb = cbs[i];
+                var al = (cb.getAttribute('aria-label') || '').toLowerCase();
+                if (al.includes(lt.toLowerCase())) { cb.click(); return {success: true, method: 'aria_label'}; }
+            }
+            return {success: false, error: 'Checkbox not found: ' + lt};
+        }"""
+        result = await page.evaluate(JS, {"label_text": label_text})
         if result.get('success'):
             logger.info(f"React checkbox clicked: '{label_text}' via {result.get('method')}")
             return True
-        else:
-            logger.warning(f"React checkbox not found: '{label_text}'")
-            return False
+        logger.warning(f"React checkbox not found: '{label_text}'")
+        return False
     except Exception as e:
         logger.warning(f"React checkbox error: {e}")
         return False
@@ -262,22 +174,13 @@ async def load_session_state(browser, filepath: Path):
 
 
 async def extract_jwt_from_localstorage(page, key: str = "auth_token") -> Optional[str]:
-    """Extract JWT/Bearer token from localStorage for API bypass.
-    
-    Statt UI-Klicks koennen wir den Token direkt extrahieren
-    und per httpx gegen die REST-API verwenden.
-    """
     try:
-        token = await page.evaluate(f"""(key) => {{
-            return localStorage.getItem(key) || sessionStorage.getItem(key) || null;
-        }}""", key)
-        
+        token = await page.evaluate("(k) => localStorage.getItem(k) || sessionStorage.getItem(k) || null", key)
         if token:
             logger.info(f"Token extracted from localStorage['{key}']: {token[:20]}...")
             return token
-        else:
-            logger.debug(f"No token found in localStorage['{key}']")
-            return None
+        logger.debug(f"No token found in localStorage['{key}']")
+        return None
     except Exception as e:
         logger.warning(f"Token extraction error: {e}")
         return None

@@ -165,7 +165,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
             else:
                 browser = await p.chromium.launch(headless=False)
-        _page = await browser.new_page()
+        _page = await browser.contexts[0].new_page() if browser.contexts else await browser.new_page()
         page = _page
 
         await page.goto("https://app.fireworks.ai/login")
