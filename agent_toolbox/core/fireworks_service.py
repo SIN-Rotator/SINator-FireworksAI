@@ -547,23 +547,21 @@ async def _playwright_onboarding() -> None:
         from sin_browser_tools.core import manager
         os.makedirs("/tmp/onboarding-diag", exist_ok=True)
         await manager.page.screenshot(path="/tmp/onboarding-diag/before-continue.png")
-        # Log Continue button state
+        # Log Continue button state — ONLY match "Continue", NEVER "Next"
         btn_state = await browser_console("""(() => {
             var b = document.querySelectorAll('button');
+            var all_btns = [];
             for (var i=0; i<b.length; i++) {
-                var t = (b[i].textContent || '').trim();
-                if (t.indexOf('Continue') !== -1 || t.indexOf('Next') !== -1) {
-                    return {
-                        text: t,
-                        disabled: b[i].disabled || b[i].getAttribute('aria-disabled') === 'true',
-                        visible: b[i].offsetParent !== null,
-                        type: b[i].type
-                    };
-                }
+                all_btns.push({
+                    text: (b[i].textContent || '').trim(),
+                    disabled: b[i].disabled || b[i].getAttribute('aria-disabled') === 'true',
+                    type: b[i].type,
+                    cls: (b[i].className || '').slice(0, 40)
+                });
             }
-            return 'no_continue_button';
+            return all_btns;
         })()""")
-        logger.info(f"DIAG Continue button state: {btn_state}")
+        logger.info(f"DIAG all buttons: {btn_state}")
     except Exception as e:
         logger.warning(f"DIAG: {e}")
 
