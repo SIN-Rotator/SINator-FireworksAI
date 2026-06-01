@@ -12,6 +12,11 @@ FIREWORKS_BASE = "https://api.fireworks.ai/inference/v1"
 LEASE_TTL_SECONDS = int(os.getenv("SIN_LEASE_TTL", "1800"))
 LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "false").lower() == "true"
 MAX_RETRIES = int(os.getenv("SIN_MAX_RETRIES", "3"))
+
+# Issue #24 — Cloudflare Worker fallback + D1 sync (consumed by pool-router.py
+# and scripts/sync_to_cf.py). Empty by default → fallback disabled.
+CF_WORKER_URL = os.getenv("CF_WORKER_URL", "").rstrip("/")
+CF_SYNC_TOKEN = os.getenv("CF_SYNC_TOKEN", "").strip()
 CACHE_DIR = Path(os.getenv("SIN_CACHE_DIR", str(Path.home() / ".sin-pool")))
 CONFIG_FILE = CACHE_DIR / "config.json"
 TUNNEL_URL_FILE = CACHE_DIR / "tunnel-url.txt"
@@ -42,6 +47,8 @@ def load_config() -> dict:
         "lease_ttl_seconds": LEASE_TTL_SECONDS,
         "lease_backup": LEASE_BACKUP,
         "max_retries": MAX_RETRIES,
+        "cf_worker_url": CF_WORKER_URL,
+        "cf_sync_token": CF_SYNC_TOKEN,
     }
 
 
