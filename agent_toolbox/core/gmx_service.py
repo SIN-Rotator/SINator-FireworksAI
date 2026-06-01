@@ -266,6 +266,103 @@ class GmxService:
         logger.warning("Timeout: OTP nicht im inbox_tab gefunden")
         return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "Timeout"}
 
+    async def read_otp_v2(self, sender_keyword: str = "fireworks", timeout: int = 60) -> Dict[str, Any]:
+        """V18.2 OTP via Playwright + SIN-Browser-Tools browser_scan_frames.
+
+        Nutzt die neuen Frame-Tools (Issue #15): browser_scan_frames scannt ALLE
+        Playwright-Frames (auch unnamed about:blank) nach Textpattern.
+        """
+        from sin_browser_tools.core import manager as sin_mgr
+        from sin_browser_tools.tools.frames import browser_scan_frames, browser_eval_in_frame
+
+        if self.inbox_tab is None:
+            return {"status": "error", "otp_url": None, "error": "inbox_tab missing"}
+
+        logger.info(f"[OTP-v2] Starte OTP-Suche (Keyword: {sender_keyword}, timeout: {timeout}s)")
+        url_pattern = re.compile(r'https://app\.fireworks\.ai/signup/confirm\?[^\s"\'<>]+')
+
+        try:
+            # Connect SIN-Browser-Tools manager + register inbox_tab
+            await sin_mgr.connect_cdp('http://127.0.0.1:9222')
+            sin_mgr.set_active_page(self.inbox_tab)
+
+            # 1. Navigate to inbox
+            await self._goto_postfach(self.inbox_tab)
+            await asyncio.sleep(5)
+
+            # 2. Get mail frame
+            mail_frame = None
+            for f in self.inbox_tab.frames:
+                if f.name == "mail":
+                    mail_frame = f
+                    break
+            if not mail_frame:
+                return {"status": "error", "otp_url": None, "error": "no mail frame"}
+
+            # 3. Find Fireworks emails via shadow DOM
+            start = time.time()
+            deadline = start + timeout
+            while time.time() < deadline:
+                items = await browser_eval_in_frame("""function(){
+                    var m = document.querySelector('mail-list-container');
+                    if (!m || !m.shadowRoot) return [];
+                    var l = m.shadowRoot.querySelector('list-mail-list');
+                    if (!l || !l.shadowRoot) return [];
+                    return Array.from(l.shadowRoot.querySelectorAll('list-mail-item'))
+                        .map(function(li, i){ return {idx: i, text: (li.innerText||'').trim().substring(0,200)}; })
+                        .filter(function(x){ return x.text.toLowerCase().includes('fireworks'); });
+                }""", frame_name="mail")
+                items = items.get('result', [])
+                if items:
+                    break
+                await asyncio.sleep(5)
+
+            if not items:
+                return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "no Fireworks email found"}
+
+            latest = sorted(items, key=lambda x: -x['idx'])[0]
+            logger.info(f"[OTP-v2] Klicke Mail #{latest['idx']}: {latest['text'][:80]}")
+
+            # 4. Click via locator (force=True wegen webmailer-mail-detail overlay)
+            await mail_frame.locator('list-mail-item').nth(latest['idx']).click(timeout=10000, force=True)
+            await asyncio.sleep(8)
+
+            # 5. Scan ALL frames via browser_scan_frames (Issue #15 tool)
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                scan = await browser_scan_frames(regex=r'https://app\.fireworks\.ai/signup/confirm\?[^\s"\'<>]+')
+                if scan.get('matching_frames', 0) > 0:
+                    for f in scan['frames']:
+                        m = url_pattern.search(f['text'])
+                        if m:
+                            elapsed = time.time() - start
+                            logger.info(f"[OTP-v2] ✅ Verify-URL nach {elapsed:.1f}s in frame {f['index']}")
+                            code_m = re.search(r'confirmation_code=(\d{6})', f['text'])
+                            return {
+                                "status": "success",
+                                "otp_url": html_module.unescape(m.group(0)),
+                                "otp_code": code_m.group(1) if code_m else None,
+                                "execution_time": f"{elapsed:.2f}s",
+                            }
+                await asyncio.sleep(2)
+
+            elapsed = time.time() - start
+            logger.warning(f"[OTP-v2] Kein Body nach {elapsed:.1f}s gefunden")
+            return {"status": "not_found", "otp_url": None, "otp_code": None, "error": "no body found"}
+
+        except Exception as e:
+            logger.error(f"[OTP-v2] Error: {e}")
+            return {"status": "error", "otp_url": None, "error": str(e)}
+
+    async def _goto_postfach(self, page: Page):
+        """Navigate to GMX inbox via 'Zum Postfach' click (V16.0 Fix)."""
+        await page.goto("https://www.gmx.net/", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(3)
+        zum = page.get_by_text("Zum Postfach").first
+        if await zum.is_visible():
+            await zum.click()
+            await asyncio.sleep(5)
+
 # ── Playwright Connection ────────────────────────────────────────────
 
     async def _pw_connect(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Page:

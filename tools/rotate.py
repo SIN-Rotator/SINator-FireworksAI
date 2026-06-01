@@ -6,7 +6,7 @@ V8.2:
   - initialize_architecture() erstellt TWO TABS:
     * work_tab → Login, Alias, Fireworks
     * inbox_tab → IMMER im Posteingang geparkt (nie navigiert)
-  - OTP via read_otp_axtree_and_frames() auf inbox_tab
+  - OTP via read_otp_v2() auf inbox_tab (Frame-Tools V18.1)
   - Session-isoliert: inbox_tab hat nie Session-Vergiftung
 
 Usage:
@@ -172,14 +172,11 @@ async def main():
 
         logger.info(f"inbox_tab URL: {inbox_tab.url[:80]}")
 
-        # ═══ Step 3b: CDP AXTree OTP (inbox_tab) ═══
-        logger.info("=== OTP via CDP AXTree (inbox_tab, bis 180s) ===")
-
-        # ═══ Step 3: CDP AXTree OTP (durchdringt OOPIFs + ignoriert Ad-Frames) ═══
-        logger.info("=== OTP via CDP AXTree (inbox_tab, bis 180s) ===")
+        # ═══ Step 3: OTP via V18.1 Frame-Tools (inbox_tab) ═══
+        logger.info("=== OTP via Frame-Tools V18.1 (inbox_tab, bis 60s) ===")
         verify_ok = False
-        otp_result = await gmx.read_otp_cdp_axtree(
-            sender_keyword="fireworks", timeout=180
+        otp_result = await gmx.read_otp_v2(
+            sender_keyword="fireworks", timeout=60
         )
         otp_url = otp_result.get("otp_url")
         otp_code = otp_result.get("otp_code")
