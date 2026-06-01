@@ -568,35 +568,38 @@ async def _playwright_onboarding() -> None:
         logger.warning(f"DIAG: {e}")
 
     # ── Step 4: Continue (Page 1 → Page 2) ─────────────────────────────────
-    # First check the URL — if validation fails the page may not be ready
+    # CRITICAL: only match "Continue" exactly, NOT "Next" — there's a carousel
+    # "Next slide" button that appears first in the DOM and would steal the click.
     cur_url = (await browser_get_url())["url"]
     cur_text = (await browser_console("document.body.innerText") or {}).get("result", "")[:300]
     logger.info(f"Before Continue: url={cur_url}, body text starts: {cur_text[:200]!r}")
 
-    # Try click via several strategies
     clicked_continue = False
     try:
         r = await browser_click_by_text("Continue", role="button")
         if r.get("status") == "clicked":
             clicked_continue = True
+            logger.info("Continue clicked via browser_click_by_text")
     except Exception as e:
         logger.warning(f"browser_click_by_text('Continue') failed: {e}")
 
     if not clicked_continue:
-        # Fallback: dispatchEvent on any button containing "Continue"
-        logger.info("Trying JS dispatchEvent on Continue button")
-        await browser_console("""(() => {
+        # Fallback: dispatchEvent on button with EXACTLY text "Continue" (no Next)
+        logger.info("Trying JS dispatchEvent on Continue button (exact match, no Next)")
+        r2 = await browser_console("""(() => {
             var b = document.querySelectorAll('button');
-            for(var i=0;i<b.length;i++){
-                var t = b[i].textContent.trim();
-                if(t.indexOf('Continue') !== -1 || t.indexOf('Next') !== -1){
+            for (var i=0; i<b.length; i++) {
+                var t = (b[i].textContent || '').trim();
+                // Only match buttons whose text is EXACTLY "Continue" or contains
+                // the word "Continue" — NEVER match "Next slide" / "Next page"
+                if (t === 'Continue' || t.indexOf('Continue') !== -1) {
                     b[i].dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true}));
                     return t;
                 }
             }
-            return 'no_button';
+            return 'no_continue_button';
         })()""")
-        logger.info("Continue clicked via JS dispatchEvent (disabled bypass)")
+        logger.info(f"JS dispatchEvent result: {r2}")
     await asyncio.sleep(3)
 
     # Verify we left page 1
