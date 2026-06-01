@@ -4407,5 +4407,17 @@
     "leased_to": null,
     "lease_id": null,
     "leased_at": null
+  },
+  {
+    "id": "ba069923-6ef8-4e09-99f0-636fd45a1496",
+    "api_key": "STORED_IN_KEYCHAIN",
+    "alias_email": "zenith-whale-641@gmx.de",
+    "key_name": "zenith",
+    "created_at": "2026-06-01T07:45:58Z",
+    "used": false,
+    "used_at": null,
+    "credits_initial": 6.0,
+    "credits_remaining": 6.0,
+    "credits_checked_at": null
   }
 ]

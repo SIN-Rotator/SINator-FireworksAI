@@ -203,8 +203,10 @@ async def signup_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any
     steps.append("email_filled")
     await asyncio.sleep(1)
 
-    await browser_click_by_text("Next", role="button")
-    logger.info("Next clicked via browser_click_by_text")
+    # Enter key — avoids carousel "Next slide" button conflict
+    from sin_browser_tools.tools.navigation import browser_press
+    await browser_press("Enter")
+    logger.info("Email submitted via Enter key")
 
     for _ in range(12):
         await asyncio.sleep(1)
