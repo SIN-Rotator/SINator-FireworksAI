@@ -433,6 +433,7 @@ async def _playwright_onboarding() -> None:
     from sin_browser_tools.tools.navigation import browser_get_url, browser_navigate, browser_press
     from sin_browser_tools.tools.extraction import browser_console
 
+    import os
     # ── Step 1: Reject cookie banner so it doesn't block the form ──────────
     try:
         await browser_click_by_text("Reject All", role="button")
