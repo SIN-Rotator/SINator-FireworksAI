@@ -1,26 +1,22 @@
-# File: `config_manager.py`
+# config_manager.py — Runtime Configuration
 
-Stores SINator runtime configuration (GMX + Fireworks credentials) as a singleton loaded from/saved to `data/config.json`.
+## Purpose
+Stores and retrieves SINator runtime configuration: GMX credentials, Fireworks password. Persists to `data/config.json`.
 
 ## Dependencies
+- **Imports from:** Nothing (standalone)
+- **Imported by:** `tools/rotate.py`, `agent_toolbox/api/routes/config.py`
+- **Reads/Writes:** `data/config.json`
 
-- **Imported by:** `tools/rotate.py`, `gmx/_lib.py`, `fireworks/_lib.py`, `tools/batch_rotate.py`, `agent_toolbox/api/routes/rotation.py`, `agent_toolbox/api/routes/gmx.py`, `agent_toolbox/api/routes/config.py`
-- **Imports:** `json`, `pathlib`, `logging`
+## Config Priority
+1. Environment variables (`GMX_EMAIL`, `GMX_PASSWORD`, `FIREWORKS_PASSWORD`)
+2. `data/config.json` file
+3. Empty string (no config)
 
-## Key Classes/Functions
+## API
+- `GET /api/v1/config` — Returns current config (passwords masked)
+- `POST /api/v1/config` — Updates config fields
 
-| Symbol | Purpose |
-|--------|---------|
-| `Config` | Singleton holding `gmx_email`, `gmx_password`, `fireworks_password` with JSON persistence |
-| `get_config()` | Returns the global Config singleton (lazy-init) |
-
-## Important Config/Limits
-
-- Config file: `data/config.json`
-- Default credentials (fallback): `delqhi@gmx.de` / `ZOE.jerry2024` / `ZOE.jerry2024!`
-- Saved on every `save()` call — no auto-save on attribute change
-
-## Known Caveats
-
-- Hardcoded default credentials in source — should be overridden via API or env
-- No locking — concurrent writes may race
+## Security
+- Passwords stored in plaintext JSON (not Keychain) — acceptable for local-only service
+- API endpoint is public (no auth required) — intentional for dashboard setup page

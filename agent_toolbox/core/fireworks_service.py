@@ -1,10 +1,9 @@
-"""
-SINATOR — Fireworks Service V19 (SIN-Browser-Tools based, 2026-06-01)
+"""Fireworks AI E2E flow — signup, verify, login, onboarding, API key.
 
-Full Fireworks flow using SIN-Browser-Tools:
-  signup → OTP (via rotate.py) → verify → login+onboarding → API key
+Uses 100% SIN-Browser-Tools (zero raw page.evaluate calls).
+Bot Chrome stays open until API key is generated.
 
-Bot Chrome (BrowserManager) bleibt GEÖFFNET bis API Key generiert.
+Docs: fireworks_service.doc.md
 """
 import asyncio
 import logging
@@ -15,8 +14,16 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+# ── Browser Handle ──────────────────────────────────────────────────────────
+
 class _BrowserHandle:
-    """Duck-type wrapper that looks like BrowserManager to SIN-Browser-Tools."""
+    """Duck-type wrapper satisfying SIN-Browser-Tools manager._set_instance().
+
+    SIN-Browser-Tools expects a BrowserManager with _page, _context, _browser,
+    _playwright attributes. This class provides those from a raw Playwright
+    launch, bypassing BrowserManager which hardcodes --start-maximized.
+    """
+
     def __init__(self, page, context, browser, pw):
         self._page = page
         self._context = context
@@ -31,13 +38,16 @@ class _BrowserHandle:
 
     @property
     def page(self):
+        """Active Playwright page — used by SIN-Browser-Tools for all operations."""
         return self._page
 
     @property
     def context(self):
+        """Browser context — holds cookies, storage, and page references."""
         return self._context
 
     async def cleanup(self):
+        """Close context, browser, and Playwright instance. Idempotent."""
         try:
             await self._context.close()
         except Exception:
@@ -52,31 +62,50 @@ class _BrowserHandle:
             pass
 
     def set_active_page(self, p):
+        """Update active page reference (called by SIN-Browser-Tools on tab switch)."""
         self._page = p
         self._context = p.context
 
     async def new_page(self):
+        """Create a new page in the browser context."""
         return await self._context.new_page()
 
     @property
     def active_page(self):
+        """Alias for page — backward compatibility with BrowserManager API."""
         return self._page
 
     def clear_active_page(self):
+        """Set active page to None (used during cleanup)."""
         self._page = None
 
     async def get_next_dialog(self, timeout=5.0, consume=True):
+        """No-op — dialogs are not handled in Bot Chrome."""
         return None
 
     def _setup_dialog_handler(self):
+        """No-op — dialog handler not needed for Fireworks flow."""
         pass
 
 
+# ── Launch / Cleanup ────────────────────────────────────────────────────────
+
 async def launch() -> Dict[str, Any]:
+    """Launch Bot Chrome with stealth patches and register with SIN-Browser-Tools.
+
+    Creates an ephemeral Chromium instance with:
+    - Window size 1200x800 (not maximized — avoids layout detection)
+    - German locale/timezone (matches GMX account region)
+    - Anti-detection: webdriver, plugins, languages, chrome.runtime
+
+    Returns:
+        Dict with 'browser_manager' (_BrowserHandle) for caller to cleanup.
+    """
     from playwright.async_api import async_playwright
     from sin_browser_tools.core.manager import manager
 
     pw = await async_playwright().start()
+    # Window size 1200x800 — NOT --start-maximized (which BrowserManager hardcodes)
     browser = await pw.chromium.launch(
         headless=False,
         args=[
@@ -123,7 +152,11 @@ async def launch() -> Dict[str, Any]:
 
 
 async def cleanup_bot(browser_manager=None) -> None:
-    """Cleanup Bot Chrome only if no API key was generated."""
+    """Close Bot Chrome and deregister from SIN-Browser-Tools.
+
+    Called after API key is generated (success) or on rotation failure.
+    Safe to call multiple times — all close() calls are idempotent.
+    """
     if browser_manager:
         try:
             from sin_browser_tools.core import manager
@@ -134,7 +167,21 @@ async def cleanup_bot(browser_manager=None) -> None:
             logger.warning(f"Bot Chrome cleanup error: {e}")
 
 
+# ── Signup ──────────────────────────────────────────────────────────────────
+
 async def signup_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]:
+    """Create a new Fireworks account with the given email and password.
+
+    Flow: navigate → remove CookieYes → fill email → Next → fill passwords → Create Account.
+    Detects CAPTCHA and missing password fields as errors.
+
+    Args:
+        email: GMX alias email (e.g., pulse-runner-931@gmx.de)
+        password: Fireworks account password
+
+    Returns:
+        Dict with 'status' ('signup_done'|'error') and 'steps_completed' list.
+    """
     from sin_browser_tools.tools.navigation import browser_navigate, browser_get_url
     from sin_browser_tools.tools.interaction import browser_click_by_text, browser_fill
     from sin_browser_tools.tools.extraction import browser_console
@@ -198,7 +245,21 @@ async def signup_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any
     return {"status": "signup_done", "steps_completed": steps}
 
 
+# ── Verify ──────────────────────────────────────────────────────────────────
+
 async def verify_account(verify_url: str, **kwargs) -> bool:
+    """Open the Fireworks verification URL to confirm the email address.
+
+    Navigates to the URL (which contains the OTP token) and waits for
+    redirect to onboarding/home. The URL is typically extracted from
+    the GMX inbox by rotate.py.
+
+    Args:
+        verify_url: Full verification URL from Fireworks email
+
+    Returns:
+        True if verification succeeded (redirect detected or page loaded).
+    """
     from sin_browser_tools.tools.navigation import browser_navigate, browser_get_url
 
     try:
@@ -217,7 +278,29 @@ async def verify_account(verify_url: str, **kwargs) -> bool:
         return False
 
 
+# ── Login ───────────────────────────────────────────────────────────────────
+
 async def login_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]:
+    """Log in to Fireworks AI and handle onboarding if redirected.
+
+    Two-step login:
+    1. Fill email → click Next (triggers email validation)
+    2. Fill password → Enter key (submits form)
+
+    After login, detects redirect:
+    - /onboarding → runs _playwright_onboarding() then waits for home redirect
+    - /home|/account|/settings → login success
+
+    Uses Enter key instead of browser_click_by_text("Next") for password submit
+    to avoid matching the carousel "Next slide" button (disabled, causes timeout).
+
+    Args:
+        email: GMX alias email
+        password: Fireworks account password
+
+    Returns:
+        Dict with 'status' ('success'|'error') and 'steps_completed' list.
+    """
     from sin_browser_tools.tools.navigation import browser_navigate, browser_get_url
     from sin_browser_tools.tools.interaction import browser_click_by_text, browser_fill
     from sin_browser_tools.tools.extraction import browser_console
@@ -316,7 +399,21 @@ async def login_fireworks(email: str, password: str, **kwargs) -> Dict[str, Any]
     return {"status": "error", "steps_completed": steps, "error": "could not reach home/settings"}
 
 
+# ── Onboarding ──────────────────────────────────────────────────────────────
+
 async def _playwright_onboarding() -> None:
+    """Complete the Fireworks onboarding form (2 pages).
+
+    Page 1: Account ID (max 20 chars), First/Last Name, Terms checkbox → Continue
+    Page 2: Use case checkboxes (Prototype, Flexible, Conversational, Search, Agentic) → Submit
+
+    Uses native React value setter for controlled inputs (browser_fill doesn't
+    clear existing React state for CSS selectors). Account ID is 'sin' + 8
+    random chars = 11 chars (under 20-char limit).
+
+    After submit, waits up to 15s for redirect to /home or /account.
+    Falls back to force-navigate to API keys page if no redirect detected.
+    """
     from sin_browser_tools.tools.interaction import (
         browser_fill, browser_click_by_text, browser_click_checkbox_by_text,
     )
@@ -413,9 +510,22 @@ async def _playwright_onboarding() -> None:
             pass
 
 
+# ── API Key ─────────────────────────────────────────────────────────────────
+
 async def create_api_key(key_name: str = "sinator-key", **kwargs) -> Dict[str, Any]:
-    """Create Fireworks API Key via SIN-Browser-Tools with auto-retry.
-    Bot Chrome bleibt GEÖFFNET — kein close() bis Erfolg.
+    """Generate a Fireworks API key via the web UI.
+
+    Navigates to /settings/users/api-keys, clicks "Create API Key" → "API Key"
+    menuitem, fills the key name, clicks Generate, then polls for the fw_ key
+    pattern in page text (up to 15s).
+
+    Bot Chrome stays open — caller must call cleanup_bot() after this.
+
+    Args:
+        key_name: Name for the API key (e.g., alias prefix like "pulse")
+
+    Returns:
+        Dict with 'status' ('success'|'error') and 'api_key' (fw_...) on success.
     """
     from sin_browser_tools.tools.navigation import browser_navigate, browser_get_url
     from sin_browser_tools.tools.interaction import browser_click_by_text, browser_fill

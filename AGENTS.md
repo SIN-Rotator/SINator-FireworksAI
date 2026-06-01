@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V18.0 (2026-06-01)
+# AGENTS.md — SINator Fireworks AI Rotator V19.1 (2026-06-01)
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-01
 
@@ -20,378 +20,147 @@ python tools/rotate.py
 
 ---
 
-## 🔧 V18.0 CHANGES (2026-06-01) — Issue #11 FIXED, GMX Email endlich anklickbar + lesbar
+## 🔧 V19.1 CHANGES (2026-06-01) — 100% SIN-Browser-Tools, E2E Fixed
+
+### Core Change: Zero Raw Playwright Calls
+`fireworks_service.py` now uses **100% SIN-Browser-Tools** — no `page.evaluate()`, no `page.locator()`, no `page.goto()`. All operations go through:
+- `browser_navigate()`, `browser_fill()`, `browser_click_by_text()`
+- `browser_click_checkbox_by_text()`, `browser_console()`, `browser_get_text()`
+- `browser_get_url()`, `browser_press()`
+
+### Bug Fixes
+| Problem | Fix | Impact |
+|---------|-----|--------|
+| Account ID > 20 chars | `sin` + 8 random = 11 chars | Form validation passes |
+| `browser_fill()` doesn't clear React inputs | Native React value setter via `browser_console()` | Fields fill correctly |
+| "Next" clicks carousel button | `browser_press("Enter")` after password | Login submits properly |
+| Onboarding stuck on page 1 | Terms checkbox via `browser_click_checkbox_by_text()` | Page 2 loads |
+| Continue doesn't advance | Native React setter for Account/First/Last | Form validates |
+
+### `_BrowserHandle` Duck-Type
+Replaces `BrowserManager` (which hardcodes `--start-maximized`). Provides `_page`, `_context`, `_browser`, `_playwright` for SIN-Browser-Tools compatibility. Window size: 1200×800.
+
+### Immortal Tags
+- `v19.1-e2e-sin-tools` — Full E2E flow working
+
+---
+
+## 🔧 V18.0 CHANGES (2026-06-01) — Frame-Tools for GMX Shadow DOM
 
 ### ✅ Issue #11 — Gelöst (SIN-Browser-Tools, Commit c77ae56)
 
-**3 neue Frame-Tools in `sin_browser_tools/tools/frames.py` (300 Zeilen):**
+**3 Frame-Tools in `sin_browser_tools/tools/frames.py`:**
 
-1. **`browser_list_frames()`** — alle Frames auflisten (Main, OOPIFs, Same-Process, name + URL)
-2. **`browser_eval_in_frame(expression, frame_name=None, frame_url=None)`** — JS in bestimmtem Frame ausführen (by name oder URL-substring)
-3. **`browser_snapshot_in_frame(frame_name=None, frame_url=None, selector=None, pierce_shadow=True, ...)`** — Frame-DOM mit OPEN Shadow Root traversal, Text aus Custom Elements extrahieren
+1. **`browser_list_frames()`** — alle Frames auflisten
+2. **`browser_eval_in_frame(expression, frame_name=None, frame_url=None)`** — JS in bestimmtem Frame
+3. **`browser_snapshot_in_frame(frame_name=None, frame_url=None, selector=None, ...)`** — Frame-DOM mit Shadow Root traversal
 
-**Verifikation:** 45 Tests ✅, 3 Läufe flake-free, `sin_browser_tools/tools/frames.py` volle docstrings + Modulheader
-
-### ✅ GMX Email Endlich Lesbar — VERIFIED mit Live-Test
-
-```python
-# === SCHRITT 1: Email-Items finden (50 gefunden!) ===
-from sin_browser_tools.tools.frames import browser_snapshot_in_frame
-snap = await browser_snapshot_in_frame(
-    frame_name="mail",
-    selector="list-mail-item"
-)
-# → 50 Items, 30 davon Fireworks AI!
-
-# === SCHRITT 2: Fireworks Email identifizieren ===
-eval_r = await browser_eval_in_frame(
-    """function() {
-        var mlc = document.querySelector('mail-list-container');
-        var mll = mlc.shadowRoot.querySelector('list-mail-list');
-        var items = mll.shadowRoot.querySelectorAll('list-mail-item');
-        var result = [];
-        items.forEach(function(li, idx) {
-            var txt = (li.innerText || '').trim();
-            if (txt.includes('Fireworks')) result.push({idx: idx, text: txt});
-        });
-        return result;
-    }""",
-    frame_name="mail"
-)
->>> {'count': 30, 'items': [
-...   {idx: 11, text: 'no-reply@fireworks.ai / Gestern / Verify your Fireworks account'},
-...   {idx: 12, text: 'no-reply@fireworks.ai / Gestern / Verify your Fireworks account'},
-...   ...
-... ]}
-
-# === SCHRITT 3: Klicken (locator, NICHT evaluate!) ===
-mail_frame = page.frames.find(f => f.name == "mail")
-await mail_frame.locator('list-mail-item').nth(FW_IDX).click(timeout=5000)
-# → ✅ Email öffnet sich in der Detail-Ansicht
-
-# === SCHRITT 4: Body lesen (scan ALL Playwright frames) ===
-# Nach Click erscheint <detail-body> mit einem <iframe> im webmailer.
-# Der Body wird in einem separaten Playwright-Frame (about:blank) geladen.
-# Scan alle Frames nach "Verify Your Email Address" / verify URL:
-for f in page.frames:
-    txt = await f.evaluate("document.body ? document.body.innerText : ''")
-    if 'confirm' in txt or 'confirmation_code' in txt:
-        verify_url = re.search(r'https://app\.fireworks\.ai/signup/confirm\?[^\s]+', txt)
-        otp = re.search(r'confirmation_code=(\d{6})', txt)
-        # → verify_url + otp gefunden! ✅
-```
-
-**GMX Shadow DOM Struktur (bestätigt):**
+### GMX Shadow DOM Struktur
 ```
 page → iframe#mail (webmailer.gmx.net)
-  → mail-list-container
-    → shadowRoot
-      → list-mail-list
-        → shadowRoot
-          → list-mail-item (50 Stück) ← EMAIL LISTE
-      → list-toolbar
-      → div.list-mail-list-detail-container
-        → div.list-mail-details
-          → webmailer-mail-detail (Header: Subject, From, Date)
-            → shadowRoot
-              → detail-body
-                → iframe.detail-body--full-height ← EMAIL BODY (separater Playwright Frame)
+  → mail-list-container → shadowRoot → list-mail-list → shadowRoot → list-mail-item
+  → detail-body → iframe.detail-body--full-height (EMAIL BODY)
 ```
-
-### Key Learnings
-1. `browser_snapshot_in_frame` findet **50 email items** (vorher `browser_snapshot_full_oopif`: 0)
-2. `selector="list-mail-item"` matched durch open Shadow Roots
-3. `frame.locator('list-mail-item').nth(N).click(force=True)` funktioniert (locator, nicht evaluate!)
-4. `browser_eval_in_frame` für JS-Strukturabfrage — besser als AX-Tree für Shadow DOM
-5. Frame-Tools ersetzen KEIN Playwright direkt — `page.frames` + `frame.evaluate` + `frame.locator` bleiben nötig
-6. **Email Body** lädt in **separatem Playwright-Frame** (about:blank, kein Name, kein URL-Match) — NICHT im mail-Frame! Scan alle page.frames.
-7. `click(force=True)` nötig wenn `webmailer-mail-detail` Pointer-Events intercepts
 
 ### Immortal Tag
-- Tag `v18.0-gmx-email-lesbar` auf main für Ewigkeit
-- Frame-Tools fix: `c77ae56` in SIN-Browser-Tools
+- `v18.0-gmx-email-lesbar` — Frame-Tools fix in SIN-Browser-Tools
 
 ---
 
-## 🔧 V14 CHANGES (2026-05-29) — Playwright-native Migration
+## 🔧 V16.0 FIXES (2026-05-31) — GMX Navigation + Session
 
-### fireworks_service.py — V6 Restored (Playwright+CUA Hybrid)
-**Vorher:** 3103 Zeilen CDP-only (V5), dann 216 Zeilen CDP-only (V7), dann broken
-**Jetzt:** 655 Zeilen — bewährter V6 Code (Playwright + CUA Hybrid)
-
-**Funktionen:**
-- `signup_fireworks(email, password)` — Signup + OTP + Verify
-- `login_fireworks(email, password)` — Login + Onboarding (CUA + Playwright Fallback)
-- `create_api_key(key_name)` — API Key erstellen via Playwright
-- `verify_account(verify_url)` — Verify URL öffnen
-- `_fireworks_playwright_onboarding(page)` — Playwright-Onboarding-Fallback
-- `_generate_and_poll_key(pg, key_name)` — Generate-Button + Key-Polling
-
-**OTP Polling:** 25 Versuche × 8s = 200s max. Fallback: `partial` status wenn OTP nicht kommt (Account ist unverified aber oft loginbar).
-
-### rotate.py — V7 Playwright-native (108 Zeilen)
-**Vorher:** 157 Zeilen mit CDP-Login, Onboarding, API Key (alles CDP)
-**Jetzt:** 108 Zeilen — nutzt nur `fireworks_service.py` Funktionen
-
-```python
-# rotate.py flow:
-1. GmxService.login() → Playwright
-2. GmxService.rotate_alias() → Playwright
-3. signup_fireworks(alias, password) → Playwright
-4. login_fireworks(alias, password) → Playwright + CUA
-5. create_api_key(key_name) → Playwright
-6. PoolManager.add_key() → JSON
-```
-
-**Kein CDP mehr im rotate.py!** Alles über Playwright-API-Calls.
-
-### gmx_service.py — Playwright-native (1286 Zeilen)
-**Vorher:** Mix aus CDP + CUA + Playwright
-**Jetzt:** Playwright-native für alle Operationen
-
-- `initialize_architecture(browser)` — Multi-Tab-Setup (work_tab + dedizierter inbox_tab)
-- `navigate_inbox()` — hält den Inbox-Tab dauerhaft im Posteingang
-- `_navigate_to_all_email_addresses()` — Playwright shadow DOM traversal
-- `_login()` — Playwright form fill
-- `_delete_alias()` — Playwright iframe interaction
-- `_create_alias()` — Playwright iframe interaction
-- `read_otp()` — CDP-basiert (MailCheck Extension + OOPIF), Legacy-Fallback — bewährt
-- `read_otp_via_playwright(browser)` — **frame-aware**: scannt ALLE Frames (auch OOPIF `bap.navigator.gmx.net`), klickt im matchenden Frame
-- `read_otp_axtree_and_frames()` — bevorzugt Fireworks Confirm-URL, 6-stelliger Code nur mit Verifizierungs-Kontext
-
-> ⚠️ Diese 8 Methoden gehören ALLE zur Klasse `GmxService` (4-Space-Indent). Ein
-> früherer Bug hatte vier davon versehentlich auf Modul-Ebene (Spalte 0) verschoben
-> → `AttributeError` bei jedem Aufruf. Siehe V15.5 FIXES.
-
----
-
-## 🔧 V16.0 FIXES (2026-05-31) — GMX Navigation + Session + Credentials
-
-### ⚠️ KERNFIX: "Zum Postfach" klicken statt goto(navigator.gmx.net/mail)
-**NIEMALS** `page.goto("https://navigator.gmx.net/mail")` verwenden — GMX
-redirected ohne SID zurück zu `www.gmx.net`. Statt dessen:
-1. `page.goto("https://www.gmx.net/")` — Homepage laden
-2. "Zum Postfach" Link klicken — erzeugt SID-Session
-3. Danach ist `page.url` auf `navigator.gmx.net/mail?sid=...`
-
-Dieser Fix betrifft ALLE Tools die den Posteingang öffnen:
-- `gmx/open_inbox.py` — "Zum Postfach" Click statt goto
-- `gmx/find_email.py` — `_navigate_to_inbox()` Helper mit Zum Postfach
-- `agent_toolbox/core/gmx_service.py` — `navigate_inbox()` nutzt bereits Zum Postfach
-
-### Bug 1: open_inbox gab success ohne Navigation
-- `page.goto("navigator.gmx.net/mail")` redirected zu `www.gmx.net` ohne SID
-- Body-Text-Check auf "anmelden"/"Nicht eingeloggt" traf nicht zu → `success` fälschlich
-- Fix: URL-Check VOR Body-Check + "Zum Postfach" Click-Strategie
-- Tags: `v16.0-fix-open-inbox-zum-postfach`
-
-### Bug 2: check_session meldete logged_in bei inactive Session
-- URL war `www.gmx.net/?status=inactive` aber Body zeigte noch "Sie sind eingeloggt"
-- Fix: URL-Check auf `status=inactive`/`session-expired`/`logoutlounge`/`iac/restart` VOR Body-Text
-- Tags: `v16.0-fix-gmx-service-triple`
-
-### Bug 3: delete_alias/rotate_alias ohne Credentials → TypeError
-- `_navigate_to_all_email_addresses()` rief `self._login(page)` ohne email/password
-- `GmxService._login()` hat email+password als Pflichtparameter → TypeError
-- Fix: email/password Parameter durch alle Aufruferkette + Config-Fallback
-- Betroffen: `gmx/delete_alias.py`, `gmx/create_alias.py`, `gmx/rotate_alias.py`
-- Tags: `v16.0-fix-delete-alias-credentials`, `v16.0-fix-create-alias-credentials`, `v16.0-fix-rotate-alias-credentials`
+### KERNFIX: "Zum Postfach" klicken
+**NIEMALS** `page.goto("https://navigator.gmx.net/mail")` — redirected ohne SID. Stattdessen:
+1. `page.goto("https://www.gmx.net/")` → "Zum Postfach" klicken → `navigator.gmx.net/mail?sid=...`
 
 ### _pw_connect: SID-Tab-Priorisierung
-- Vorher: erster `gmx.net`-Tab wurde genommen (oft der nicht-eingeloggte)
-- Jetzt: Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt
-- Zusätzlich: `status=inactive` URLs werden übersprungen
-- Tags: `v16.0-fix-gmx-service-triple`
+Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt. `status=inactive` URLs übersprungen.
 
 ---
 
 ## 🔧 V15.5 FIXES (2026-05-31) — OTP-Extraktion repariert
 
-### Struktur-Bug: Methoden aus der Klasse gefallen
-- `generate_alias_name`, `initialize_architecture`, `navigate_inbox`,
-  `read_otp_axtree_and_frames` standen auf Modul-Ebene (Spalte 0) statt in `GmxService`
-- Folge: `self.generate_alias_name()`, `gmx.initialize_architecture()`,
-  `gmx.navigate_inbox()`, `gmx.read_otp_axtree_and_frames()` → `AttributeError`
-- Fix: zurück in die Klasse eingerückt (per AST verifiziert, alle 22 Methoden vorhanden)
+### Struktur-Bug: Methoden aus Klasse gefallen
+`generate_alias_name`, `initialize_architecture`, `navigate_inbox`, `read_otp_axtree_and_frames` standen auf Modul-Ebene → `AttributeError`. Fix: zurück in Klasse.
 
 ### Frame-aware OTP
-- `read_otp_via_playwright` durchsucht jetzt `page.frames` (alle Frames), nicht nur den Hauptframe
-- Klick erfolgt im matchenden Frame (`matched_frame.evaluate`), Text- ODER ID-basiert
-- `read_otp_axtree_and_frames` erkennt zuerst die eindeutige Fireworks **Confirm-URL** und
-  akzeptiert 6-stellige Codes nur aus Text mit Verifizierungs-Kontext (vermeidet `[A-Z0-9]{6}`-False-Positives)
-
----
-
-## 🔧 V13 CHANGES (2026-05-29) — Fireworks Model Discovery
-
-### Pool-Proxy `/v1/models` Handler
-- `proxy/server.py` — `_handle_v1_models()` liest `~/.hermes/models_dev_cache.json`
-- Gibt ALLE Fireworks Modelle + Router zurück (12 aktuell)
-- Routen: `/v1/models` + `/inference/v1/models` (vor Catch-All registriert)
-- `PUBLIC_PROXY_PATHS` um `/v1/models` erweitert
-
-### Hermes `custom:*` Provider Support
-- `patches/` (now in SIN-Rotator repo) — `provider_model_ids()` behandelt `custom:` prefix
-- Probt `/v1/models` live über Pool-Proxy
-- Model-Picker zeigt Fireworks-Modelle (vorher: 0, jetzt: 12)
+`read_otp_via_playwright` durchsucht ALLE Frames (inkl. OOPIF). `read_otp_axtree_and_frames` erkennt Confirm-URL + 6-stellige Codes nur mit Verifizierungs-Kontext.
 
 ---
 
 ## 🔧 V12 CHANGES (2026-05-26)
 
-### Config Manager — GMX + Fireworks Credentials
-- `agent_toolbox/core/config_manager.py` — speichert in `data/config.json`
-- API: `GET /api/v1/config` + `POST /api/v1/config` (public, kein Auth)
-- `rotate.py` liest Config → übergibt `--gmx-email` + `--gmx-password` + `--password`
-
-### Setup-Seite (Dashboard)
-- `/setup` — Formular für GMX Email, GMX Passwort, Fireworks Passwort
-- Show/Hide Toggle auf Passwort-Feldern
-
-### Pool-Stats: `leased` entfernt
-- `available = total - used - suspended`
-- `leased` Feld entfernt aus Schema, Route, Pool Manager
-
-### Chat-Assistent (Dashboard /hilfe)
-- Rust-Command `chat_send` → Pool-Router (`localhost:9998`)
-- Modell: `accounts/fireworks/models/gpt-oss-120b` ($0.15/M input)
-- System-Prompt in `src-tauri/chat-system-prompt.txt`
-- Live-Pool-Stats + Backend-Health im System-Prompt
-
-### CORS + Auth
-- `/api/v1/config` zu `public_prefixes` hinzugefügt
-- CORS Origins: `https://tauri.localhost`, `tauri://localhost`, `http://localhost:3000`, `http://localhost:8000`
-
-### Tauri Build
-- Neue Dependencies: `reqwest`, `tokio`, `futures-util`
-- `chat_send` Command registriert
-
----
-
-## 🔧 V12 FIXES (2026-05-26)
+### Config Manager
+- `agent_toolbox/core/config_manager.py` — `data/config.json`
+- API: `GET/POST /api/v1/config` (public)
 
 ### Pool-Router + 10 Proxys
-- EIN Pool-Router (:9998) verteilt auf 10 Proxy-Instanzen (:8888-:8897)
+- EIN Pool-Router (:9998) → 10 Proxy-Instanzen (:8888-:8897)
 - Auto-Failover bei 413/429/412/5xx
-- Cooldown nach 3 Fehlern (60s Pause)
-- Start: `proxy/start-multi.sh`
-
-### GMX Navigation — Playwright Shadow DOM
-- Reiner Playwright-Ansatz — kein CUA für Navigation
-- `ACCOUNT-AVATAR-NAVIGATOR` Custom Element → JS `.click()` + `dispatchEvent(mouseenter)`
-- Shadow DOM traversal → "E-Mail Einstellungen" → settings iframe → "E-Mail-Adressen"
-- `3c.gmx.net` (HTTPS, direkt) funktioniert für direkte Navigation
 
 ### Double-Key-Waste Fix (Atomic Report+Lease)
-- `pool_manager.report_key()` leaset Ersatz-Key atomar (im gleichen Lock wie suspend)
-- Proxy `_swap_key()` nutzt `report()`-Result direkt — kein extra `lease()`
-
-### 429 Handling — Client Return
-- Transientes 429 → SOFORT an Client zurück mit `Retry-After` Header
-- Kein internes Warten mehr
-
-### Chrome Tab Cleanup
-- `rotate.py` schließt ALLE non-essential Tabs nach jeder Rotation
-- Nur Dashboard + 1 GMX-Inbox bleiben
-
-### CDP Target Selection — Inbox bevorzugen
-- `get_page_target()` priorisiert `navigator.gmx.net` über `www.gmx.net`
+- `pool_manager.report_key()` leaset Ersatz-Key atomar
 
 ---
 
-## 🐛 BEKANNTE PROBLEME (2026-05-29)
+## 🐛 BEKANNTE PROBLEME
 
-### Fireworks Account Suspension (Spending Limit)
-```
-Account golden-cobra-560-66c is suspended, possibly due to reaching the monthly
-spending limit or failure to pay past invoices.
-```
-- Jeder FW Account hat $5 Credits — sobald aufgebraucht = Suspension
-- Betroffene Keys müssen als `used` markiert werden
-- Workaround: `POST /pool/report` oder `POST /pool/use` für suspended Keys
+### Fireworks Account Suspension
+- Jeder FW Account hat $5 Credits — aufgebraucht = Suspension
+- Betroffene Keys als `used` markieren via `POST /pool/report`
 
 ### OTP-Email Verzögerung
-- Fireworks Verify-Email kann bis zu 180s brauchen
-- Fix: 25×8s = 200s Polling in `signup_fireworks()`
-- Fallback: `partial` status — Account ist unverified aber oft loginbar
+- Fireworks Verify-Email bis 180s → 25×8s = 200s Polling
 
-### OTP-Extraktion — ✅ GEFIXT (V18.0)
-- **Problem:** GMX Emails in multi-level Shadow DOM: `mail-list-container > shadowRoot > list-mail-list > shadowRoot > list-mail-item`
-- **Alte Methode:** `element.evaluate('el.click()')` — funktioniert NICHT auf Shadow DOM Custom Elements
-- **Lösung:** Playwright `locator('list-mail-item').click()` — funktioniert ✅
-- **Email-Lesen:** Shadow DOM pierce via `frame.evaluate()` mit rekursivem `walk()` (max_depth=5)
-- **Snapshot-Problem:** `browser_snapshot_full_oopif` findet 9 refs, 0 email items — nutze `browser_snapshot_in_frame(selector="list-mail-item")` statt AX-Tree
-- **Issue #11** geschlossen: `browser_snapshot_in_frame`, `browser_eval_in_frame`, `browser_list_frames` in SIN-Browser-Tools `main`
-
-### GMX Email Click (NEU V18.0 — Frame-Tools statt AX-Tree)
-```python
-# 1. Navigate to mail list
-spa = SPAWaker()
-await spa.wake_gmx_mail(gmx_page)
-await browser_snapshot_full_oopif(pierce=True)  # Refresh refs nach wake
-await browser_click_by_text('E-Mail', role='button')
-await asyncio.sleep(8)
-
-# 2. Get mail iframe
-mail_frame = gmx_page.frame('mail')
-
-# 3. Email items via Frame-Tools (50 Items, 0 vorher)
-from sin_browser_tools.tools.frames import browser_snapshot_in_frame, browser_eval_in_frame
-snap = await browser_snapshot_in_frame(
-    frame_name="mail",
-    selector="list-mail-item"
-)
-# snap['count'] = 50, snap['items'] = [...]
-
-# 4. Fireworks-Emails identifizieren per browser_eval_in_frame
-fireworks = await browser_eval_in_frame("""function() {
-    var mlc = document.querySelector('mail-list-container');
-    var mll = mlc.shadowRoot.querySelector('list-mail-list');
-    var items = mll.shadowRoot.querySelectorAll('list-mail-item');
-    var result = [];
-    items.forEach(function(li, idx) {
-        var txt = (li.innerText || '').trim();
-        if (txt.includes('Fireworks')) result.push({idx: idx, text: txt.substring(0, 120)});
-    });
-    return result;
-}""", frame_name="mail")
-
-# 5. Click via LOCATOR (NICHT evaluate().click())
-await mail_frame.locator('list-mail-item').nth(FW_IDX).click(timeout=5000)
-
-# 6. Body lesen via frame.evaluate + _WALK_JS (aus frames.py)
-data = await mail_frame.evaluate(_WALK_JS, {
-    "selector": None, "pierceShadow": True, "maxItems": 100
-})
-# → Email-Content aus dem Detail-Container (noch Lazy-Loading-Issue)
-```
-
-### Unverified Account = API Key Blocked
-- Account erstellt, aber unverified → API Key Seite redirected zu `/login`
-- Fix: Verify-URL muss geöffnet werden (oder Account ist verified)
-- Workaround: Nach `partial` signup → `login_fireworks()` versucht trotzdem
+### Browser Window Size
+- `BrowserManager` hardcodes `--start-maximized` (1920px)
+- Fireworks Detects → Blockiert
+- Fix: `_BrowserHandle` mit `--window-size=1200,800`
 
 ---
 
 ## 🔑 CRITICAL PATTERNS (MANDATORY)
 
-### Playwright Form Interaction
+### SIN-Browser-Tools Form Interaction
 ```python
-# Email/Password
-page.locator('input[name="email"]').first.fill(email)
-page.locator('input[name="password"]').first.fill(password)
+from sin_browser_tools.tools.navigation import browser_navigate, browser_press
+from sin_browser_tools.tools.interaction import browser_click_by_text, browser_fill
+from sin_browser_tools.tools.extraction import browser_console
 
-# Button matching via text content
-for btn in await page.locator('button[type="submit"]').all():
-    if 'Next' in (await btn.text_content() or ''):
-        await btn.click(force=True); break
+# Fill email (React controlled input — native setter)
+await browser_console("""(() => {
+    var inp = document.querySelector('input[name="email"]');
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(inp, 'user@example.com');
+    inp.dispatchEvent(new Event('input', {bubbles: true}));
+    inp.dispatchEvent(new Event('change', {bubbles: true}));
+})()""")
 
-# API Key (Playwright) — disabled-Wait + DOM-Polling
-for _ in range(15):
-    for btn in await page.locator('button').all():
-        txt = (await btn.text_content() or '').strip()
-        if 'Generate' == txt and not await btn.is_disabled():
-            await btn.click(force=True); break
+# Click button by text
+await browser_click_by_text("Next", role="button")
+
+# Submit form (avoids carousel button conflict)
+await browser_press("Enter")
+```
+
+### React Native Value Setter (MANDATORY for React SPAs)
+```python
+# browser_fill() uses page.type() which doesn't clear React state
+# Use this pattern instead:
+await browser_console(f"""(() => {{
+    var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+    setter.call(document.querySelector('input[name="fieldName"]'), '{value}');
+    document.querySelector('input[name="fieldName"]').dispatchEvent(new Event('input', {{bubbles: true}}));
+    document.querySelector('input[name="fieldName"]').dispatchEvent(new Event('change', {{bubbles: true}}));
+}})()""")
+```
+
+### OTP Polling (rotate.py)
+```python
+otp_result = await gmx.read_otp_main_frame_only(sender_keyword="fireworks", timeout=80)
+otp_url = otp_result.get("otp_url")
+if otp_url:
+    verify_ok = await verify_account(otp_url)
 ```
 
 ### GMX Alias Delete (Playwright iframe)
@@ -401,38 +170,6 @@ frame.locator(f'text={alias_email}').first.hover()
 frame.locator('[title*="löschen"]').first.click(force=True)
 ```
 
-### GMX Alias Create (Playwright iframe)
-```python
-inp = frame.locator('input[type="text"]').first
-await inp.fill("name-123")
-btn = frame.locator('button:has-text("Hinzufügen")').first
-await btn.click(force=True)
-# verify: inp.input_value() == '' = success
-```
-
-### CUA Onboarding (Fallback)
-```python
-# Names: "First" + "Last" suchen, NICHT "Name"
-el = _find_element("First", "AXTextField")  # richtig
-# el = _find_element("Name", "AXTextField")  # FALSCH!
-
-# Use-cases
-for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
-    el = _find_element(uc_text, "AXCheckBox")
-    if el: _cua_click(el)
-```
-
-### OTP Polling (read_otp)
-```python
-# 25 attempts × 8s = 200s max
-for attempt in range(25):
-    await asyncio.sleep(8)
-    otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=1, retry_delay=3)
-    if otp_result.get("status") == "success":
-        verify_url = otp_result.get("url") or otp_result.get("otp_url")
-        if verify_url: break
-```
-
 ---
 
 ## 📁 ARCHITECTURE
@@ -440,18 +177,19 @@ for attempt in range(25):
 ```
 agent_toolbox/
 ├── core/
-│   ├── fireworks_service.py    V6: Playwright+CUA Hybrid + launch()
+│   ├── fireworks_service.py    V19.1: 100% SIN-Browser-Tools + _BrowserHandle
 │   ├── gmx_service.py          Playwright-native, launch() statt connect_over_cdp
-│   ├── pool_manager.py         Pool-Stats + Key-Management
+│   ├── pool_manager.py         Pool-Stats + Key-Management + Keychain
 │   ├── keychain_store.py       macOS Keychain-Store
 │   ├── config_manager.py       GMX+FW Credentials
+│   ├── browser_utils.py        Legacy utilities (DEPRECATED — use SIN-Tools)
 │   ├── cua_helper.py           CUA Window Detection (nur für Onboarding)
 │   └── cdp_client.py           Raw CDP WebSocket (OOPIF fallback)
 ├── api/
 │   └── routes/
 │       ├── gmx.py              GMX API
 │       ├── fireworks.py        Fireworks API
-│       ├── pool.py             Pool-CRUD + Stats
+│       ├── pool.py             Pool-CRUD + Stats + Lease
 │       ├── rotation.py         Full Rotation Orchestrator
 │       ├── config.py           GET/POST /api/v1/config
 │       └── schemas.py          Pydantic Models
@@ -470,13 +208,14 @@ scripts/
 └── pool-router.plist           LaunchAgent
 
 tools/
-├── rotate.py                   V8.1: TRUE ONE Browser (page-native, no CDP)
+├── rotate.py                   V19.1: Full E2E flow (GMX + Fireworks)
 ├── batch_rotate.py             Batch N Rotations
 ├── gmx_alias_tool.py          GMX Alias CLI
 ├── open_gmx_email.py          GMX Email Opener
 ├── swap_key.py                Key Swap CLI
 ├── install.sh                 Service Installer
 └── manage_services.sh         Service Management
+```
 
 ---
 
@@ -495,8 +234,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-05-31 (V16.0 — Zum Postfach Fix, Session-Detection, Credentials-Passthrough)*
-*All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
+*Last Updated: 2026-06-01 (V19.1 — 100% SIN-Browser-Tools, E2E Flow Fixed)*
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence

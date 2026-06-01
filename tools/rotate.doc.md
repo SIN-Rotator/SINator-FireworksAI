@@ -1,47 +1,46 @@
-# Rotation Tool (`rotate.py`)
+# rotate.py — Full Rotation Orchestrator
 
-Main orchestrator for GMX alias rotation + Fireworks AI account registration + API key generation.
-
-## Usage
-
-```bash
-python3 tools/rotate.py [--gmx-email E] [--gmx-password P] [--password P] [alias-name]
-```
-
-## Flow (V8.2 Multi-Tab Architecture)
-
-1. **Start Chrome** or connect to existing CDP port
-2. **`initialize_architecture()`** → creates `work_tab` + dedicated `inbox_tab`
-3. **GMX Login** via work_tab (if not already logged in)
-4. **`GmxService.rotate_alias()`** → delete old alias → create new alias
-5. **`FireworksService.signup_fireworks()`** → register with new alias
-6. **`GmxService.read_otp_v2()`** → poll inbox_tab for Fireworks verify email
-7. **`FireworksService.verify_account()`** → open confirm URL
-8. **`FireworksService.login_fireworks()`** → complete onboarding
-9. **`FireworksService.create_api_key()`** → generate and persist
-10. **`PoolManager.add_key()`** → save to pool JSON
+## Purpose
+End-to-end Fireworks account rotation: GMX alias creation → Fireworks signup → OTP verify → login → onboarding → API key → pool save.
 
 ## Dependencies
+- **Imports from:** `agent_toolbox.core.fireworks_service` (Bot Chrome flow)
+- **Imports from:** `agent_toolbox.core.gmx_service` (GMX alias rotation)
+- **Imports from:** `agent_toolbox.core.pool_manager` (key persistence)
+- **Imports from:** `agent_toolbox.core.config_manager` (credentials)
+- **Imported by:** CLI (`python tools/rotate.py`)
 
-- **Imports:** `agent_toolbox.core.gmx_service.GmxService`, `agent_toolbox.core.fireworks_service.FireworksService`, `agent_toolbox.core.pool_manager.PoolManager`
-- **Called by:** `tools/batch_rotate.py`, manual CLI invocations
-- **Imported by:** None (standalone CLI tool)
+## Flow
+```
+Step 0: GMX Login (User Chrome, Profile 73)
+Step 1: GMX Alias Rotation (delete old → create new)
+Step 2: Fireworks Signup (Bot Chrome, ephemeral)
+Step 3: OTP Poll (User Chrome, GMX inbox)
+Step 4: Verify Account (Bot Chrome, open OTP URL)
+Step 5: Login + Onboarding (Bot Chrome)
+Step 6: API Key Generation (Bot Chrome)
+Step 7: Save to Pool (JSON + macOS Keychain)
+```
 
-## Key Architecture Decisions
+## Two Chrome Instances
+- **User Chrome** (`--cdp-port 9222`): GMX ops, OTP reading. Profile 73, never killed.
+- **Bot Chrome** (ephemeral `chromium.launch()`): Fireworks ops. Created per rotation, closed after API key.
 
-- **Two tabs**: `work_tab` for active work (login, alias, Fireworks) + `inbox_tab` permanently parked at GMX inbox for OTP polling. This prevents session poisoning.
-- **No CDP in rotate.py**: All operations via Playwright service calls. CDP only used inside `read_otp_via_playwright()` fallback.
-- **OTP via `read_otp_v2()`**: Uses `browser_scan_frames` + `browser_eval_in_frame` from SIN-Browser-Tools (V18.2)
+## CLI Arguments
+| Arg | Required | Default | Description |
+|-----|----------|---------|-------------|
+| `alias` | No | auto-generated | GMX alias name |
+| `--gmx-email` | Yes* | config | GMX account email |
+| `--gmx-password` | Yes* | config | GMX account password |
+| `--password` | Yes* | config | Fireworks account password |
+| `--cdp-port` | No | 0 (launch new) | CDP port for User Chrome |
+| `--save` | No | True | Save API key to pool |
+| `--debug` | No | False | Enable DEBUG logging |
 
-## Config
+*Required unless set in `data/config.json` or environment variables.
 
-- Read from `data/config.json` (GMX email/password, Fireworks password)
-- API keys saved to `data/fireworksai-pool.json`
-- Pool endpoint: `sinatorpool-router.delqhi.com:9998`
-
-## Known Caveats
-
-- `_goto_postfach()` is required before any GMX inbox navigation — do NOT use `page.goto("navigator.gmx.net/mail")`
-- OTP can take up to 180s (Fireworks sends email with delay)
-- Unverified accounts get `partial` status — login may still work
-- After rotation, all non-essential Chrome tabs are closed (only Dashboard + 1 GMX inbox remain)
+## Key Design Decisions
+- Bot Chrome uses `launch()` (not `connect_over_cdp`) to avoid killing User Chrome
+- OTP polling reads from User Chrome's GMX session (not Bot Chrome)
+- `signup_fireworks()` validates `passwords_filled` + `create_clicked` before proceeding
+- API key name derived from alias prefix (e.g., `pulse-runner-931` → `pulse`)

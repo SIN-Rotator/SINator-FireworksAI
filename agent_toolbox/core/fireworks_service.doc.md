@@ -1,34 +1,60 @@
-# File: `fireworks_service.py`
+# fireworks_service.py — Fireworks AI E2E Flow
 
-Fireworks AI account automation — signup, login (with onboarding), API key creation, and account verification. Playwright-first with CUA fallback for React onboarding checkboxes.
+## Purpose
+Complete Fireworks AI lifecycle: signup → OTP verify → login → onboarding → API key generation. Uses 100% SIN-Browser-Tools (zero raw Playwright evaluate calls).
 
 ## Dependencies
+- **Imports from:** `sin_browser_tools.tools.*` (navigation, interaction, extraction, vision)
+- **Imports from:** `sin_browser_tools.core.manager` (instance registration)
+- **Imported by:** `tools/rotate.py` (rotation orchestrator)
+- **Reads:** Nothing from disk (ephemeral browser session)
 
-- **Imported by:** `fireworks/signup.py`, `fireworks/login.py`, `fireworks/create_apikey.py`, `fireworks/verify_account.py`, `tools/rotate.py`, `agent_toolbox/api/routes/fireworks.py`, `tools/sinator-cli.py`
-- **Imports:** `playwright.async_api`, `asyncio`, `re`, `subprocess`, from `cua_helper`: `find_cua_window`, `cua_get_window_state`
+## Architecture
 
-## Key Functions
+### Two Chrome Instances
+| Instance | Purpose | Lifecycle |
+|----------|---------|-----------|
+| User Chrome (Profile 73) | GMX email ops (OTP reading) | Persistent, never killed |
+| Bot Chrome (ephemeral) | Fireworks signup/login/onboarding/API key | Created per rotation, closed after API key success |
 
-| Symbol | Purpose |
-|--------|---------|
-| `signup_fireworks()` | Full signup flow: fill email → Next → 2× password → Create Account. OTP polling is delegated to caller. |
-| `login_fireworks()` | Login via Playwright + CUA/Playwright onboarding fallback. Handles name fields, terms, use-cases, submit. |
-| `create_api_key()` | Open API Keys page → Create API Key dialog → Generate → Poll for `fw_*` key. Auto-retry on missing-name modal. |
-| `verify_account()` | Open a Fireworks verify URL to confirm account. |
-| `_fireworks_playwright_onboarding()` | Pure Playwright onboarding fallback (no CUA). |
-| `_generate_and_poll_key()` | Core key-generation loop: fill name, wait for Generate enabled, click, poll for key string. |
+### `_BrowserHandle` Duck-Type
+SIN-Browser-Tools expects a `BrowserManager` with `_page`, `_context`, `_browser`, `_playwright` attributes. `_BrowserHandle` provides these from a raw Playwright launch, bypassing `BrowserManager` (which hardcodes `--start-maximized`).
 
-## Important Config/Limits
+Registered via `manager._set_instance(handle)` — all SIN-Browser-Tools tools then operate on this handle.
 
-- OTP polling: delegated to caller (rotate.py) — 25 attempts × 8s = 200s max
-- API key creation: 3 retries, 15s poll per attempt for `fw_` regex match
-- API key polling: checks `document.body.innerText` for `fw_[a-zA-Z0-9]{20,}`
-- Default key name: `sinator-key`
-- Browser modes: reuse existing (`browser=` param), connect via CDP (`cdp_port=`), or launch fresh
+### React Controlled Inputs
+Fireworks uses React controlled inputs. `browser_fill()` uses `page.type()` which doesn't clear existing values for CSS selectors. Fixed by using native React value setter:
+```javascript
+var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+setter.call(input, newValue);
+input.dispatchEvent(new Event('input', {bubbles: true}));
+input.dispatchEvent(new Event('change', {bubbles: true}));
+```
 
-## Known Caveats
+### Account ID Constraint
+Fireworks limits Account ID to 20 characters. Generated as `sin` + 8 random alphanumeric = 11 chars.
 
-- `cua_type_text()` fails on React controlled inputs — signs up with non-React field detection
-- Onboarding `Continue` / `Submit` buttons may not trigger page redirect — fallback force-navigates to api-keys page
-- After CUA Submit, page may be stale — uses fresh page to verify login success
-- Missing Name modal triggers automatic retry with `-1`/`-2` suffix
+## Key Decisions
+
+### Why `browser_press("Enter")` instead of `browser_click_by_text("Next")` for login submit?
+The Fireworks login page has a carousel with "Next slide" button that matches `has_text="Next"`. Playwright's locator finds the carousel button first (disabled), causing timeout. Enter key bypasses this.
+
+### Why native React setter instead of `browser_fill()`?
+`browser_fill()` → `browser_type()` → `page.type()` for CSS selectors. `page.type()` doesn't clear existing React state. Native setter + synthetic events properly update React's internal state.
+
+### Why `_playwright_onboarding` takes no parameters?
+It operates on the currently active page in SIN-Browser-Tools manager. The page is already on `/onboarding` after login redirect.
+
+## Flow Sequence
+```
+1. launch()           → Bot Chrome + SIN-Browser-Tools registration
+2. signup_fireworks() → Email + password + Create Account
+3. verify_account()   → Open OTP URL from GMX
+4. login_fireworks()  → Email Login → email → password → Enter
+5. _playwright_onboarding() → Account ID + Name + Terms → use cases → Submit
+6. create_api_key()   → Navigate to API keys → Create → Generate → poll for fw_ key
+```
+
+## Known Issues
+- `browser_click_checkbox_by_text()` may not trigger React state updates for custom button-based checkboxes (e.g., Fireworks Terms). Fallback: `browser_console()` with direct DOM click.
+- Onboarding redirect detection relies on URL containing `home`/`account`/`settings` — may break if Fireworks changes URL structure.
