@@ -1,11 +1,10 @@
 """
-SINator Browser Utilities V1.0 — React-kompatible Browser-Interaktion
+SINator Browser Utilities V2.0 — React-kompatible Browser-Interaktion
+(V18.0 Post-CEO-Fix Bugfixes)
 
-Implementiert die CEO-Review Fixes:
-  - JS-Injection statt DOM-Manipulation (React-kompatibel)
-  - SPA-Transition Polling via MutationObserver
-  - Main-Frame-Only OTP Scanning (keine Ad-iFrames)
-  - Session Persistence via storage_state
+Fixes from Issue #22:
+  - F1: page.evaluate() mit dict-args statt f-string + positional
+  - All evaluate() calls now use {"arg": val} pattern
 """
 import logging
 import asyncio
@@ -24,7 +23,6 @@ async def accept_cookieyes_via_js(page) -> bool:
     """Accept CookieYes via JS API injection (React-kompatibel).
     
     NICHT element.remove() verwenden - das zerstoert React State!
-    Stattdessen triggern wir die CookieYes API oder setzen localStorage.
     """
     try:
         result = await page.evaluate("""() => {
@@ -70,48 +68,50 @@ async def accept_cookieyes_via_js(page) -> bool:
 
 
 async def wait_for_spa_transition(page, target_text: str, timeout: int = 30) -> bool:
-    """Wait for SPA DOM transition via MutationObserver (nicht URL-based!).
+    """Wait for SPA DOM transition via MutationObserver.
     
-    React SPAs aendern die URL nicht bei Step-Transitions.
-    Wir warten auf das Erscheinen von spezifischem Text im DOM.
+    F1 FIX: Uses dict arg pattern instead of f-string + positional args.
     """
     try:
-        result = await page.evaluate(f"""(targetText, timeoutMs) => {{
-            return new Promise((resolve) => {{
+        # FIX F1: Pass args as dict, not f-string interpolation + positional
+        result = await page.evaluate("""(args) => {
+            const targetText = args.targetText;
+            const timeoutMs = args.timeoutMs;
+            return new Promise((resolve) => {
                 // Check if already present
-                if (document.body.innerText.includes(targetText)) {{
-                    resolve({{found: true, method: 'immediate'}});
+                if (document.body.innerText.includes(targetText)) {
+                    resolve({found: true, method: 'immediate'});
                     return;
-                }}
+                }
                 
                 const deadline = Date.now() + timeoutMs;
-                const observer = new MutationObserver((mutations, obs) => {{
-                    if (document.body.innerText.includes(targetText)) {{
+                const observer = new MutationObserver((mutations, obs) => {
+                    if (document.body.innerText.includes(targetText)) {
                         obs.disconnect();
-                        resolve({{found: true, method: 'observer'}});
-                    }} else if (Date.now() > deadline) {{
+                        resolve({found: true, method: 'observer'});
+                    } else if (Date.now() > deadline) {
                         obs.disconnect();
-                        resolve({{found: false, method: 'timeout'}});
-                    }}
-                }});
+                        resolve({found: false, method: 'timeout'});
+                    }
+                });
                 
-                observer.observe(document.body, {{
+                observer.observe(document.body, {
                     childList: true,
                     subtree: true,
                     characterData: true
-                }});
+                });
                 
                 // Timeout fallback
-                setTimeout(() => {{
+                setTimeout(() => {
                     observer.disconnect();
-                    if (document.body.innerText.includes(targetText)) {{
-                        resolve({{found: true, method: 'timeout_check'}});
-                    }} else {{
-                        resolve({{found: false, method: 'timeout'}});
-                    }}
-                }}, timeoutMs);
-            }});
-        }}""", target_text, timeout * 1000)
+                    if (document.body.innerText.includes(targetText)) {
+                        resolve({found: true, method: 'timeout_check'});
+                    } else {
+                        resolve({found: false, method: 'timeout'});
+                    }
+                }, timeoutMs);
+            });
+        }""", {"targetText": target_text, "timeoutMs": timeout * 1000})
         
         if result.get('found'):
             logger.info(f"SPA transition detected: '{target_text[:30]}...' via {result.get('method')}")
@@ -124,15 +124,39 @@ async def wait_for_spa_transition(page, target_text: str, timeout: int = 30) -> 
         return False
 
 
+async def wait_for_url_change(page, current_url_fragment: str, timeout: int = 15) -> bool:
+    """Wait for URL to change away from current_url_fragment.
+    
+    O2 FIX: Better alternative to waiting for specific text like 'verify'.
+    """
+    try:
+        start = asyncio.get_event_loop().time()
+        deadline = start + timeout
+        while asyncio.get_event_loop().time() < deadline:
+            current_url = page.url
+            if current_url_fragment not in current_url:
+                logger.info(f"URL changed from '{current_url_fragment}' to '{current_url[:60]}'")
+                return True
+            await asyncio.sleep(0.5)
+        logger.warning(f"URL change timeout: still contains '{current_url_fragment}'")
+        return False
+    except Exception as e:
+        logger.warning(f"URL change wait error: {e}")
+        return False
+
+
 async def fill_react_input(page, selector: str, value: str) -> bool:
     """Fill React input with proper event dispatching.
     
-    React inputs brauchen native Event-Simulation, nicht nur .value = x
+    F1 FIX: Uses dict arg pattern.
     """
     try:
-        result = await page.evaluate(f"""(selector, value) => {{
+        # FIX F1: Pass args as dict
+        result = await page.evaluate("""(args) => {
+            const selector = args.selector;
+            const value = args.value;
             const input = document.querySelector(selector);
-            if (!input) return {{success: false, error: 'Element not found'}};
+            if (!input) return {success: false, error: 'Element not found'};
             
             // Get the native value setter
             const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
@@ -143,11 +167,11 @@ async def fill_react_input(page, selector: str, value: str) -> bool:
             nativeInputValueSetter.call(input, value);
             
             // Dispatch React-compatible events
-            input.dispatchEvent(new Event('input', {{bubbles: true}}));
-            input.dispatchEvent(new Event('change', {{bubbles: true}}));
+            input.dispatchEvent(new Event('input', {bubbles: true}));
+            input.dispatchEvent(new Event('change', {bubbles: true}));
             
-            return {{success: true, value: input.value}};
-        }}""", selector, value)
+            return {success: true, value: input.value};
+        }""", {"selector": selector, "value": value})
         
         if result.get('success'):
             logger.debug(f"React input filled: {selector}")
@@ -161,67 +185,68 @@ async def fill_react_input(page, selector: str, value: str) -> bool:
 
 
 async def click_react_checkbox(page, label_text: str) -> bool:
-    """Click React checkbox by label text (avoids <a> tag trap in labels).
+    """Click React checkbox by label text.
     
-    NICHT auf Label klicken wenn es Links enthaelt!
-    Stattdessen das for-Attribut parsen und Ziel-Element direkt klicken.
+    F1 FIX: Uses dict arg pattern.
     """
     try:
-        result = await page.evaluate(f"""(labelText) => {{
+        # FIX F1: Pass args as dict
+        result = await page.evaluate("""(args) => {
+            const labelText = args.labelText;
             // Find label containing the text
             const labels = document.querySelectorAll('label');
-            for (const label of labels) {{
-                if (label.textContent.includes(labelText)) {{
+            for (const label of labels) {
+                if (label.textContent.includes(labelText)) {
                     // Check if label contains <a> tags (TOS trap!)
-                    if (label.querySelector('a')) {{
+                    if (label.querySelector('a')) {
                         // Don't click label - find the target element instead
                         const forAttr = label.getAttribute('for');
-                        if (forAttr) {{
+                        if (forAttr) {
                             const target = document.getElementById(forAttr);
-                            if (target) {{
+                            if (target) {
                                 target.click();
-                                return {{success: true, method: 'for_attribute'}};
-                            }}
-                        }}
+                                return {success: true, method: 'for_attribute'};
+                            }
+                        }
                         // Try finding checkbox inside label
                         const cb = label.querySelector('input[type="checkbox"], [role="checkbox"]');
-                        if (cb) {{
+                        if (cb) {
                             cb.click();
-                            return {{success: true, method: 'nested_checkbox'}};
-                        }}
-                    }} else {{
+                            return {success: true, method: 'nested_checkbox'};
+                        }
+                    } else {
                         // Safe to click label
                         label.click();
-                        return {{success: true, method: 'label_click'}};
-                    }}
-                }}
-            }}
+                        return {success: true, method: 'label_click'};
+                    }
+                }
+            }
             
             // Fallback: find [role="checkbox"] with aria-label
             const checkboxes = document.querySelectorAll('[role="checkbox"]');
-            for (const cb of checkboxes) {{
+            for (const cb of checkboxes) {
                 const ariaLabel = cb.getAttribute('aria-label') || '';
-                if (ariaLabel.toLowerCase().includes(labelText.toLowerCase())) {{
+                if (ariaLabel.toLowerCase().includes(labelText.toLowerCase())) {
                     cb.click();
-                    return {{success: true, method: 'aria_label'}};
-                }}
-            }}
+                    return {success: true, method: 'aria_label'};
+                }
+            }
             
             // Last resort: find div/span with checkbox-like behavior
             const all = document.querySelectorAll('div, span');
-            for (const el of all) {{
+            for (const el of all) {
                 if (el.textContent.trim() === labelText || 
-                    el.textContent.includes(labelText)) {{
+                    el.textContent.includes(labelText)) {
                     const cb = el.querySelector('input[type="checkbox"], [role="checkbox"]');
-                    if (cb) {{
+                    if (cb) {
                         cb.click();
-                        return {{success: true, method: 'container_checkbox'}};
-                    }}
-                }}
-            }}
+                        return {success: true, method: 'container_checkbox'};
+                    }
+                }
+            }
             
-            return {{success: false, error: 'Checkbox not found'}};
-        }}""", label_text)
+            return {success: false, error: 'Checkbox not found'};
+        }""", {"labelText": label_text})
         
         if result.get('success'):
             logger.info(f"React checkbox clicked: '{label_text}' via {result.get('method')}")
@@ -262,15 +287,13 @@ async def load_session_state(browser, filepath: Path):
 
 
 async def extract_jwt_from_localstorage(page, key: str = "auth_token") -> Optional[str]:
-    """Extract JWT/Bearer token from localStorage for API bypass.
-    
-    Statt UI-Klicks koennen wir den Token direkt extrahieren
-    und per httpx gegen die REST-API verwenden.
-    """
+    """Extract JWT/Bearer token from localStorage for API bypass."""
     try:
-        token = await page.evaluate(f"""(key) => {{
+        # FIX F1: Pass args as dict
+        token = await page.evaluate("""(args) => {
+            const key = args.key;
             return localStorage.getItem(key) || sessionStorage.getItem(key) || null;
-        }}""", key)
+        }""", {"key": key})
         
         if token:
             logger.info(f"Token extracted from localStorage['{key}']: {token[:20]}...")
@@ -284,10 +307,7 @@ async def extract_jwt_from_localstorage(page, key: str = "auth_token") -> Option
 
 
 async def scan_main_frame_only(page, pattern: str) -> Optional[str]:
-    """Scan ONLY main frame for pattern (keine Ad-iFrames!).
-    
-    Das verhindert das Scannen von 62 Ad-Tracker iFrames.
-    """
+    """Scan ONLY main frame for pattern (keine Ad-iFrames!)."""
     try:
         main_frame = page.main_frame
         text = await main_frame.evaluate("() => document.body.innerText")
@@ -306,11 +326,7 @@ async def scan_main_frame_only(page, pattern: str) -> Optional[str]:
 
 
 async def intercept_network_response(page, url_pattern: str, timeout: int = 30) -> Optional[Dict[str, Any]]:
-    """Intercept network response matching URL pattern.
-    
-    Statt DOM zu scrapen, intercepten wir den XHR-Call direkt.
-    Wenn /api/v1/auth/signup 200 OK returned, wissen wir die Mail ist raus.
-    """
+    """Intercept network response matching URL pattern."""
     result = {"response": None}
     
     async def handle_response(response):
@@ -342,3 +358,15 @@ async def intercept_network_response(page, url_pattern: str, timeout: int = 30) 
         return None
     finally:
         page.remove_listener("response", handle_response)
+
+
+def get_page_from_browser(browser) -> Any:
+    """Helper to get a new page from browser (CDP-compatible).
+    
+    F5/O3 FIX: browser.new_page() throws on CDP connection.
+    Use browser.contexts[0].new_page() instead.
+    """
+    if browser.contexts:
+        return browser.contexts[0].new_page()
+    else:
+        return browser.new_page()

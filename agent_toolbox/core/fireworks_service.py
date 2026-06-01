@@ -1,11 +1,11 @@
 """
-SINATOR — Fireworks Service V7 (CEO-Review Fixes, 2026-06-01)
+SINATOR — Fireworks Service V8 (Issue #22 Fixes, 2026-06-01)
 
-Implementiert die CEO-Review Fixes:
-  - JS-Injection statt Clicks (React-kompatibel)
-  - SPA-Transition Polling via MutationObserver (nicht URL-based)
-  - CookieYes via API (nicht element.remove())
-  - Session Persistence via storage_state
+Fixes from Issue #22:
+  - F5: browser.new_page() -> _get_new_page() helper for CDP compatibility
+  - O1: login_fireworks() detects logged-in state and skips to onboarding
+  - O2: wait_for_spa_transition("verify") -> wait_for_url_change("/signup")
+  - O3: create_api_key() uses _get_new_page() helper
 
 Docs: fireworks_service.doc.md
 """
@@ -16,19 +16,28 @@ from typing import Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 
+async def _get_new_page(browser):
+    """F5/O3 FIX: Get new page from browser (CDP-compatible).
+    
+    browser.new_page() throws "Please use browser.new_context()" on CDP.
+    """
+    if browser.contexts:
+        return await browser.contexts[0].new_page()
+    else:
+        return await browser.new_page()
+
+
 async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = None,
                            browser: Optional[Any] = None,
                            existing_page: Optional[Any] = None) -> Dict[str, Any]:
     """Create new Fireworks account via signup form + OTP verification.
     
-    V7 CEO-Fixes:
-      - CookieYes via JS API (nicht element.remove())
-      - React-kompatible Input-Filling
-      - Network Interception fuer Signup-Confirmation
+    V8 Fixes:
+      - F5: Uses _get_new_page() for CDP compatibility
+      - O2: Uses wait_for_url_change() instead of wait_for_spa_transition("verify")
     """
     import asyncio
     from playwright.async_api import async_playwright
-    from pathlib import Path as _Path
     
     steps = []
     own_playwright = None
@@ -42,14 +51,15 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
             else:
                 browser = await p.chromium.launch(headless=False)
         
-        _page = await browser.new_page()
+        # F5 FIX: Use helper for CDP compatibility
+        _page = await _get_new_page(browser)
         page = _page
         
         # Step 1: Signup form
         await page.goto("https://app.fireworks.ai/signup")
         await asyncio.sleep(2)
         
-        # CEO-Fix: CookieYes via JS API (nicht element.remove()!)
+        # CookieYes via JS API
         try:
             from agent_toolbox.core.browser_utils import accept_cookieyes_via_js
             await accept_cookieyes_via_js(page)
@@ -62,12 +72,11 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
         await asyncio.sleep(2)
         steps.append("cookie_handled")
         
-        # CEO-Fix: React-kompatibles Input-Filling
+        # React-kompatibles Input-Filling
         try:
             from agent_toolbox.core.browser_utils import fill_react_input
             filled = await fill_react_input(page, 'input[name="email"], input[type="email"]', email)
             if not filled:
-                # Fallback to Playwright
                 email_inp = page.locator('input[name="email"]').first
                 if await email_inp.count() == 0:
                     email_inp = page.locator('input[type="email"]').first
@@ -88,7 +97,7 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
                 break
         steps.append("next_clicked")
         
-        # Fill BOTH passwords with React-kompatiblem type()
+        # Fill BOTH passwords
         pws = await page.locator('input[type="password"]').all()
         if len(pws) >= 2:
             for pw in pws[:2]:
@@ -107,16 +116,15 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
                     logger.info("Create Account clicked")
                     break
             
-            # CEO-Fix: SPA-Transition via MutationObserver (nicht URL-based!)
+            # O2 FIX: Wait for URL change instead of specific text "verify"
             try:
-                from agent_toolbox.core.browser_utils import wait_for_spa_transition
-                # Warte auf "verify" oder "check your email" Text
-                await wait_for_spa_transition(page, "verify", timeout=15)
+                from agent_toolbox.core.browser_utils import wait_for_url_change
+                await wait_for_url_change(page, "/signup", timeout=15)
             except Exception:
                 # Fallback: poll URL
                 for _ in range(10):
                     await asyncio.sleep(1)
-                    if '/signup' not in page.url or 'verify' in page.url:
+                    if '/signup' not in page.url:
                         break
             
             steps.append("create_clicked")
@@ -140,18 +148,15 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
 
 
 async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = None,
-                          browser: Optional[Any] = None) -> Dict[str, Any]:
+                          browser: Optional[Any] = None,
+                          skip_if_logged_in: bool = True) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + React-kompatibles Onboarding.
     
-    V7 CEO-Fixes:
-      - CookieYes via JS API
-      - React Checkbox-Clicks (keine Label-Link-Falle)
-      - SPA-Transition via MutationObserver
+    V8 Fixes:
+      - F5: Uses _get_new_page() for CDP compatibility
+      - O1: Detects logged-in state and skips login form (post-verify flow)
     """
     import asyncio
-    import json
-    import subprocess
-    import re as _re
     from playwright.async_api import async_playwright
 
     steps = []
@@ -165,13 +170,32 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
             else:
                 browser = await p.chromium.launch(headless=False)
-        _page = await browser.new_page()
+        
+        # F5 FIX: Use helper for CDP compatibility
+        _page = await _get_new_page(browser)
         page = _page
 
         await page.goto("https://app.fireworks.ai/login")
         await asyncio.sleep(2)
 
-        # CEO-Fix: CookieYes via JS API
+        # O1 FIX: Check if already logged in (post-verify redirect)
+        current_url = page.url
+        if skip_if_logged_in:
+            # If redirected away from login, we're already authenticated
+            if 'login' not in current_url.lower():
+                logger.info(f"O1 FIX: Already logged in, URL: {current_url[:60]}")
+                steps.append("already_logged_in")
+                
+                # Handle onboarding if present
+                if 'onboarding' in current_url:
+                    logger.info("Onboarding detected post-login redirect")
+                    await _fireworks_react_onboarding(page)
+                    steps.append("onboarding_complete")
+                
+                steps.append("login_success")
+                return {"status": "success", "steps_completed": steps}
+
+        # CookieYes via JS API
         try:
             from agent_toolbox.core.browser_utils import accept_cookieyes_via_js
             await accept_cookieyes_via_js(page)
@@ -181,6 +205,17 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
             except:
                 pass
         await asyncio.sleep(1)
+
+        # O1 FIX: Check again after cookie handling (page may have redirected)
+        current_url = page.url
+        if skip_if_logged_in and 'login' not in current_url.lower():
+            logger.info(f"O1 FIX: Logged in after cookie handling, URL: {current_url[:60]}")
+            steps.append("already_logged_in")
+            if 'onboarding' in current_url:
+                await _fireworks_react_onboarding(page)
+                steps.append("onboarding_complete")
+            steps.append("login_success")
+            return {"status": "success", "steps_completed": steps}
 
         # Email Login — retry wrapper
         for attempt in range(3):
@@ -199,7 +234,21 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
         steps.append("login_page")
 
         # Fill credentials
-        await page.locator('input[name="email"]').first.fill(email)
+        email_input = page.locator('input[name="email"]').first
+        if await email_input.count() == 0:
+            # O1 FIX: No email input = already logged in
+            logger.info("O1 FIX: No email input found, checking if logged in")
+            current_url = page.url
+            if any(x in current_url for x in ['home', 'account', 'settings', 'onboarding']):
+                steps.append("already_logged_in")
+                if 'onboarding' in current_url:
+                    await _fireworks_react_onboarding(page)
+                    steps.append("onboarding_complete")
+                steps.append("login_success")
+                return {"status": "success", "steps_completed": steps}
+            return {"status": "error", "steps_completed": steps, "error": "No email input and not logged in"}
+        
+        await email_input.fill(email)
         await page.locator('input[name="password"]').first.fill(password)
         steps.append("credentials_filled")
 
@@ -211,7 +260,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 break
         steps.append("form_submitted")
 
-        # Onboarding via CEO-Fixed Playwright (React-kompatibel)
+        # Onboarding via React-kompatiblem Playwright
         if 'onboarding' in page.url:
             logger.info("Onboarding via React-kompatiblem Playwright")
             await _fireworks_react_onboarding(page)
@@ -234,7 +283,8 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
             "https://app.fireworks.ai/",
         ]:
             try:
-                fresh = await browser.contexts[0].new_page()
+                # F5 FIX: Use helper
+                fresh = await _get_new_page(browser)
                 await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
                 await asyncio.sleep(2)
                 fresh_url = fresh.url
@@ -261,13 +311,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
 
 
 async def _fireworks_react_onboarding(page) -> None:
-    """React-kompatibles Onboarding mit CEO-Fixes.
-    
-    Fixes:
-      - JS-Injection fuer React Inputs
-      - Checkbox-Click via for-Attribut (keine Label-Link-Falle)
-      - SPA-Transition via MutationObserver
-    """
+    """React-kompatibles Onboarding mit CEO-Fixes."""
     import asyncio
     
     try:
@@ -301,13 +345,12 @@ async def _fireworks_react_onboarding(page) -> None:
             await ln.type("Cheetah", delay=50)
             await asyncio.sleep(0.5)
     
-    # CEO-Fix: Terms checkbox via for-Attribut (keine Label-Link-Falle!)
+    # Terms checkbox
     if use_ceo_utils:
         await click_react_checkbox(page, "agree")
         if not await click_react_checkbox(page, "terms"):
             logger.warning("Terms checkbox not found via CEO utils")
     else:
-        # Fallback: Legacy checkbox click
         await _legacy_click_checkbox(page, "agree")
         await _legacy_click_checkbox(page, "terms")
     
@@ -321,7 +364,7 @@ async def _fireworks_react_onboarding(page) -> None:
             await asyncio.sleep(2)
             break
     
-    # CEO-Fix: SPA-Transition warten (nicht URL-based!)
+    # SPA-Transition warten
     if use_ceo_utils:
         await wait_for_spa_transition(page, "Prototype with open models", timeout=10)
     else:
@@ -359,20 +402,17 @@ async def _fireworks_react_onboarding(page) -> None:
 
 
 async def _legacy_click_checkbox(page, match_text: str) -> bool:
-    """Legacy checkbox click (fallback wenn browser_utils nicht verfuegbar)."""
-    # input[type="checkbox"] with aria-label
+    """Legacy checkbox click (fallback)."""
     for inp in await page.locator('input[type="checkbox"]').all():
         lbl = (await inp.get_attribute('aria-label') or '').lower()
         if match_text.lower() in lbl:
             await inp.click(force=True)
             return True
-    # [role="checkbox"] with aria-label
     for el in await page.locator('[role="checkbox"]').all():
         lbl = (await el.get_attribute('aria-label') or '').lower()
         if match_text.lower() in lbl:
             await el.click(force=True)
             return True
-    # Label containing match text
     lbl = page.locator(f'label:has-text("{match_text}")').first
     if await lbl.count() > 0:
         cb = lbl.locator('input[type="checkbox"], [role="checkbox"]').first
@@ -486,7 +526,10 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
 
 async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] = None,
                          browser: Optional[Any] = None) -> Dict[str, Any]:
-    """Create Fireworks API Key via Playwright with auto-retry."""
+    """Create Fireworks API Key via Playwright with auto-retry.
+    
+    O3 FIX: Uses _get_new_page() for CDP compatibility.
+    """
     import asyncio
     from playwright.async_api import async_playwright
 
@@ -501,7 +544,8 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
             else:
                 browser = await p.chromium.launch(headless=False)
 
-        pg = await browser.new_page()
+        # O3 FIX: Use helper for CDP compatibility
+        pg = await _get_new_page(browser)
         await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
         await asyncio.sleep(2)
 
@@ -516,7 +560,7 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
         if 'login' in pg.url.lower():
             return {"status": "error", "error": "Not logged in"}
 
-        # CEO-Fix: CookieYes via JS API
+        # CookieYes via JS API
         try:
             from agent_toolbox.core.browser_utils import accept_cookieyes_via_js
             await accept_cookieyes_via_js(pg)
@@ -559,7 +603,10 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
 
 async def verify_account(verify_url: str, cdp_port: Optional[int] = None,
                          browser: Optional[Any] = None) -> bool:
-    """Open Fireworks verify URL to confirm account."""
+    """Open Fireworks verify URL to confirm account.
+    
+    F5 FIX: Uses _get_new_page() for CDP compatibility.
+    """
     import asyncio
     from playwright.async_api import async_playwright
     
@@ -574,7 +621,8 @@ async def verify_account(verify_url: str, cdp_port: Optional[int] = None,
             else:
                 browser = await p.chromium.launch(headless=False)
         
-        _page = await browser.new_page()
+        # F5 FIX: Use helper for CDP compatibility
+        _page = await _get_new_page(browser)
         await _page.goto(verify_url)
         await asyncio.sleep(2)
         logger.info(f"Verify URL opened: {_page.url[:80]}")
