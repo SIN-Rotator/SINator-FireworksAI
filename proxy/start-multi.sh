@@ -16,13 +16,16 @@ echo "=========================================="
 echo ""
 
 # ----------------------------------------------------------------
-# Issue #26 FIX: Stop LaunchAgents BEFORE killing PIDs
-# Otherwise KeepAlive respawns from stale ~/.sin-pool/ code
+# Issue #26 + #27 FIX: Stop LaunchAgents BEFORE killing PIDs
+# Otherwise KeepAlive respawns from stale ~/.sin-pool/ or ~/.hermes/ code
+# Note: Pool-Router plist is "com.sinator.pool-router" (not com.sin.)
 # ----------------------------------------------------------------
 echo "[0] Stopping LaunchAgents (prevents respawn)..."
 launchctl unload ~/Library/LaunchAgents/com.sin.pool-proxy.plist 2>/dev/null || true
 launchctl unload ~/Library/LaunchAgents/com.sin.pool-router.plist 2>/dev/null || true
-# Kill any stray .sin-pool processes explicitly
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist 2>/dev/null || true
+launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist 2>/dev/null || true
+# Kill any stray .sin-pool / .hermes processes explicitly
 pkill -9 -f "\.sin-pool/server\.py" 2>/dev/null || true
 pkill -9 -f "\.hermes/scripts/pool-router\.py" 2>/dev/null || true
 sleep 0.5

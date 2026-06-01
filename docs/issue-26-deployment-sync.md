@@ -1,6 +1,8 @@
-## Issue #26: Deployed Version Mismatch (RESOLVED)
+## Issue #26 + #27: Deployed Version Mismatch (RESOLVED)
 
 **Problem:** The installed proxy/router versions in `~/.sin-pool/` and `~/.hermes/scripts/` were stale and never updated after code changes in the repo. LaunchAgents with `KeepAlive: true` would respawn them immediately even after `start-multi.sh` killed them.
+
+**Issue #27 Addition:** The pool-router LaunchAgent uses a different plist name (`com.sinator.pool-router` or `com.sinhermes.poolrouter`) than expected, so it wasn't being unloaded properly.
 
 **Root Causes:**
 1. No sync mechanism from repo to installed directories
@@ -50,9 +52,9 @@ This:
 
 | File | Change | Issue |
 |------|--------|-------|
-| `proxy/start-multi.sh` | LaunchAgent unload before kill; sync before start | #26 |
+| `proxy/start-multi.sh` | LaunchAgent unload before kill; sync before start; all plist variants | #26, #27 |
 | `proxy/setup.sh` | Write `.version` marker; always copy fresh | #26 |
-| `proxy/update-installed.sh` | New script to sync installed versions without reconfig | #26 |
+| `proxy/update-installed.sh` | New script to sync installed versions; all plist variants | #26, #27 |
 | `proxy/setup.doc.md` | New: document workflows + debugging stale code | #26 |
 
 ### Debugging Stale Code
@@ -78,7 +80,12 @@ git -C ~/dev/SINator-fireworksai rev-parse --short HEAD
 
 **Version Marker:** Every sync writes `~/.sin-pool/.version` with the git SHA and timestamp.
 
-**LaunchAgent Unload:** `start-multi.sh` now calls `launchctl unload` before killing processes, ensuring LaunchAgent doesn't respawn the killed process.
+**LaunchAgent Unload (Issue #27):** Multiple plist names exist for the pool-router:
+- `com.sin.pool-router.plist`
+- `com.sinator.pool-router.plist`
+- `com.sinhermes.poolrouter.plist`
+
+All three are now unloaded by `start-multi.sh` and `update-installed.sh`.
 
 **Sync Mechanism:** `setup.sh` and `update-installed.sh` copy from repo to `~/.sin-pool/` (proxy) and `~/.hermes/scripts/` (router).
 

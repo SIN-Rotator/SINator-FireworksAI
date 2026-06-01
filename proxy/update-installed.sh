@@ -20,10 +20,12 @@ if [ ! -d "$INSTALL_DIR" ]; then
     exit 1
 fi
 
-# Stop services first
+# Stop services first (Issue #27: include all plist variants)
 echo "[1/4] Stopping services..."
 launchctl unload ~/Library/LaunchAgents/com.sin.pool-proxy.plist 2>/dev/null || true
 launchctl unload ~/Library/LaunchAgents/com.sin.pool-router.plist 2>/dev/null || true
+launchctl unload ~/Library/LaunchAgents/com.sinator.pool-router.plist 2>/dev/null || true
+launchctl unload ~/Library/LaunchAgents/com.sinhermes.poolrouter.plist 2>/dev/null || true
 pkill -9 -f "\.sin-pool/server\.py" 2>/dev/null || true
 pkill -9 -f "\.hermes/scripts/pool-router\.py" 2>/dev/null || true
 sleep 1
