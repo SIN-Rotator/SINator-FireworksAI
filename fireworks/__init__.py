@@ -25,6 +25,8 @@ Available actions:
     login()          -> log in (handles onboarding)
     create_apikey()  -> generate an API key
     verify_account() -> open a verify/confirm URL
+
+Docs: __init__.doc.md
 """
 from fireworks.signup import signup
 from fireworks.login import login

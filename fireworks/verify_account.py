@@ -8,6 +8,8 @@ CLI:     python3 -m fireworks.verify_account --url "https://app.fireworks.ai/...
 Compose: from fireworks import verify_account; res = await verify_account(url)
 
 Returns: {"status": "verified" | "error", "verify_url": "...", "error": "..."}
+
+Docs: verify_account.doc.md
 """
 from typing import Any, Dict
 

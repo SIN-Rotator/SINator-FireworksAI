@@ -1,5 +1,6 @@
 """
 GMX Email Click Test - WORKING VERSION
+Docs: gmx_email_click_test.doc.md
 
 DISCOVERY: LIST-MAIL-ITEM elements are inside multiple levels of Shadow DOM:
   mail-list-container > shadowRoot > list-mail-list > shadowRoot > list-mail-item

@@ -24,6 +24,8 @@ Pools (Reihenfolge = Prioritaet):
     3. http://localhost:8890
     ...
     10. http://localhost:8897
+
+Docs: pool-router.doc.md
 """
 
 import http.server

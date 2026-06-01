@@ -10,6 +10,8 @@ Compose: from gmx import delete_alias; res = await delete_alias()
 
 Returns: {"status": "success" | "no_alias" | "not_logged_in" | "error",
           "deleted": bool, "alias": "old@gmx.de", "error": "..."}
+
+Docs: delete_alias.doc.md
 """
 
 import asyncio

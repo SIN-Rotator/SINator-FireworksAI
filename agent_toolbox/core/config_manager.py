@@ -1,4 +1,7 @@
-"""Stores SINator runtime configuration (GMX + Fireworks credentials)."""
+"""Stores SINator runtime configuration (GMX + Fireworks credentials).
+
+Docs: config_manager.doc.md
+"""
 import json, logging, os
 from pathlib import Path
 from typing import Optional

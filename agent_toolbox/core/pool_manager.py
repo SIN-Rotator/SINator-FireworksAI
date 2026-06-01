@@ -1,3 +1,7 @@
+"""API Key pool manager — add, lease, return, mark, report, stats, SSE events.
+
+Docs: pool_manager.doc.md
+"""
 import json
 import time
 import uuid

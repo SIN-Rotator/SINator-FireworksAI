@@ -7,6 +7,8 @@ Compose: from gmx import open_inbox; res = await open_inbox()
 
 Returns: {"status": "success" | "not_logged_in" | "error",
           "current_url": "...", "error": "..."}
+
+Docs: open_inbox.doc.md
 """
 
 import asyncio

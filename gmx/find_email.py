@@ -16,6 +16,8 @@ Compose: from gmx import find_email; res = await find_email()
 Returns: {"status": "found" | "not_found" | "not_logged_in" | "error",
           "verify_url": "https://app.fireworks.ai/...",
           "matches": int, "frame": "...", "text_preview": "...", "error": "..."}
+
+Docs: find_email.doc.md
 """
 
 import asyncio

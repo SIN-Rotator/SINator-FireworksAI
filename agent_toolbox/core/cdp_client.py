@@ -5,6 +5,8 @@ Chrome DevTools Protocol via raw websocket. Kein Playwright, kein Puppeteer.
 Nur websockets + asyncio.
 
 Nutzt den BROWSER-WS-ENDPOINT vom laufenden Chrome (Port 9222).
+
+Docs: cdp_client.doc.md
 """
 import asyncio
 import json

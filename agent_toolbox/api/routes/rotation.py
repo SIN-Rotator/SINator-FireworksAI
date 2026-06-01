@@ -1,3 +1,7 @@
+"""Full account rotation orchestrator — spawns tools/rotate.py as subprocess.
+
+Docs: rotation.doc.md
+"""
 import time
 import logging
 import asyncio

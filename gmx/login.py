@@ -11,6 +11,8 @@ Compose: from gmx import login; res = await login()
 
 Returns: {"status": "logged_in" | "not_logged_in" | "error",
           "current_url": "...", "error": "..."}
+
+Docs: login.doc.md
 """
 import asyncio
 from typing import Any, Dict, Optional

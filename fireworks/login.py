@@ -6,6 +6,8 @@ CLI:     python3 -m fireworks.login --email acc@gmx.de [--password ..] [--port 9
 Compose: from fireworks import login; res = await login(email="acc@gmx.de")
 
 Returns: {"status": "success" | "error", "steps_completed": [...], "error": "..."}
+
+Docs: login.doc.md
 """
 from typing import Any, Dict, Optional
 

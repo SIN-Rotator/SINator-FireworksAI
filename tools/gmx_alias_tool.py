@@ -26,6 +26,7 @@
 ║  WICHTIG: Browser muss laufen! POST /browser/start zuerst.                   ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+Docs: gmx_alias_tool.doc.md
 """
 import sys
 import asyncio

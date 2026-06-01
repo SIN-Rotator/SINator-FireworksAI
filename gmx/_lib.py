@@ -12,6 +12,8 @@ Every tool in this package follows the same contract:
 The actual browser logic is reused from the proven agent_toolbox GmxService so
 the tools behave EXACTLY like the production rotator — they are just clean,
 single-purpose, composable entry points around it.
+
+Docs: _lib.doc.md
 """
 import sys
 import json

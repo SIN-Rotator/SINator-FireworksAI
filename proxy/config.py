@@ -1,3 +1,8 @@
+"""
+Proxy configuration — environment-driven, persisted to ~/.sin-pool/config.json.
+
+Docs: config.doc.md
+"""
 import os
 import json
 from pathlib import Path

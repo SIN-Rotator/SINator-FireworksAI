@@ -10,6 +10,8 @@ Compose: from gmx import read_otp; res = await read_otp()
 
 Returns: {"status": "success" | "not_found" | "error",
           "otp_url": "https://app.fireworks.ai/...", "error": "..."}
+
+Docs: read_otp.doc.md
 """
 from typing import Any, Dict
 

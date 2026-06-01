@@ -7,6 +7,8 @@ Compose: from gmx import check_session; res = await check_session()
 
 Returns: {"status": "logged_in" | "not_logged_in" | "error",
           "current_url": "...", "error": "..."}
+
+Docs: check_session.doc.md
 """
 from typing import Any, Dict, Optional
 

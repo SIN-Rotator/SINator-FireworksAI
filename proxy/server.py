@@ -11,6 +11,8 @@ Features:
 Usage:
   python -m proxy.server
   SIN_PROXY_PORT=8888 python -m proxy.server
+
+Docs: server.doc.md
 """
 import os
 import sys

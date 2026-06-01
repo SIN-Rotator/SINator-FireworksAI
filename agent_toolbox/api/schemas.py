@@ -8,6 +8,8 @@
 ║  Stellt sicher dass Agenten exakte JSON-Strukturen erhalten.                 ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+
+Docs: schemas.doc.md
 """
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field

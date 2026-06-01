@@ -8,6 +8,8 @@ CLI:     python3 -m fireworks.create_apikey [--name sinator-key] [--port 9222]
 Compose: from fireworks import create_apikey; res = await create_apikey()
 
 Returns: {"status": "success" | "error", "api_key": "fw_...", "error": "..."}
+
+Docs: create_apikey.doc.md
 """
 from typing import Any, Dict
 

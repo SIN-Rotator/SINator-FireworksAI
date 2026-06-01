@@ -3,6 +3,8 @@ SINATOR — Fireworks Service V6 (Playwright+CUA + Fallback, 2026-05-22)
 
 Lightweight wrapper replacing the 3103-line CDP fireworks_service.py.
 Uses Playwright for form interaction, CUA for React checkboxes.
+
+Docs: fireworks_service.doc.md
 """
 import logging
 import re

@@ -13,6 +13,8 @@ Usage:
         # use pid, wid for CUA calls
     else:
         # handle not found
+
+Docs: cua_helper.doc.md
 """
 import subprocess
 import json

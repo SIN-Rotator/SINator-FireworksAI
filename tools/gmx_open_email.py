@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """GMX Email opener — finds Fireworks OTP/verify emails, clicks them, reads body.
+Docs: gmx_open_email.doc.md
 
 V18.1: Complete rework with new frame tools (Issue #11 fix).
 

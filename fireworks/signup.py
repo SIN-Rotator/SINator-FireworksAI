@@ -10,6 +10,8 @@ Compose: from fireworks import signup; res = await signup(email="new@gmx.de")
 
 Returns: {"status": "success" | "partial" | "error",
           "verify_url": "...", "steps_completed": [...], "error": "..."}
+
+Docs: signup.doc.md
 """
 from typing import Any, Dict, Optional
 

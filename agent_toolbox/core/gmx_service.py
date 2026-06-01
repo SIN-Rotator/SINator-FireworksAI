@@ -1,10 +1,11 @@
 """
 SINATOR AGENT-TOOLBOX — GMX Service (Playwright-native v2026-05-28)
+Docs: gmx_service.doc.md
 
 Kernfunktionen:
   - GMX Session-Management
   - Alias-Rotation (Löschen + Erstellen)
-  - OTP/Confirm-URL Extraktion
+  - OTP/Confirm-URL Extraktion (read_otp_v2 via browser_scan_frames)
 
 Playwright-native für Alias-Rotation + OTP (read_otp_via_playwright).
 """

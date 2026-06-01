@@ -24,6 +24,7 @@
 ║  eine temporäre CDP-Verbindung für jede Operation.                             ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+Docs: gmx.doc.md
 """
 import time
 import logging

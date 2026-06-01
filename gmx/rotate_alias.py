@@ -8,6 +8,8 @@ Compose: from gmx import rotate_alias; res = await rotate_alias()
 Returns: {"status": "success" | "failed",
           "deleted_alias": "old@gmx.de", "created_alias": "new@gmx.de",
           "steps": [...], "error": "..."}
+
+Docs: rotate_alias.doc.md
 """
 
 from typing import Any, Dict, Optional

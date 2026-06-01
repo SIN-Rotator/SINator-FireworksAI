@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 SINator - Rotation Tool V8.2 (2026-05-31) — Multi-Tab Architektur
+Docs: rotate.doc.md
 
 V8.2:
   - initialize_architecture() erstellt TWO TABS:

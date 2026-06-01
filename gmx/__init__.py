@@ -27,6 +27,8 @@ Available actions:
     rotate_alias()  -> delete + create in one pass
     read_otp()      -> poll inbox for a verify URL / OTP
     find_email()    -> find & open a mail, return its verify URL
+
+Docs: __init__.doc.md
 """
 from gmx.check_session import check_session
 from gmx.login import login

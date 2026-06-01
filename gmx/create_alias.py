@@ -7,6 +7,8 @@ Compose: from gmx import create_alias; res = await create_alias()
 
 Returns: {"status": "success" | "failed" | "not_logged_in" | "error",
           "alias_email": "swift-hawk-123@gmx.de", "error": "..."}
+
+Docs: create_alias.doc.md
 """
 
 from typing import Any, Dict, Optional

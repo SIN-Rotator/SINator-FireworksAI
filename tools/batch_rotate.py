@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Batch generate remaining keys via direct rotate.py calls."""
+"""Batch generate remaining keys via direct rotate.py calls.
+Docs: batch_rotate.doc.md"""
 import asyncio, json, time, sys, subprocess
 from pathlib import Path
 

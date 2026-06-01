@@ -1,3 +1,8 @@
+"""
+Async HTTP client for the backend pool API (lease, return, report, stats).
+
+Docs: pool_client.doc.md
+"""
 import logging
 from typing import Optional, Dict, Any
 

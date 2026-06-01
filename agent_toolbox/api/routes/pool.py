@@ -16,6 +16,7 @@
 ║  DELETE /pool/{key_id}   → API-Key aus Pool löschen                         ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+Docs: pool.doc.md
 """
 import time
 import asyncio

@@ -1,3 +1,8 @@
+"""
+Primary/backup key cache with on-disk persistence for pool proxy.
+
+Docs: key_cache.doc.md
+"""
 import json
 import time
 import logging
