@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Generate 10 API keys via batch rotate.py calls."""
+"""Generate 10 fresh Fireworks API keys via sequential rotate.py calls.
+
+Docs: tools/batch10.doc.md
+"""
 import asyncio
 import json
 import subprocess

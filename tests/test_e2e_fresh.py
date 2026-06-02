@@ -1,5 +1,8 @@
 """E2E regression tests for the full rotation flow.
 
+Purpose: Verify GMX session + Fireworks signup prerequisites (destructive in-body).
+Docs: tests/test_e2e_fresh.doc.md
+
 ⚠️  These tests interact with real GMX/Fireworks accounts.
      They will create real API keys.
 

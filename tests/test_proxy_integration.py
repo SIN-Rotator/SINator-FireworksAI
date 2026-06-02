@@ -1,5 +1,9 @@
 """
 Integration tests for Pool Proxy V13 error-handling (10 instances behind pool-router).
+
+Purpose: Verify proxy correctly handles Fireworks errors the way opencode TUI experiences them.
+Docs: tests/test_proxy_integration.doc.md
+
 Tests that the proxy correctly handles Fireworks error codes
 the way opencode TUI would experience them.
 """
