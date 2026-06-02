@@ -168,6 +168,17 @@ class PoolProxy:
         primary = self.cache.get_primary()
         if primary:
             return primary
+        # V19.11: Return expired key to pool before leasing new one
+        prev = self.cache.pop_previous()
+        if prev:
+            try:
+                returned = await self.pool_client.return_key(
+                    prev.get("key_id", ""),
+                    prev.get("lease_id"),
+                )
+                logger.info(f"Returned expired key {prev.get('key_id','?')[:8]}... to pool: ok={returned}")
+            except Exception as e:
+                logger.warning(f"Failed to return expired key: {e}")
         if not NO_BACKUP:
             promoted = self.cache.promote_backup()
             if promoted:

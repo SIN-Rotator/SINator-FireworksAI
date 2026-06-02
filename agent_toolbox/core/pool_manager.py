@@ -217,6 +217,11 @@ class PoolManager:
                 key["suspended"] = True
                 key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 key["suspended_reason"] = reason
+                # V19.11: Clear lease fields — suspended key can't be "leased" anymore
+                key["leased_until"] = None
+                key["leased_to"] = None
+                key["lease_id"] = None
+                key["leased_at"] = None
                 self.save()
                 logger.info(f"Key suspended ({reason}): {key_id[:8]}...")
                 return True

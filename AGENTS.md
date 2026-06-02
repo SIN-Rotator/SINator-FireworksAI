@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.10 (2026-06-02) — **SOTA + E2E PROVEN + GHOST-LEASE FIXED**
+# AGENTS.md — SINator Fireworks AI Rotator V19.11 (2026-06-02) — **SOTA + E2E PROVEN + GHOST-LEASE + RETURN-OLD-KEY**
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02 07:25
 
@@ -66,6 +66,29 @@ Dashboard zeigte "71 leased" + "12 verfügbar" bei nur 1 Proxy-Request. Pool war
 **Config Repos:**
   • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
   • **Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
+
+## 🔧 V19.11 FIXES (2026-06-02) — Return-Old-Key + Lease-Field-Cleanup
+
+### Symptom
+Nach V19.10 Fix waren 77 Keys verfügbar, aber jeder Cache-Expiry (30min) würde den alten Key NICHT zurückgeben — nur neuen leasen. Verschwendung + potenzielle Geister-Leases.
+
+### Fixes
+1. **Proxy gibt alten Key vor neuem Lease zurück** (`proxy/server.py:_ensure_key`)
+   - `KeyCache.get_primary()` speichert expired Key in `previous` statt nur zu clearen
+   - `KeyCache.pop_previous()` holt und löscht den previous Key
+   - `_ensure_key()` ruft `pool_client.return_key()` für den expired Key bevor neu geleased wird
+   - Persistiert in `~/.sin-pool/previous-key.json` für Crash-Recovery
+2. **`mark_suspended` löscht Lease-Felder** (`pool_manager.py:mark_suspended`)
+   - Setzt `leased_until`, `leased_to`, `lease_id`, `leased_at` auf `None`
+   - Verhindert dass suspended Keys noch als "leased" im JSON stehen
+
+### Impact
+- **Vorher:** Cache-Expiry → alter Key bleibt 30min "leased" bis expire_leases()
+- **Nachher:** Cache-Expiry → sofort `/pool/return` → Key ist SOFORT verfügbar
+- **Bonus:** Bei Proxy-Crash wird `previous-key.json` beim nächsten Start geladen und `pop_previous()` gibt den Key zurück
+
+### Immortal Tag
+- `v19.11-return-old-key` — Key-Return bei Cache-Expiry
 
 ---
 

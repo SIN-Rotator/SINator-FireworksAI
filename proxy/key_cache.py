@@ -18,12 +18,14 @@ logger = logging.getLogger(__name__)
 
 CURRENT_KEY_FILE = CACHE_DIR / "current-key.json"
 BACKUP_KEY_FILE = CACHE_DIR / "backup-key.json"
+PREVIOUS_KEY_FILE = CACHE_DIR / "previous-key.json"
 
 
 class KeyCache:
     def __init__(self):
         self.primary: Optional[Dict[str, Any]] = None
         self.backup: Optional[Dict[str, Any]] = None
+        self.previous: Optional[Dict[str, Any]] = None  # V19.11: Track expired key to return to pool
         self.request_count: int = 0
         self.last_used_at: float = 0
         self._load()
@@ -44,6 +46,13 @@ class KeyCache:
                 logger.info(f"Loaded backup key: {self.backup.get('key_id', '?')[:8]}...")
             except Exception as e:
                 self.backup = None
+        if PREVIOUS_KEY_FILE.exists():
+            try:
+                with open(PREVIOUS_KEY_FILE) as f:
+                    self.previous = json.load(f)
+                logger.info(f"Loaded previous key (pending return): {self.previous.get('key_id', '?')[:8]}...")
+            except Exception as e:
+                self.previous = None
 
     def _save(self):
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,11 +66,19 @@ class KeyCache:
                 json.dump(self.backup, f, indent=2)
         else:
             BACKUP_KEY_FILE.unlink(missing_ok=True)
+        if self.previous:
+            with open(PREVIOUS_KEY_FILE, "w") as f:
+                json.dump(self.previous, f, indent=2)
+        else:
+            PREVIOUS_KEY_FILE.unlink(missing_ok=True)
 
     def set_primary(self, key_info: Dict[str, Any]):
         self.primary = key_info
         self.request_count = 0
         self.last_used_at = time.time()
+        # V19.11: Clear previous — a new primary means the expired one has been handled
+        self.previous = None
+        PREVIOUS_KEY_FILE.unlink(missing_ok=True)
         self._save()
         logger.info(f"Primary key set: {key_info.get('key_id', '?')[:8]}... ({key_info.get('alias_email', '')})")
 
@@ -75,13 +92,23 @@ class KeyCache:
             expires = self.primary.get("expires_at", 0)
             if expires and time.time() > expires:
                 logger.warning("Primary key lease expired")
+                # V19.11: Save to previous so it can be returned to pool
+                self.previous = self.primary
                 self.primary = None
+                self._save()
                 CURRENT_KEY_FILE.unlink(missing_ok=True)
                 return None
             self.request_count += 1
             self.last_used_at = time.time()
             return self.primary
         return None
+
+    def pop_previous(self) -> Optional[Dict[str, Any]]:
+        """V19.11: Get and clear the previous (expired) key for return-to-pool."""
+        prev = self.previous
+        self.previous = None
+        PREVIOUS_KEY_FILE.unlink(missing_ok=True)
+        return prev
 
     def promote_backup(self) -> Optional[Dict[str, Any]]:
         if self.backup:
