@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.12 (2026-06-02) — **SOTA + E2E PROVEN + LEASE-HYDRATION + 401-CASCADE-FIXED**
+# AGENTS.md — SINator Fireworks AI Rotator V19.14 (2026-06-02) — **SOTA + E2E PROVEN + SOFT-OWNERSHIP + MULTI-AGENT**
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02 07:25
 
@@ -121,6 +121,50 @@ Nach V19.10 Fix waren 77 Keys verfügbar, aber jeder Cache-Expiry (30min) würde
 
 ---
 
+## 🔧 V19.14 SOFT-OWNERSHIP (2026-06-02) — Multi-Agent Key Distribution
+
+### Konzept
+Ersetzt exklusives Leasing (`leased_until`) durch `assigned_to` + `active_consumers`.
+Jeder Agent bekommt seinen eigenen Stamm-Key. Wenn alle assigned → least-shared
+Key als Fallback. **Niemals blockieren, niemals warten.**
+
+### Neue Pool-Felder
+| Feld | Typ | Beschreibung |
+|------|-----|-------------|
+| `assigned_to` | str\|null | Permanenter Sticky-Owner (agent_id) |
+| `active_consumers` | list[str] | Agenten die diesen Key aktuell nutzen |
+| `shared_count` | int | Wie oft wurde dieser Key geteilt |
+| `last_heartbeat` | float | Für Stale-Consumer-Cleanup (300s timeout) |
+
+### Neue Endpoints
+| Endpoint | Methode | Beschreibung |
+|----------|---------|-------------|
+| `/pool/agent-key` | POST | Soft-Ownership Key-Zuweisung (4 Prioritäten) |
+| `/pool/agent-release` | POST | Agent gibt Key frei |
+| `/pool/agent-heartbeat` | POST | Agent-Heartbeat (hält consumer alive) |
+
+### Proxy-Änderungen
+- `AgentKeyCache` ersetzt `KeyCache` — pro-Agent, kein TTL-Expiry, sticky `preferred_key_id`
+- `_ensure_key()` kein Retry-Loop mehr (von 300×1s auf sofort)
+- `agent_id` via `SIN_AGENT_ID` env-var (default: `proxy-{port}`)
+- `_on_shutdown` nutzt `release_agent_key()` statt `return_key()`
+
+### Test-Ergebnisse (2026-06-02)
+| Test | Status |
+|------|--------|
+| 3 Agenten → 3 verschiedene Keys | ✅ |
+| Sticky: gleicher Agent = gleicher Key | ✅ |
+| Release: Agent gibt Key frei | ✅ |
+| Proxy E2E: echte Fireworks Chat-Responses | ✅ |
+| Cache: 2. Request braucht keinen Backend-Call | ✅ |
+| Backward-Compat: /pool/lease funktioniert weiter | ✅ |
+| Router (:9998) → alle 10 Proxies erreichbar | ✅ |
+
+### Immortal Tag
+- `v19.14-soft-ownership` — markiert den funktionierenden Soft-Ownership-Stand
+
+---
+
 ## ⚠️ IMMORTAL COMMIT PROTOCOL — ACTIVE ⚠️
 
 > **Diese Rotation funktioniert. NICHTS ZERSTÖREN. Alle zukünftigen Commits MÜSSEN:**
@@ -129,8 +173,8 @@ Nach V19.10 Fix waren 77 Keys verfügbar, aber jeder Cache-Expiry (30min) würde
 > 3. Annotated Tag `v<major>.<minor>-<suffix>` für wichtige Fixes
 > 4. Push zu `origin` (force-with-lease nur bei amend)
 >
-> **Tag `v19.12-lease-hydration-fix` markiert den letzten bekannten funktionierenden Stand.**
-> **Vor JEDER Änderung an Code-Dateien: `git diff v19.2-onboarding-fixed` und verifizieren dass der Fix erhalten bleibt.**
+> **Tag `v19.14-soft-ownership` markiert den letzten bekannten funktionierenden Stand.**
+> **Vor JEDER Änderung an Code-Dateien: `git diff v19.14-soft-ownership` und verifizieren dass der Fix erhalten bleibt.**
 
 ### Warum diese Vorsicht?
 
@@ -626,7 +670,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-06-02 (V19.12 — Lease-Hydration + 401-Cascade-Fix)*
+*Last Updated: 2026-06-02 (V19.14 — Soft-Ownership Multi-Agent Key Distribution)*
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
