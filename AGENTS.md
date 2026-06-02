@@ -165,6 +165,40 @@ Key als Fallback. **Niemals blockieren, niemals warten.**
 
 ---
 
+## 🛑 SUBAGENT ROTATION GUARD (2026-06-02 V19.14)
+
+**Subagents DÜRFEN NIEMALS Chrome killen. NIEMALS `pkill -9 -f "Google Chrome"`.**
+
+Der AGENTS.md Chrome-Start-Command (`pkill -9 -f "Google Chrome"` → `nohup Chrome ...`) ist NUR für den MAIN-AGENT wenn Chrome tot ist.
+
+### Warum
+- Chrome auf Port 9222 mit Profile 73 ist die EINZIGE lebende GMX-Session. Killen = Rotation kaputt.
+- Eine laufende `rotate.py` nutzt diese Session. Killen = Abbruch + Orphan-Account ohne Key.
+- Danach startet der Subagent Chrome neu, GMX-Cookies laden, ABER die Fireworks-Onboarding-Session innerhalb der Rotation ist unterbrochen → Subagent denkt "Code kaputt" obwohl Code 100% sauber ist.
+
+### Pflicht-Check VOR jeder Rotation im Subagent
+
+```bash
+# 1. Chrome schon da?
+curl -s http://127.0.0.1:9222/json/version > /dev/null 2>&1 || {
+    echo "❌ Chrome NICHT auf 9222 — Main-Agent informieren, NICHT selbst starten!"
+    exit 1
+}
+
+# 2. Läuft schon eine Rotation?
+pgrep -f "rotate.py" > /dev/null 2>&1 && {
+    echo "❌ rotate.py LÄUFT BEREITS — warten oder Main-Agent fragen!"
+    exit 1
+}
+
+# 3. Beides OK → Rotation starten
+python3 tools/rotate.py
+```
+
+Siehe auch: `banned.md` → Subagent Rotation Rules
+
+---
+
 ## ⚠️ IMMORTAL COMMIT PROTOCOL — ACTIVE ⚠️
 
 > **Diese Rotation funktioniert. NICHTS ZERSTÖREN. Alle zukünftigen Commits MÜSSEN:**
