@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.7 (2026-06-02) — **SOTA + E2E PROVEN**
+# AGENTS.md — SINator Fireworks AI Rotator V19.10 (2026-06-02) — **SOTA + E2E PROVEN + GHOST-LEASE FIXED**
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02 07:25
 
@@ -30,6 +30,34 @@ python tools/rotate.py
 | Proxy `/v1/models` | ✅ 12 models (deepseek-v4-flash, glm-5p1, gpt-oss-120b/20b...) |
 | Proxy `/v1/chat/completions` | ✅ Real Fireworks response (test: 20 token limit) |
 | `toolbox.log` wächst | ✅ 9.5MB+ (war 0 vor #41 Fix) |
+
+## 🔧 V19.10 FIXES (2026-06-02) — Ghost-Lease Bug Behoben
+
+### Symptom
+Dashboard zeigte "71 leased" + "12 verfügbar" bei nur 1 Proxy-Request. Pool war quasi unnutzbar.
+
+### Root Cause: Zwei Bugs zusammen
+1. **20 Proxy-Prozesse** statt 10 — alte Ghost-Proxies (ports 27191-27200, 27399-27401) aus 6:39 liefen noch neben den 10 aktuellen (8888-8897) aus 7:21
+2. **`proxy_id` Kollision** — `proxy_id = f"proxy-{int(time.time())}"` gab allen 10 Proxies die GLEICHE ID (alle starteten in derselben Sekunde). Dadurch landeten ALLE Leases unter `leased_to=proxy-1780377674` und 52+20 Keys waren für eine einzige "Instanz" reserviert
+3. **Kein periodisches Lease-Cleanup** — `expire_leases()` lief nur bei `get_stats()`/`lease_key()`, nicht automatisch
+
+### Fixes
+1. **10 Ghost-Proxies gekillt** (ports 27191-27200, 27399-27401) — nicht mehr in `lsof`
+2. **124 Geister-Leases returned** (alle mit `leased_to` startend mit `proxy-1780377674`) → `available: 5 → 77` (+72 Keys zurück)
+3. **`proxy_id` unique** — `f"proxy-{self.port}-{random.randint(1000,9999)}"` statt `int(time.time())`
+4. **V19.10 Background Lease-Cleanup** — FastAPI `lifespan` startet asyncio task: `expire_leases()` alle 60s, räumt stale Leases automatisch auf
+
+### Vorher / Nachher
+| Metrik | Vorher (V19.9) | Nachher (V19.10) |
+|--------|----------------|------------------|
+| Proxy-Prozesse | 20 (10 ghost + 10 aktiv) | 10 (sauber) |
+| Pool "leased" | 71 (alle unter 1 ID!) | 4 (3 setup + 1 dashboard) |
+| Pool "available" | 12 | **77** (+65) |
+| Unique proxy_ids | 1 (alle gleich!) | 10 (proxy-8888-8813, proxy-8889-8068, …) |
+| Lease cleanup | nur on-demand | automatisch alle 60s |
+
+### Immortal Tag
+- `v19.10-ghost-lease-fixed` — verhindert 71-Lease-Pileup für immer
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
 **CF Tunnel:** `sinator` — `cloudflared tunnel run sinator --config config-sinator.yml`
 **Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router

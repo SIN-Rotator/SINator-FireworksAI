@@ -119,7 +119,10 @@ class PoolProxy:
         self.pool_client = PoolClient(cfg.get("pool_api_url"))
         self.cache = KeyCache()
         self.fw_session: Optional[aiohttp.ClientSession] = None
-        self.proxy_id = f"proxy-{int(time.time())}"
+        # Unique proxy ID: port + random suffix (NOT time-based — all 10 proxies
+        # in start-multi.sh used to share the same int(time.time()) within 1s!)
+        import random as _random
+        self.proxy_id = f"proxy-{self.port}-{_random.randint(1000, 9999)}"
 
     def create_app(self) -> web.Application:
         app = web.Application()

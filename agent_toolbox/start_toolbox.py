@@ -70,7 +70,28 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("⚠️ GMX Alias API NICHT erreichbar auf Port 8001 — ./start.sh in gmx-alias-tool/ starten!")
 
+    # V19.10: Background task — expire stale leases every 60s.
+    # Verhindert "Geister-Leases" wenn Proxies crashen/killed werden ohne /pool/return.
+    import asyncio as _asyncio
+    from agent_toolbox.core.pool_manager import get_pool_manager
+
+    async def _expire_leases_loop():
+        while True:
+            try:
+                await _asyncio.sleep(60)
+                pool_mgr = get_pool_manager()
+                expired = pool_mgr.expire_leases()
+                if expired > 0:
+                    logger.info(f"🧹 V19.10 Lease-Cleanup: {expired} stale lease(s) expired")
+            except Exception as e:
+                logger.warning(f"⚠️ Lease-Cleanup failed: {e}")
+
+    cleanup_task = _asyncio.create_task(_expire_leases_loop())
+    logger.info("🧹 V19.10 Lease-Cleanup loop started (60s interval)")
+
     yield
+
+    cleanup_task.cancel()
     logger.info("🛑 SINator Agent Toolbox fährt herunter...")
 
 # FastAPI App erstellen
