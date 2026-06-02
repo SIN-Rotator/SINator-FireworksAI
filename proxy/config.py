@@ -33,7 +33,9 @@ def _resolve_pool_api_url() -> str:
             url = f.read_text().strip()
             if url:
                 return f"{url}/api/v1"
-    return "http://localhost:8000/api/v1"
+    # Fireworks backend now runs on 8100; 8000 is the legacy port and is kept
+    # only for older setups that explicitly override SIN_POOL_API_URL.
+    return "http://localhost:8100/api/v1"
 
 
 def load_config() -> dict:

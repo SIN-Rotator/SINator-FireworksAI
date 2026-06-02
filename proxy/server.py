@@ -425,14 +425,25 @@ class PoolProxy:
                         if status in MAYBE_DEAD_CODES:
                             # Prüfe Response-Body auf echte Dead-Keywords
                             is_confirmed_dead = any(kw in error_text for kw in PERMANENT_ERROR_KEYWORDS)
-                            # Verifiziere zusätzlich via /models
+                            if is_confirmed_dead:
+                                logger.info(f"Confirmed dead via error body: {status} ({reason}) — matched keyword in response, swapping immediately")
+                                new_key = await self._swap_key(reason)
+                                if new_key and attempt < self.max_retries - 1:
+                                    headers["Authorization"] = f"Bearer {new_key['api_key']}"
+                                    return web.Response(
+                                        body=b'{"error":"key_swapped","message":"Pool key rotated, please retry","retry_after":1}',
+                                        status=503,
+                                        content_type="application/json",
+                                        headers={"Retry-After": "1"},
+                                    )
+                                return web.Response(body=error_body_bytes, status=status,
+                                                    content_type=fw_resp.headers.get("Content-Type", "application/json"))
+                            # Body-Keywords matchten nicht — zusätzlich via /models verifizieren
                             models_dead = await self._verify_key_dead(key_info['api_key'])
-                            if not is_confirmed_dead and not models_dead:
+                            if not models_dead:
                                 logger.warning(f"Key got {status} but error body + /models don't confirm dead — retrying same key")
                                 await asyncio.sleep(2)
                                 continue
-                            if is_confirmed_dead:
-                                logger.info(f"Confirmed dead via error body: {status} ({reason}) — matched keyword in response")
                         logger.warning(f"Dead key: {status} ({reason}), swapping (attempt {attempt+1})...")
                         new_key = await self._swap_key(reason)
                         if new_key and attempt < self.max_retries - 1:
@@ -614,17 +625,18 @@ class PoolProxy:
 def main():
     import urllib.request
     backend_wait = int(os.environ.get("SIN_BACKEND_WAIT", "5"))
+    backend_url = os.environ.get("SIN_BACKEND_HEALTH_URL", "http://localhost:8100/health")
     for i in range(backend_wait):
         try:
-            urllib.request.urlopen("http://localhost:8000/health", timeout=2)
-            logger.info(f"✅ Backend ready (waited {i}s)")
+            urllib.request.urlopen(backend_url, timeout=2)
+            logger.info(f"✅ Backend ready (waited {i}s) at {backend_url}")
             break
         except Exception:
             if i == 0:
-                logger.info(f"⏳ Waiting for backend on :8000 (max {backend_wait*sleep}s)...")
+                logger.info(f"⏳ Waiting for backend at {backend_url} (max {backend_wait}s)...")
             time.sleep(1)
     else:
-        logger.warning("⚠️ Backend not ready — proxy will start anyway")
+        logger.warning(f"⚠️ Backend not ready at {backend_url} — proxy will start anyway")
 
     proxy = PoolProxy()
     app = proxy.create_app()

@@ -37,7 +37,7 @@ from agent_toolbox.api.schemas import (
     PoolAddKeyRequest,
     PoolAddKeyResponse,
 )
-from agent_toolbox.core.keychain_store import migrate_pool as _migrate_pool
+from agent_toolbox.core.keychain_store import migrate_pool as _migrate_pool, hydrate_single as _hydrate_single
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/pool", tags=["API Key Pool"])
@@ -197,6 +197,11 @@ async def lease_key_get(leased_to: str = "dashboard", ttl_seconds: int = 1800):
     result = pool_mgr.lease_key(ttl_seconds=ttl_seconds, leased_to=leased_to)
     if not result:
         raise HTTPException(status_code=404, detail="No available keys to lease")
+    # Hydrate api_key from keychain if it's still the SENTINEL placeholder.
+    if not result.get("api_key"):
+        hydrated = _hydrate_single(dict(result))
+        if hydrated.get("api_key"):
+            result["api_key"] = hydrated["api_key"]
     return {
         "status": "success",
         "api_key": result["api_key"],
@@ -236,6 +241,16 @@ async def lease_key(request: dict):
 
     if not result:
         raise HTTPException(status_code=404, detail="No available keys to lease")
+
+    # Hydrate api_key from keychain if it's still the SENTINEL placeholder.
+    if not result.get("api_key"):
+        hydrated = _hydrate_single(dict(result))
+        if hydrated.get("api_key"):
+            result["api_key"] = hydrated["api_key"]
+        if result.get("backup") and not result["backup"].get("api_key"):
+            backup_hydrated = _hydrate_single(dict(result["backup"]))
+            if backup_hydrated.get("api_key"):
+                result["backup"]["api_key"] = backup_hydrated["api_key"]
 
     return {
         "status": "success",
