@@ -33,13 +33,23 @@ landed under one `leased_to` and couldn't be told apart.
 expired key via `/pool/return` BEFORE leasing a new one. Prevents ghost leases
 from cache expiry (30 min cycle).
 
+### V19.14: Soft-Ownership + Per-Session Keys
+- **AgentKeyCache** replaces KeyCache — no TTL expiry, sticky preferred_key_id
+  persists to `~/.sin-pool/agent-{id}.json`
+- **Phase 2 x-agent-id**: Each request can send `x-agent-id` header → gets its own
+  key via per-session AgentKeyCache (lazy creation). Falls back to proxy's
+  `SIN_AGENT_ID` if no header.
+- **_ensure_key(agent_id)**: Accepts optional agent_id, no retry loop (instant)
+- **_on_shutdown**: Releases ALL session keys together via `/pool/agent-release`
+- **_get_session_cache()**: Creates per-session AgentKeyCache on first request
+
 ## Endpoints
 - `GET /health` — proxy status + cached key info
 - `GET /pool-status` — pool stats from backend + cache status
 - `GET /pool-lease` — lease a key (for dashboard/rotation use)
 - `GET /v1/models` — Fireworks model list (cached)
-- `*  /v1/{path}` — proxy to Fireworks API
-- `*  /inference/v1/{path}` — proxy to Fireworks API
+- `*  /v1/{path}` — proxy → backend agent-key → Fireworks (Phase 2: x-agent-id)
+- `*  /inference/v1/{path}` — proxy → backend agent-key → Fireworks (Phase 2: x-agent-id)
 
 ## Auth
 - `Authorization: Bearer <SINATOR_AUTH_TOKEN>` for all `/v1/*` and `/inference/*`

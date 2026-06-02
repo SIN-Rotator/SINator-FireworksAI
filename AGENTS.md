@@ -160,6 +160,13 @@ Key als Fallback. **Niemals blockieren, niemals warten.**
 | Backward-Compat: /pool/lease funktioniert weiter | ✅ |
 | Router (:9998) → alle 10 Proxies erreichbar | ✅ |
 
+### Phase 2: x-agent-id Per-Session Isolation (2026-06-02)
+- Jede Request sendet `x-agent-id` Header → eigener AgentKeyCache pro Session
+- `opencode.json`: `"headers": {"x-agent-id": "opencode-main"}` für opencode
+- Proxy extrahiert `x-agent-id` aus Request → separat zum Backend `/pool/agent-key`
+- Fallback auf `SIN_AGENT_ID` wenn kein Header
+- `_on_shutdown` releast ALLE Session-Keys gleichzeitig
+
 ### Immortal Tag
 - `v19.14-soft-ownership` — markiert den funktionierenden Soft-Ownership-Stand
 
