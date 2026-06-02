@@ -2,7 +2,7 @@
 
 ## What
 Core pool management: add, lease, return, mark, report, stats, SSE events.
-Backs the entire Fireworks AI key pool (256 keys, 175 currently suspended).
+Backs the entire Fireworks AI key pool (261 keys, 253 currently suspended).
 
 ## Why
 - **Atomic leasing**: Multi-process safe — proxies + dashboard all lease from
@@ -38,7 +38,7 @@ After: `mark_suspended()` also sets lease fields to `None`. Cleaner state,
 easier debugging, prevents confusion in tools that iterate lease fields.
 
 ## Storage
-- `data/fireworksai-pool.json` — 256 entries, each with id, alias_email,
+- `data/fireworksai-pool.json` — 261 entries, each with id, alias_email,
   api_key (stub, real value in keychain), leased_*, suspended_*, etc.
 - `com.sinator.pool` Keychain — actual API key values (macOS encrypted)
 
@@ -52,7 +52,7 @@ pm.return_key(key["key_id"])
 
 ## Caveats
 - **No row-level locking**: Multi-process safety relies on `reload()` + `save()`
-  being fast (single JSON file, ~256 entries, <100ms typical)
+  being fast (single JSON file, ~261 entries, <100ms typical)
 - **Keychain dependency**: On macOS, real API key values are in Keychain. The
   pool.json has empty `api_key` fields. The `_hydrate_key()` method retrieves
   from Keychain on demand.

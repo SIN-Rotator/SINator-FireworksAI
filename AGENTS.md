@@ -92,7 +92,7 @@ Chat-Requests an `https://sinatorpool-router.delqhi.com/inference/v1/chat/comple
 - `git push origin v19.12-lease-hydration-fix` ✅
 
 ### Immortal Tag
-- `v19.12-lease-hydration-fix` — markiert den letzten bekannten funktionierenden Stand. Vor JEDER Änderung an `proxy/server.py`, `proxy/pool_client.py`, `proxy/config.py` oder `agent_toolbox/api/routes/pool.py`: `git diff v19.12-lease-hydration-fix -- <datei>` und sicherstellen dass die 4 Fixes erhalten bleiben.
+- `v19.12-lease-hydration-fix` — historischer Fix (durch v19.14-soft-ownership überholt). Der aktuelle Referenz-Tag ist `v19.14-soft-ownership`. Vor JEDER Änderung: `git diff v19.14-soft-ownership` und sicherstellen dass der Fix erhalten bleibt.
 
 ---
 
@@ -350,7 +350,7 @@ Replaces `BrowserManager` (which hardcodes `--start-maximized`). Provides `_page
 ### Immortal Tags
 - `v19.1-e2e-sin-tools` — Full E2E flow working
 - `v19.1-fix-signup-enter` — Enter key fix for signup (proven working baseline)
-- `v19.1-working-revert` — HEAD (3485aa4) nach Revert auf v19.1-fix-signup-enter
+- `v19.1-working-revert` — ehemals HEAD (3485aa4), jetzt überholt durch v19.14-soft-ownership
 - `v19.1-fix-onboarding-enter` — Enter key fallback für onboarding Submit
 
 ---
@@ -440,7 +440,7 @@ Test-Script: `debug/test_delete_fix.py`
 
 **Richtig:** `browser_press("Enter")` — immer, in Signup UND Login. Form-Submit per Enter ist der einzig reliable Weg.
 
-**Tag:** `v19.1-fix-signup-enter` ist der proven working baseline.
+**Tag:** `v19.1-fix-signup-enter` ist der proven working baseline (v19.14-soft-ownership is the current operational baseline).
 
 ### 2. Button-Text Matching: `includes()` statt `===`
 
@@ -468,7 +468,7 @@ Test-Script: `debug/test_delete_fix.py`
 
 ### 5. Kein Code ändern ohne Vergleich mit proven Tag
 
-**Regel:** Jeder Commit/Eingriff muss gegen `v19.1-fix-signup-enter` validiert werden. Wenn der Tag funktioniert, meine Änderungen aber nicht → Fehler liegt bei mir.
+**Regel:** Jeder Commit/Eingriff an `fireworks_service.py` muss gegen `v19.1-fix-signup-enter` validiert werden. Wenn der Tag funktioniert, meine Änderungen aber nicht → Fehler liegt bei mir. (V19.14-soft-ownership ist der allgemeine Baseline-Tag für das gesamte Projekt.)
 
 **Check:**
 ```bash

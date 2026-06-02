@@ -25,7 +25,7 @@ def log(msg):
 
 async def count_available():
     import http.client
-    conn = http.client.HTTPConnection("localhost", 8000, timeout=5)
+    conn = http.client.HTTPConnection("localhost", 8100, timeout=5)
     conn.request("GET", "/api/v1/pool/stats")
     resp = conn.getresponse()
     data = json.loads(resp.read())

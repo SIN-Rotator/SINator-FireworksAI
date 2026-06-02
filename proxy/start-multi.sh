@@ -60,7 +60,7 @@ for i in $(seq 1 $INSTANCES); do
   PORT=$((BASE_PORT + i - 1))
   echo "[$i/$INSTANCES] Proxy → :$PORT (from repo)"
   cd "$PROXY_DIR"
-  SIN_POOL_API_URL="http://localhost:8000/api/v1" \
+  SIN_POOL_API_URL="http://localhost:8100/api/v1" \
     SIN_PROXY_PORT=$PORT SIN_LEASE_BACKUP=true \
     nohup /opt/homebrew/bin/python3 server.py > /tmp/sinator-proxy-$PORT.log 2>&1 &
   echo "  PID: $!"

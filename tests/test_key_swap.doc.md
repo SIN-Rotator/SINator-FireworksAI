@@ -56,7 +56,7 @@ The pool file is **automatically backed up** to `fireworksai-pool.json.test_back
 ## Known Caveats
 
 - **Consumes real keys during testing** — each `test_report_*` permanently swaps a pool key. The backup fixture restores the file, but if a test crashes mid-run, manual restore is needed.
-- **Requires Tauri dashboard running** on port 3000 (not the FastAPI backend on :8000).
+- **Requires Tauri dashboard running** on port 3000 (not the FastAPI backend on :8100).
 - **`auth_backup` fixture is per-test** — each `TestSwapKeyCLI` test gets a fresh auth snapshot.
 - **Tauri API may differ from FastAPI** — these tests target the Tauri-bundled API, not the standalone FastAPI.
 

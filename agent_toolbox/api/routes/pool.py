@@ -6,8 +6,8 @@
 ║  ENDPOINTS:                                                                   ║
 ║  GET  /pool/stats        → API-Key-Pool Status                              ║
 ║  POST /pool/add          → API-Key zum Pool hinzufügen                      ║
-║  POST /pool/use          → API-Key als verwendet markieren                  ║
-║  GET  /pool/key          → Nächsten verfügbaren API-Key (Klartext)          ║
+║  POST /pool/use          → (legacy) API-Key als verwendet markieren         ║
+║  GET  /pool/key          → (legacy) Nächsten verfügbaren API-Key (Klartext) ║
 ║  POST /pool/lease        → Key leasen (atomic, mit TTL)                     ║
 ║  POST /pool/return       → Geleaste Key zurückgeben                         ║
 ║  POST /pool/report       → Bad key melden + Ersatz                          ║

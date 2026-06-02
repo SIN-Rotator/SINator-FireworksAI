@@ -7,7 +7,7 @@ Generate 10 fresh Fireworks API keys via sequential `rotate.py` calls. V19.4 wra
 - **Imported by:** (standalone CLI)
 - **Imports:** `asyncio`, `json`, `time`, `subprocess`, `pathlib.Path`
 - **Calls:** `python3 tools/rotate.py --cdp-port 9222` (subprocess)
-- **Requires:** Running pool backend on `http://127.0.0.1:8000` (for stats check)
+- **Requires:** Running pool backend on `http://127.0.0.1:8100` (for stats check)
 - **Requires:** Chrome with CDP port 9222 (User Chrome Profile 73 or bot)
 
 ## Key Classes/Functions

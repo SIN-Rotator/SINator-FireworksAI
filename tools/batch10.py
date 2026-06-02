@@ -33,7 +33,7 @@ async def get_pool_stats():
     """Read pool stats via curl. Returns (available, total) or (-1, -1) on error."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "curl", "-s", "http://127.0.0.1:8000/api/v1/pool/stats",
+            "curl", "-s", "http://127.0.0.1:8100/api/v1/pool/stats",
             stdout=asyncio.subprocess.PIPE
         )
         out, _ = await proc.communicate()

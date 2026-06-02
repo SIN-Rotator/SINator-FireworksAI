@@ -26,7 +26,7 @@ Async HTTP client that communicates with the backend pool API (`agent_toolbox`) 
 ## Configuration
 
 Uses `proxy.config.load_config()` for:
-- `pool_api_url` (default: `http://localhost:8000/api/v1`)
+- `pool_api_url` (default: `http://localhost:8100/api/v1`)
 - `lease_ttl_seconds` (default: 1800)
 - `lease_backup` (default: false)
 

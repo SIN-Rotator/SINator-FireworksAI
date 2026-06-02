@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
     """Lifecycle-Handler für Startup und Shutdown."""
     logger.info("🚀 SINator Agent Toolbox startet...")
     logger.info(f"📂 Projekt-Root: {project_root}")
-    logger.info("📖 Swagger UI: http://localhost:8000/docs")
+    logger.info("📖 Swagger UI: http://localhost:8100/docs")
 
     try:
         import httpx
@@ -126,7 +126,7 @@ app = FastAPI(
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://tauri.localhost", "tauri://localhost", "http://localhost:3000", "http://localhost:8000"],
+    allow_origins=["https://tauri.localhost", "tauri://localhost", "http://localhost:3000", "http://localhost:8100"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -32,7 +32,7 @@ Configuration loading for the Pool Proxy — reads from environment variables wi
 1. `SIN_POOL_API_URL` env var
 2. `~/.sin-pool/tunnel-url.txt` file content
 3. parent project `.sin-pool/tunnel-url.txt`
-4. fallback: `http://localhost:8000/api/v1`
+4. fallback: `http://localhost:8100/api/v1`
 
 ## File Locations
 

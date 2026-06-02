@@ -1,13 +1,13 @@
 # SINRULES.md — Single Source of Truth Regeln
 
 > **ALLE Agenten MÜSSEN diese Regeln 100% befolgen. Keine Ausnahmen.**
-> Letzte Aktualisierung: 2026-05-31 (V15.5 — frame-aware OTP, GmxService Struktur-Fix)
+> Letzte Aktualisierung: 2026-06-02 (V19.14 — Soft-Ownership Multi-Agent Key Distribution)
 
 ---
 
-## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-05-26)
+## 🛑 REGEL 0: VERIFIED FLOW — COMPLETE (2026-06-02)
 
-**Pool:** 146 Keys (59 verfügbar, 10 used, 77 suspended)
+**Pool:** 261 Keys (~5 available, ~250 suspended)
 **Cycle Time:** ~180s average
 **E2E Single Command:** `python tools/rotate.py`
 **Config:** GMX/Fireworks Credentials aus `data/config.json` (nicht mehr hardcodiert!)
@@ -290,4 +290,4 @@ Account ist tot, kein Recovery möglich.
 
 ---
 
-*Letzte Aktualisierung: 2026-05-26 (V12)*
+*Letzte Aktualisierung: 2026-06-02 (V19.14)*

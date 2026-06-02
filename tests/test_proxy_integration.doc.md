@@ -8,7 +8,7 @@ Integration tests for the Pool Proxy V13 — 10 instances behind the pool-router
 - **Imports:** `httpx`, `json`, `time`
 - **External state:** 10 proxy instances on `localhost:8888`-`localhost:8897`
 - **External state:** Pool-Router on `localhost:9998` (default test target)
-- **External state:** Pool API on `localhost:8000/api/v1`
+- **External state:** Pool API on `localhost:8100/api/v1`
 - **External state:** Cache files at `~/.sin-pool/current-key.json` and `~/.sin-pool/backup-key.json` (backed up/restored)
 
 ## Test Targets
@@ -17,7 +17,7 @@ Integration tests for the Pool Proxy V13 — 10 instances behind the pool-router
 |----------|---------|
 | `PROXY_URL = http://localhost:9998` | Pool-Router (default entry, single endpoint) |
 | `PROXY_URLS` | All 10 individual proxies (`8888`-`8897`) for direct testing |
-| `POOL_API = http://localhost:8000/api/v1` | Pool management API |
+| `POOL_API = http://localhost:8100/api/v1` | Pool management API |
 
 ## Test Coverage
 

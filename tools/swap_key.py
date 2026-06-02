@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 AUTH_FILE = Path.home() / ".local/share/opencode/auth.json"
-SINATOR_API = "http://localhost:8000/api/v1"
+SINATOR_API = "http://localhost:8100/api/v1"
 MODEL = "accounts/fireworks/models/deepseek-v4-pro"
 
 def api(path, data=None):

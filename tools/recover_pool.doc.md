@@ -2,7 +2,7 @@
 
 **Purpose:** Reconstruct `data/fireworksai-pool.json` from the surviving API keys in macOS Keychain when the metadata file is missing or corrupted.
 
-**Context:** The pool file was untracked from git in commit 8926051 (`chore(security): untrack data/fireworksai-pool.json`) and got deleted at 2026-06-02 07:30 (cause unknown — possibly a sync/cleanup tool). The 255+ actual API keys are still safe in macOS Keychain under service `com.sinator.pool`. This script rebuilds the metadata so the backend can come back online.
+**Context:** The pool file was untracked from git in commit 8926051 (`chore(security): untrack data/fireworksai-pool.json`) and got deleted at 2026-06-02 07:30 (cause unknown — possibly a sync/cleanup tool). The 261+ actual API keys are still safe in macOS Keychain under service `com.sinator.pool`. This script rebuilds the metadata so the backend can come back online.
 
 ## Usage
 
@@ -30,7 +30,7 @@ python tools/recover_pool.py recover --apply  # Actually rebuild pool.json
 
 ## What happens next
 
-- The proxy (port 8888-8897) will try all 255 keys
+- The proxy (port 8888-8897) will try all 261 keys
 - Suspended keys (most of them) will return 412/429/413 → re-marked as `suspended: true` on next report
 - The pool will self-heal over the next few requests
 - A new rotation (160s) will produce a new alias + new key for fresh accounts
@@ -48,7 +48,7 @@ When JSON is lost but keychain survives, we can rebuild with placeholders and le
 - Keychain entries are NEVER removed by this script
 - The script only WRITES the JSON metadata file
 - All recovered keys work for Fireworks API calls (verified by `security find-generic-password -w`)
-- The pool may briefly show all 255 as "available" — but the proxy will mark dead ones as suspended on first error
+- The pool may briefly show all 261 as "available" — but the proxy will mark dead ones as suspended on first error
 
 ## Future improvements (V19.9+)
 

@@ -46,7 +46,7 @@ EOF
 fi
 
 # 5. Start backend
-echo -e "${GREEN}→${NC} Starting backend on port 8000..."
+echo -e "${GREEN}→${NC} Starting backend on port 8100..."
 SINATOR_PASSWORD="${SINATOR_PASSWORD}" nohup python3 agent_toolbox/start_toolbox.py > /tmp/sinator-backend.log 2>&1 &
 sleep 4
 
@@ -59,9 +59,9 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}  ✅ SINator ist bereit!              ${NC}"
 echo -e "${GREEN}══════════════════════════════════════${NC}"
 echo ""
-echo -e "  Dashboard: ${CYAN}http://localhost:8000/dashboard${NC}"
+echo -e "  Dashboard: ${CYAN}http://localhost:8100/dashboard${NC}"
 echo -e "  Login:     ${CYAN}SINATOR_PASSWORD = ${SINATOR_PASSWORD}${NC}"
-echo -e "  API Docs:  ${CYAN}http://localhost:8000/docs${NC}"
+echo -e "  API Docs:  ${CYAN}http://localhost:8100/docs${NC}"
 echo ""
 echo -e "  ${YELLOW}Wichtige Schritte nach dem Login:${NC}"
 echo -e "  1. Dashboard öffnen → Setup → GMX Credentials eintragen"
@@ -75,7 +75,7 @@ if command -v cloudflared &>/dev/null; then
     read -t 5 -r START_TUNNEL || START_TUNNEL="n"
     if [ "$START_TUNNEL" = "y" ] || [ "$START_TUNNEL" = "Y" ]; then
         echo -e "${GREEN}→${NC} Starting Cloudflare Tunnel..."
-        nohup cloudflared tunnel --url http://localhost:8000 > /tmp/sinator-tunnel.log 2>&1 &
+        nohup cloudflared tunnel --url http://localhost:8100 > /tmp/sinator-tunnel.log 2>&1 &
         sleep 5
         TUNNEL_URL=$(grep -o 'https://.*trycloudflare.com' /tmp/sinator-tunnel.log | head -1)
         if [ -n "$TUNNEL_URL" ]; then

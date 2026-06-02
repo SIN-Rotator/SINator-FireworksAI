@@ -9,7 +9,7 @@
 | Variable | Standard | Beschreibung |
 |----------|----------|-------------|
 | `SINATOR_AUTH_TOKEN` | — | Auth-Token für API-Zugriff (optional, wenn gesetzt muss jeder Request `Authorization: Bearer <token>` mitsenden); wird vom Router auch an den CF-Fallback weitergereicht |
-| `PORT` | `8000` | Backend-HTTP-Port |
+| `PORT` | `8100` | Backend-HTTP-Port |
 | `CF_WORKER_URL` | — | Cloudflare-Worker Fallback-URL (Issue #24). Leer = Fallback deaktiviert |
 | `CF_SYNC_TOKEN` | — | Token für Mac→D1 Push via `scripts/sync_to_cf.py` (`SYNC_TOKEN` im Worker) |
 
@@ -72,6 +72,8 @@ Im Chrome Profil 73 (simoneschulze) gespeichert. Bei Session-Verlust:
 | Status | Bedeutung |
 |--------|-----------|
 | `available` | Nutzbar |
+| `assigned` | Soft-Ownership — fest einem Agent zugewiesen |
+| `shared` | Wird von mehreren Agenten gleichzeitig genutzt |
 | `used` | Verbraucht (Spending Limit erreicht) |
 | `suspended` | Von Fireworks gesperrt |
 
@@ -80,8 +82,11 @@ Im Chrome Profil 73 (simoneschulze) gespeichert. Bei Session-Verlust:
 |----------|---------|-------------|
 | `/api/v1/pool/stats` | GET | Pool Statistiken |
 | `/api/v1/pool/keys` | GET | Alle Keys mit Status |
-| `/api/v1/pool/lease` | POST | Nächsten verfügbaren Key holen |
+| `/api/v1/pool/lease` | POST | Nächsten verfügbaren Key holen (Legacy) |
 | `/api/v1/pool/report` | POST | Key Status melden (suspended/used) |
+| `/api/v1/pool/agent-key` | POST | V19.14 — Soft-Ownership Key-Zuweisung |
+| `/api/v1/pool/agent-release` | POST | V19.14 — Agent gibt Key frei |
+| `/api/v1/pool/agent-heartbeat` | POST | V19.14 — Agent-Heartbeat |
 | `/api/v1/pool/credential/{id}` | DELETE | Key löschen |
 
 ---
@@ -116,11 +121,11 @@ Jeder Proxy ist eine aiohttp-Instanz:
 
 | Port | Service | Beschreibung |
 |------|---------|-------------|
-| `8000` | FastAPI Backend | Pool-Manager + GMX/Fireworks Automation |
+| `8100` | FastAPI Backend | Pool-Manager + GMX/Fireworks Automation |
 | `8888-8897` | Pool-Proxys | 10× OpenAI-compatible Proxy-Instanzen |
 | `9998` | Pool-Router | Auto-Failover über alle Proxys |
 | `9222` | Chrome CDP | Remote Debugging Port |
 
 ---
 
-*Stand: 2026-05-30*
+*Stand: 2026-06-02*

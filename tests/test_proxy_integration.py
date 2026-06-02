@@ -11,7 +11,7 @@ import json
 import time
 import httpx
 
-POOL_API = "http://localhost:8000/api/v1"
+POOL_API = "http://localhost:8100/api/v1"
 # Proxy instances (10x, accessed through pool-router :9998)
 PROXY_URLS = [f"http://localhost:{p}" for p in range(8888, 8898)]
 PROXY_URL = "http://localhost:9998"  # Pool-Router as default entry

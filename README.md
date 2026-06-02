@@ -5,7 +5,7 @@
 Automated GMX alias rotation → Fireworks AI account registration → API key pool.
 OpenAI-compatible proxy with automatic key rotation on rate-limits and silent key swap.
 
-**Backend:** :8000 | **Pool:** 235 Keys | **Proxy:** 10 Instances (:8888-:8897) | **Router:** :9998
+**Backend:** :8100 | **Pool:** 261 Keys | **Proxy:** 10 Instances (:8888-:8897) | **Router:** :9998
 
 **Dashboard:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) |
 **Config:** [OpenSIN-Code](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config) |
@@ -16,11 +16,11 @@ OpenAI-compatible proxy with automatic key rotation on rate-limits and silent ke
 ```bash
 # Dashboard (empfohlen):
 cd ~/dev/SINator-dashboard && ./start.sh
-# → Backend (:8000) + Dashboard (:3000) + Tauri App
+# → Backend (:8100) + Dashboard (:3000) + Tauri App
 
 # Oder standalone:
 python agent_toolbox/start_toolbox.py
-# → http://localhost:8000/docs
+# → http://localhost:8100/docs
 ```
 
 ## Eine Base-URL — Pool-Router mit Auto-Failover
@@ -49,11 +49,13 @@ Der Router (:9998) verteilt auf 10 Proxys (:8888-:8897), jeder mit eigenem API-K
 | Status | Bedeutung |
 |--------|-----------|
 | `available` | Nutzbar, nicht belegt |
+| `assigned` | Soft-Ownership — fest einem Agent zugewiesen |
+| `shared` | Wird von mehreren Agenten gleichzeitig genutzt |
 | `leased` | Von Proxy reserviert (Primary + Backup) |
 | `used` | Manuell verbraucht |
 | `suspended` | Von Fireworks gesperrt |
 
-`available = total - used - suspended - leased`
+`available = total - used - suspended - assigned`
 
 ## Cloudflare-Fallback (Issue #24)
 
@@ -137,7 +139,7 @@ Pool-Router (:9998, ThreadingMixIn)
   ↓ Auto-Failover über 10 Proxys
 Pool Proxys (:8888-:8897, aiohttp SSE, silent key swap)
   ↓ Key rotation on 412/429/401, 1s Key-Retry
-Backend (:8000, FastAPI)
+Backend (:8100, FastAPI)
   ↓ PoolManager + Keychain + Rotation-Orchestrator
 Chrome (Playwright V15.4 ONE Browser)
   ↓ GMX + Fireworks Automation
@@ -148,12 +150,15 @@ Alias-Rotation → Signup → OTP → API Key → Pool
 
 | Endpoint | Methode | Beschreibung |
 |----------|---------|-------------|
-| `/api/v1/pool/stats` | GET | `total/used/suspended/leased/available` |
+| `/api/v1/pool/stats` | GET | `total/used/suspended/assigned/shared/available` |
 | `/api/v1/pool/keys` | GET | Alle Keys |
-| `/api/v1/pool/lease` | POST | Key reservieren |
+| `/api/v1/pool/lease` | POST | Key reservieren (Legacy) |
 | `/api/v1/pool/return` | POST | Key freigeben |
 | `/api/v1/pool/report` | POST | Key melden + Ersatz leasen |
 | `/api/v1/pool/add` | POST | Key hinzufügen |
+| `/api/v1/pool/agent-key` | POST | V19.14 — Soft-Ownership Key-Zuweisung |
+| `/api/v1/pool/agent-release` | POST | V19.14 — Agent gibt Key frei |
+| `/api/v1/pool/agent-heartbeat` | POST | V19.14 — Agent-Heartbeat |
 
 ## Repository-Landschaft
 
@@ -167,4 +172,4 @@ Alias-Rotation → Signup → OTP → API Key → Pool
 
 ---
 
-*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.5 ONE-Browser | Frame-aware OTP | Proxy 1s Key-Retry*
+*Stand: 2026-06-02 | 261 Keys (~5 available, ~250 suspended) | 10 Proxys + Pool-Router | V19.14 Soft-Ownership | Frame-aware OTP | Proxy 1s Key-Retry*
