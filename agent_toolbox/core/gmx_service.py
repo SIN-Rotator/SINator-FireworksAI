@@ -873,22 +873,46 @@ class GmxService:
             })
             await asyncio.sleep(3)
 
-            # 6) Confirm-Dialog (OK)
-            ok_pos = await frame.evaluate("""() => {
-                var allEls = document.querySelectorAll('button, a, span');
-                for (var i=0; i<allEls.length; i++) {
-                    var el = allEls[i];
-                    if (el.textContent && el.textContent.trim() === 'OK') {
-                        var r = el.getBoundingClientRect();
-                        if (r.width > 5 && r.height > 5) {
-                            return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)};
+            # 6) Confirm-Dialog (OK) — Bug V19.3.x: exact-match 'OK' + button/a/span only
+            #    failed when GMX dialogs use <div role="button"> or have whitespace.
+            #    Fix: include role=button, accept text via textContent/indexOf, check
+            #    multiple frames (dialog may live in a different iframe).
+            ok_pos = None
+            for try_frame in [frame] + [f for f in page.frames if f is not frame]:
+                try:
+                    ok_pos = await try_frame.evaluate("""() => {
+                        // Search buttons, links, spans, AND role=button divs
+                        var allEls = document.querySelectorAll('button, a, span, div[role="button"], div[role="link"]');
+                        // Also try by class (GMX-specific)
+                        var classEls = document.querySelectorAll('.btn-primary, .confirm-button, [data-testid*="confirm"]');
+                        var all = Array.from(allEls).concat(Array.from(classEls));
+                        for (var i = 0; i < all.length; i++) {
+                            var el = all[i];
+                            if (!el) continue;
+                            var txt = (el.textContent || '').trim();
+                            // Match: "OK", "Ok", or buttons with class containing 'primary' inside a dialog
+                            if (txt === 'OK' || txt === 'Ok' || txt === 'ok' ||
+                                (txt.length > 0 && txt.length < 20 && txt.toLowerCase() === 'ok')) {
+                                var r = el.getBoundingClientRect();
+                                if (r.width > 5 && r.height > 5) {
+                                    return {
+                                        x: Math.round(r.x + r.width/2),
+                                        y: Math.round(r.y + r.height/2),
+                                        text: txt,
+                                        frame: window === window.top ? 'top' : 'iframe'
+                                    };
+                                }
+                            }
                         }
-                    }
-                }
-                return null;
-            }""")
+                        return null;
+                    }""")
+                    if ok_pos:
+                        logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']}) in {ok_pos.get('frame','?')}, text='{ok_pos.get('text','')}'")
+                        break
+                except Exception as e:
+                    logger.debug(f"OK button search in frame failed: {e}")
+                    continue
             if ok_pos:
-                logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']})")
                 await cdp.send('Input.dispatchMouseEvent', {
                     'type': 'mousePressed', 'x': ok_pos['x'], 'y': ok_pos['y'],
                     'button': 'left', 'clickCount': 1
@@ -899,6 +923,9 @@ class GmxService:
                     'button': 'left', 'clickCount': 1
                 })
                 await asyncio.sleep(2)
+            else:
+                logger.warning("OK confirm button NOT FOUND — delete will not complete. "
+                               "Dialog may be in a frame we didn't check, or GMX changed button format.")
 
             # 7) Verifikation
             for _ in range(10):
@@ -998,8 +1025,11 @@ class GmxService:
             return False
 
     async def _verify_alias(self, page: Page, alias_email: str, present: bool = True, max_wait: float = 12.0) -> bool:
-        """Verify alias is present/absent — searches iframe content (not top frame)."""
-        logger.info(f"[_verify_alias] Checking {alias_email} present={present}")
+        """Verify alias is present/absent — searches iframe content (not top frame).
+
+        Logs BOTH the check and the result to avoid confusion with the 'present' param.
+        """
+        logger.info(f"[_verify_alias] Checking {alias_email} expect_present={present}")
         try:
             deadline = time.time() + max_wait
             while time.time() < deadline:
@@ -1008,8 +1038,10 @@ class GmxService:
                     text = await frame.evaluate("() => document.body.innerText")
                     found = alias_email in text
                     if present and found:
+                        logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
                         return True
                     if not present and not found:
+                        logger.info(f"[_verify_alias] {alias_email} gone as expected")
                         return True
                 else:
                     for f in page.frames:
@@ -1017,11 +1049,16 @@ class GmxService:
                             text = await f.evaluate("() => document.body.innerText")
                             found = alias_email in text
                             if present and found:
+                                logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
                                 return True
                             if not present and not found:
+                                logger.info(f"[_verify_alias] {alias_email} gone as expected")
                                 return True
                             break
                 await asyncio.sleep(1)
+            # Reached deadline without matching expectation
+            logger.warning(f"[_verify_alias] TIMEOUT expect_present={present} but {alias_email} "
+                           f"is {'present' if present else 'absent'}")
             return False
         except Exception as e:
             logger.error(f"Error verifying alias: {e}")
