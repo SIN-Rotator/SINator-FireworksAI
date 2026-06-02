@@ -12,6 +12,7 @@ FIREWORKS_BASE = "https://api.fireworks.ai/inference/v1"
 LEASE_TTL_SECONDS = int(os.getenv("SIN_LEASE_TTL", "1800"))
 LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "false").lower() == "true"
 MAX_RETRIES = int(os.getenv("SIN_MAX_RETRIES", "3"))
+AGENT_ID = os.environ.get("SIN_AGENT_ID", "").strip() or f"proxy-{DEFAULT_PROXY_PORT}"
 
 # Issue #24 — Cloudflare Worker fallback + D1 sync (consumed by pool-router.py
 # and scripts/sync_to_cf.py). Empty by default → fallback disabled.
@@ -51,6 +52,7 @@ def load_config() -> dict:
         "max_retries": MAX_RETRIES,
         "cf_worker_url": CF_WORKER_URL,
         "cf_sync_token": CF_SYNC_TOKEN,
+        "agent_id": AGENT_ID,
     }
 
 

@@ -122,5 +122,61 @@ class PoolClient:
             logger.error(f"Stats request failed: {e}")
             return None
 
+    async def get_agent_key(self, agent_id: str, preferred_key_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """V19.14: Get a key via soft-ownership (never blocks)."""
+        try:
+            body = {"agent_id": agent_id}
+            if preferred_key_id:
+                body["preferred_key_id"] = preferred_key_id
+            r = await self._http.post(
+                f"{self.pool_api_url}/pool/agent-key",
+                json=body,
+                headers=self._headers(),
+            )
+            if r.status_code == 200:
+                data = r.json()
+                api_key = data.get("api_key", "")
+                if not api_key:
+                    broken_id = data.get("key_id", "?")
+                    logger.error(f"Agent-key returned empty api_key for {broken_id[:8]}... — reporting + retrying")
+                    await self.report(key_id=broken_id, reason="empty_api_key", leased_to=agent_id)
+                    return None
+                logger.info(f"Agent-key: {data.get('key_id', '?')[:8]}... (shared={data.get('shared')}, consumers={len(data.get('active_consumers', []))})")
+                return data
+            elif r.status_code == 409:
+                logger.error("No keys available for agent (all suspended/used)")
+                return None
+            else:
+                logger.error(f"Agent-key failed: {r.status_code} {r.text[:200]}")
+                return None
+        except Exception as e:
+            logger.error(f"Agent-key request failed: {e}")
+            return None
+
+    async def release_agent_key(self, agent_id: str, key_id: str) -> bool:
+        """V19.14: Release an agent's key."""
+        try:
+            r = await self._http.post(
+                f"{self.pool_api_url}/pool/agent-release",
+                json={"agent_id": agent_id, "key_id": key_id},
+                headers=self._headers(),
+            )
+            return r.status_code == 200
+        except Exception as e:
+            logger.error(f"Agent-release failed: {e}")
+            return False
+
+    async def agent_heartbeat(self, agent_id: str, key_id: str) -> bool:
+        """V19.14: Send heartbeat to keep consumer registration alive."""
+        try:
+            r = await self._http.post(
+                f"{self.pool_api_url}/pool/agent-heartbeat",
+                json={"agent_id": agent_id, "key_id": key_id},
+                headers=self._headers(),
+            )
+            return r.status_code == 200
+        except Exception:
+            return False
+
     async def close(self):
         await self._http.aclose()

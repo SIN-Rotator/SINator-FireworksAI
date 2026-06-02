@@ -170,3 +170,93 @@ class KeyCache:
             } if self.backup else None,
             "cache_dir": str(CACHE_DIR),
         }
+
+
+class AgentKeyCache:
+    """V19.14: Per-agent key cache with sticky preferred_key_id persistence."""
+
+    def __init__(self, agent_id: str):
+        self.agent_id = agent_id
+        self.primary: Optional[Dict[str, Any]] = None
+        self.preferred_key_id: Optional[str] = None
+        self.request_count: int = 0
+        self._load()
+
+    def _cache_file(self) -> Path:
+        return CACHE_DIR / f"agent-{self.agent_id}.json"
+
+    def _load(self):
+        cf = self._cache_file()
+        if cf.exists():
+            try:
+                with open(cf) as f:
+                    data = json.load(f)
+                self.primary = data.get("primary")
+                self.preferred_key_id = data.get("preferred_key_id")
+                self.request_count = data.get("request_count", 0)
+                if self.primary:
+                    logger.info(f"AgentKeyCache loaded: preferred={self.preferred_key_id[:8] if self.preferred_key_id else 'none'}...")
+            except Exception as e:
+                logger.warning(f"Failed to load agent cache: {e}")
+
+    def _save(self):
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        data = {
+            "primary": self.primary,
+            "preferred_key_id": self.preferred_key_id,
+            "request_count": self.request_count,
+        }
+        with open(self._cache_file(), "w") as f:
+            json.dump(data, f, indent=2)
+
+    def get_primary(self) -> Optional[Dict[str, Any]]:
+        """V19.14: No TTL check — soft-ownership keys don't expire."""
+        if self.primary:
+            self.request_count += 1
+            return self.primary
+        return None
+
+    def set_primary(self, key_info: Dict[str, Any]):
+        self.primary = key_info
+        self.request_count = 0
+        if key_info.get("key_id"):
+            self.preferred_key_id = key_info["key_id"]
+        self._save()
+        logger.info(f"AgentKeyCache primary: {key_info.get('key_id', '?')[:8]}...")
+
+    @property
+    def backup(self) -> Optional[Dict[str, Any]]:
+        return None
+
+    def set_backup(self, key_info: Dict[str, Any]):
+        pass
+
+    def promote_backup(self) -> Optional[Dict[str, Any]]:
+        return None
+
+    def pop_previous(self) -> Optional[Dict[str, Any]]:
+        return None
+
+    def clear_primary(self):
+        self.primary = None
+        self._save()
+
+    def clear_backup(self):
+        pass
+
+    def clear_all(self):
+        self.primary = None
+        self._save()
+        self._cache_file().unlink(missing_ok=True)
+
+    def status(self) -> Dict[str, Any]:
+        return {
+            "primary": {
+                "key_id": self.primary.get("key_id", "")[:8] + "..." if self.primary else None,
+                "alias": self.primary.get("alias_email", "") if self.primary else None,
+                "expires_at": self.primary.get("expires_at") if self.primary else None,
+                "requests": self.request_count,
+            } if self.primary else None,
+            "backup": None,
+            "cache_dir": str(CACHE_DIR),
+        }

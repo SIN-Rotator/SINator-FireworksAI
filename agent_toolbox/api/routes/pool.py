@@ -12,6 +12,9 @@
 ║  POST /pool/return       → Geleaste Key zurückgeben                         ║
 ║  POST /pool/report       → Bad key melden + Ersatz                          ║
 ║  GET  /pool/events       → SSE Stream für Dashboard Live-Updates            ║
+║  POST /pool/agent-key        → V19.14 Soft-Ownership Key-Zuweisung         ║
+║  POST /pool/agent-release    → V19.14 Agent gibt Key frei                  ║
+║  POST /pool/agent-heartbeat  → V19.14 Agent Heartbeat                      ║
 ║  GET  /pool/health       → Validiert alle Keys via Fireworks API            ║
 ║  DELETE /pool/{key_id}   → API-Key aus Pool löschen                         ║
 ║                                                                              ║
@@ -63,6 +66,8 @@ async def get_pool_stats():
             suspended=stats.get("suspended", 0),
             leased=stats.get("leased", 0),
             available=stats["available"],
+            assigned=stats.get("assigned", 0),
+            shared=stats.get("shared", 0),
             keys=stats["keys"],
             execution_time=f"{elapsed:.2f}s",
         )
@@ -289,6 +294,103 @@ async def return_leased_key(request: dict):
         raise HTTPException(status_code=404, detail=f"Key '{key_id}' not found or lease_id mismatch")
 
     return {"status": "success", "key_id": key_id}
+
+
+@router.post("/agent-key")
+async def get_agent_key(request: dict):
+    """V19.14: Soft-ownership key assignment — never blocks.
+
+    Body: {
+      "agent_id": "opencode-main-a3f8b2c1",  // required
+      "preferred_key_id": "uuid..."          // optional, for sticky
+    }
+
+    Returns:
+      200 + key info, shared flag, active_consumers count
+      409 if no keys available (all suspended/used)
+    """
+    pool_mgr = get_pool_manager()
+    agent_id = request.get("agent_id")
+    if not agent_id:
+        raise HTTPException(status_code=400, detail="Missing 'agent_id' in request body")
+    
+    preferred_key_id = request.get("preferred_key_id")
+    result = pool_mgr.get_key_for_agent(
+        agent_id=agent_id,
+        preferred_key_id=preferred_key_id,
+    )
+    
+    if not result:
+        raise HTTPException(status_code=409, detail="No keys available (all suspended/used)")
+    
+    # Safety hydration (belt-and-suspenders, same as /lease)
+    if not result.get("api_key"):
+        hydrated = _hydrate_single(dict(result))
+        if hydrated.get("api_key"):
+            result["api_key"] = hydrated["api_key"]
+    
+    return {
+        "status": "success",
+        "api_key": result["api_key"],
+        "key_id": result["key_id"],
+        "alias_email": result.get("alias_email", ""),
+        "key_name": result.get("key_name", ""),
+        "shared": result.get("shared", False),
+        "active_consumers": result.get("active_consumers", []),
+        "assigned_to": result.get("assigned_to"),
+        "shared_count": result.get("shared_count", 0),
+    }
+
+
+@router.post("/agent-release")
+async def release_agent_key(request: dict):
+    """V19.14: Agent releases a key.
+    
+    Body: {"agent_id": "...", "key_id": "..."}
+    
+    Returns:
+      200 if key was released
+      404 if key not found
+    """
+    pool_mgr = get_pool_manager()
+    agent_id = request.get("agent_id")
+    key_id = request.get("key_id")
+    
+    if not agent_id or not key_id:
+        raise HTTPException(status_code=400, detail="Missing 'agent_id' or 'key_id'")
+    
+    success = pool_mgr.release_key_for_agent(agent_id=agent_id, key_id=key_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Key '{key_id}' not found")
+    
+    return {"status": "success", "released": True, "key_id": key_id}
+
+
+@router.post("/agent-heartbeat")
+async def agent_heartbeat(request: dict):
+    """V19.14: Agent sends heartbeat to keep active_consumers alive.
+    
+    Body: {"agent_id": "...", "key_id": "..."}
+    
+    Returns:
+      200 always (heartbeat is fire-and-forget)
+    """
+    pool_mgr = get_pool_manager()
+    agent_id = request.get("agent_id")
+    key_id = request.get("key_id")
+    
+    if not agent_id or not key_id:
+        raise HTTPException(status_code=400, detail="Missing 'agent_id' or 'key_id'")
+    
+    pool_mgr.reload()
+    for k in pool_mgr.keys:
+        if k["id"] == key_id:
+            k["last_heartbeat"] = time.time()
+            pool_mgr.save()
+            break
+    
+    return {"status": "success", "heartbeat": True}
 
 
 @router.get("/events")

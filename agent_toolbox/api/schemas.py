@@ -157,6 +157,8 @@ class PoolStatsResponse(BaseModel):
     suspended: int = Field(default=0, description="Von Fireworks gesperrte Keys")
     leased: int = Field(default=0, description="Aktuell geleaste Keys (von Proxys belegt)")
     available: int = Field(..., description="Verfügbare Keys (exkl. used, suspended, leased)")
+    assigned: int = Field(default=0, description="V19.14: Keys mit sticky assignment")
+    shared: int = Field(default=0, description="V19.14: Keys mit mehreren active_consumers")
     keys: List[Dict[str, Any]] = Field(default_factory=list, description="Liste aller Keys (ohne Secret)")
     execution_time: str = Field(..., description="Ausführungszeit")
 
@@ -199,3 +201,39 @@ class RotationResponse(BaseModel):
     steps_failed: List[str] = Field(default_factory=list, description="Fehlgeschlagene Schritte")
     execution_time: str = Field(..., description="Gesamtausführungszeit")
     error: Optional[str] = Field(default=None, description="Fehlermeldung")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  V19.14 SOFT-OWNERSHIP SCHEMAS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AgentKeyRequest(BaseModel):
+    """V19.14: Request for soft-ownership key assignment."""
+    agent_id: str = Field(..., description="Unique agent identifier")
+    preferred_key_id: Optional[str] = Field(default=None, description="Previously assigned key ID (sticky)")
+
+
+class AgentKeyResponse(BaseModel):
+    """V19.14: Response for soft-ownership key assignment."""
+    status: str = Field(..., description="success | error")
+    api_key: str = Field(..., description="Fireworks API key (hydrated)")
+    key_id: str = Field(..., description="Key ID")
+    alias_email: str = Field(default="", description="GMX alias email")
+    key_name: str = Field(default="", description="Key display name")
+    shared: bool = Field(default=False, description="True if key is shared with other agents")
+    active_consumers: List[str] = Field(default_factory=list, description="Agent IDs currently using this key")
+    assigned_to: Optional[str] = Field(default=None, description="Permanent sticky owner")
+    shared_count: int = Field(default=0, description="Total times this key was shared")
+
+
+class AgentReleaseRequest(BaseModel):
+    """V19.14: Request to release an agent's key."""
+    agent_id: str = Field(..., description="Agent identifier")
+    key_id: str = Field(..., description="Key ID to release")
+
+
+class AgentReleaseResponse(BaseModel):
+    """V19.14: Response for key release."""
+    status: str = Field(..., description="success | error")
+    released: bool = Field(default=False, description="True if key was released")
+    key_id: str = Field(..., description="Released key ID")

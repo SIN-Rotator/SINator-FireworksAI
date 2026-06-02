@@ -21,7 +21,7 @@ import logging
 import time
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
 from aiohttp import web
@@ -38,6 +38,11 @@ except ImportError:
     from config import load_config, FIREWORKS_BASE
     from pool_client import PoolClient
     from key_cache import KeyCache
+
+try:
+    from proxy.config import AGENT_ID
+except ImportError:
+    from config import AGENT_ID
 
 logging.basicConfig(
     level=logging.INFO,
@@ -117,7 +122,6 @@ class PoolProxy:
         self.fireworks_base = cfg.get("fireworks_base", FIREWORKS_BASE)
         self.max_retries = cfg.get("max_retries", 3)
         self.pool_client = PoolClient(cfg.get("pool_api_url"))
-        self.cache = KeyCache()
         self.fw_session: Optional[aiohttp.ClientSession] = None
         # V19.10: Unique proxy ID — port + random suffix.
         # Before: f"proxy-{int(time.time())}" — all 10 proxies in start-multi.sh
@@ -126,6 +130,12 @@ class PoolProxy:
         # made the pool unusable (only 12 available of 256 total).
         import random as _random
         self.proxy_id = f"proxy-{self.port}-{_random.randint(1000, 9999)}"
+        self.agent_id = getattr(load_config(), 'agent_id', AGENT_ID)  # V19.14
+        try:
+            from proxy.key_cache import AgentKeyCache
+        except ImportError:
+            from key_cache import AgentKeyCache
+        self.cache = AgentKeyCache(agent_id=self.agent_id)
 
     def create_app(self) -> web.Application:
         app = web.Application()
@@ -151,59 +161,39 @@ class PoolProxy:
         logger.info(f"  Pool API: {self.pool_client.pool_api_url}")
 
     async def _on_shutdown(self, app):
+        """V19.14: Release agent keys on shutdown via agent-release."""
         if self.cache.primary:
-            await self.pool_client.return_key(
+            await self.pool_client.release_agent_key(
+                self.agent_id,
                 self.cache.primary.get("key_id", ""),
-                self.cache.primary.get("lease_id"),
             )
-            logger.info("Returned primary key on shutdown")
-        if self.cache.backup:
-            await self.pool_client.return_key(
-                self.cache.backup.get("key_id", ""),
-                self.cache.backup.get("lease_id"),
-            )
-            logger.info("Returned backup key on shutdown")
+            logger.info("Released agent key on shutdown")
         await self.pool_client.close()
         if self.fw_session:
             await self.fw_session.close()
 
-    async def _ensure_key(self) -> Optional[dict]:
-        primary = self.cache.get_primary()
-        if primary:
-            return primary
-        # ── V19.11: Return expired key BEFORE leasing new one ──────────────
-        # When get_primary() detected expiry, it saved the key to `previous`
-        # (persisted as ~/.sin-pool/previous-key.json for crash recovery).
-        # We must return it via /pool/return now — otherwise the key sits
-        # "leased" in the backend until the 30-min TTL + V19.10 cleanup loop.
-        # This wastes pool capacity: 1 expired key = 1 fewer available key.
-        prev = self.cache.pop_previous()
-        if prev:
-            try:
-                returned = await self.pool_client.return_key(
-                    prev.get("key_id", ""),
-                    prev.get("lease_id"),
-                )
-                logger.info(f"Returned expired key {prev.get('key_id','?')[:8]}... to pool: ok={returned}")
-            except Exception as e:
-                # Never let a return failure block leasing — log and continue
-                logger.warning(f"Failed to return expired key: {e}")
-        if not NO_BACKUP:
-            promoted = self.cache.promote_backup()
-            if promoted:
-                asyncio.create_task(self._fetch_backup())
-                return promoted
-        lease_result = await self.pool_client.lease(leased_to=self.proxy_id)
-        if not lease_result:
-            return None
-        key_info = self._lease_to_key_info(lease_result)
-        self.cache.set_primary(key_info)
-        if not NO_BACKUP:
-            if lease_result.get("backup"):
-                self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
-            else:
-                asyncio.create_task(self._fetch_backup())
-        return key_info
+    async def _ensure_key(self):
+        """V19.14: Soft-ownership — never blocks, never retries.
+        
+        If we have a cached key, use it. Otherwise fetch from backend.
+        If backend has no keys → return None (caller handles 503).
+        """
+        # 1. Cache hit
+        key = self.cache.get_primary()
+        if key:
+            return key
+        
+        # 2. Get from backend (no retry loop!)
+        result = await self.pool_client.get_agent_key(
+            agent_id=self.agent_id,
+            preferred_key_id=self.cache.preferred_key_id,
+        )
+        
+        if result and result.get("api_key"):
+            self.cache.set_primary(result)
+            return result
+        
+        return None
 
     @staticmethod
     def _lease_to_key_info(lease: dict) -> dict:
@@ -217,12 +207,8 @@ class PoolProxy:
         }
 
     async def _fetch_backup(self):
-        try:
-            lease_result = await self.pool_client.lease(leased_to=f"{self.proxy_id}-backup")
-            if lease_result:
-                self.cache.set_backup(self._lease_to_key_info(lease_result))
-        except Exception as e:
-            logger.warning(f"Backup lease failed: {e}")
+        """V19.14: No backup keys needed — sharing is the fallback."""
+        pass
 
     async def _swap_key(self, reason: str) -> Optional[dict]:
         old = self.cache.primary
@@ -378,18 +364,18 @@ class PoolProxy:
         ]
         return web.json_response({"object": "list", "data": data})
 
-    async def _ensure_key_with_retry(self, max_attempts: int = 300, delay: float = 1.0):
-        """Retry _ensure_key() with 1s intervals instead of returning 503 to client."""
+    async def _ensure_key_with_retry(self, max_attempts: int = 5, delay: float = 2.0) -> Optional[Dict[str, Any]]:
+        """V19.14: Short retry for transient empty-pool resets (max 5 attempts, 2s each).
+        
+        Down from 300 attempts (5min) in V19.12. Soft-ownership means keys
+        are never permanently blocked by leases.
+        """
         for attempt in range(max_attempts):
             key_info = await self._ensure_key()
             if key_info:
-                if attempt > 0:
-                    logger.info(f"Key acquired after {attempt+1}s wait")
                 return key_info
             if attempt < max_attempts - 1:
-                logger.info(f"No key available, retry {attempt+1}/{max_attempts} in {delay}s")
                 await asyncio.sleep(delay)
-        logger.error("No key available after max retries")
         return None
 
     async def _do_proxy(self, request: web.Request, fw_url: str) -> web.Response:

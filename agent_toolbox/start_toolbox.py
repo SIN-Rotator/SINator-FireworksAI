@@ -86,10 +86,30 @@ async def lifespan(app: FastAPI):
     cleanup_task = _asyncio.create_task(_expire_leases_loop())
     logger.info(f"🧹 V19.10 Lease-Cleanup loop started ({LEASE_CLEANUP_INTERVAL}s interval)")
 
+    # ── V19.14 Stale Consumer Cleanup ────────────────────────────────────────
+    CONSUMER_CLEANUP_INTERVAL = 120  # 2 minutes — agents that died without releasing
+    CONSUMER_TIMEOUT = 300           # 5 minutes — stale threshold
+
+    async def _cleanup_stale_consumers_loop():
+        """V19.14: Remove consumers that haven't heartbeated in 5 minutes."""
+        while True:
+            try:
+                await _asyncio.sleep(CONSUMER_CLEANUP_INTERVAL)
+                pool_mgr = get_pool_manager()
+                cleaned = pool_mgr.cleanup_stale_consumers(timeout_seconds=CONSUMER_TIMEOUT)
+                if cleaned > 0:
+                    logger.info(f"🧹 V19.14 Consumer-Cleanup: {cleaned} stale consumer(s) removed")
+            except Exception as e:
+                logger.warning(f"⚠️ Consumer-Cleanup failed: {e}")
+
+    consumer_cleanup_task = _asyncio.create_task(_cleanup_stale_consumers_loop())
+    logger.info(f"🧹 V19.14 Consumer-Cleanup loop started ({CONSUMER_CLEANUP_INTERVAL}s interval)")
+
     yield
 
-    # Graceful shutdown — cancel the background task
+    # Graceful shutdown — cancel background tasks
     cleanup_task.cancel()
+    consumer_cleanup_task.cancel()
     logger.info("🛑 SINator Agent Toolbox fährt herunter...")
 
 # FastAPI App erstellen
