@@ -222,6 +222,27 @@ class PoolManager:
                 return True
         return False
 
+    def unsuspend_key(self, key_id: str, reason: str = "test_verified_alive") -> bool:
+        """
+        Re-aktiviert einen suspended Key (false-positive recovery).
+
+        Wird von tools/test_keys.py genutzt um Keys die als suspended markiert wurden
+        (z.B. transient 412) aber tatsächlich noch alive sind, zurück in den Pool
+        zu holen.
+        """
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                key["suspended"] = False
+                key["suspended_at"] = None
+                key["suspended_reason"] = None
+                key["reactivated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                key["reactivation_reason"] = reason
+                self.save()
+                logger.info(f"Key reactivated ({reason}): {key_id[:8]}...")
+                return True
+        return False
+
     def mark_used(self, key_id: str) -> bool:
         """
         Markiert einen API-Key als verwendet (manuell, z.B. nach Rotation).
