@@ -39,7 +39,13 @@ class PoolManager:
         self._load()
 
     def _load(self):
-        """Lädt den Pool aus der JSON-Datei."""
+        """Lädt den Pool aus der JSON-Datei.
+
+        Auto-Recovery (V19.8): Wenn die JSON-Datei fehlt aber das macOS
+        Keychain Einträge hat, wird der Pool aus dem Keychain rekonstruiert
+        (siehe tools/recover_pool.py). Verhindert "Pool tot" Dashboard-Fehler
+        wenn ein Sync-Tool die JSON-Datei löscht.
+        """
         if self.pool_path.exists():
             try:
                 with open(self.pool_path, "r") as f:
@@ -56,8 +62,76 @@ class PoolManager:
                 logger.error(f"Pool-Laden fehlgeschlagen: {e}")
                 self.keys = []
         else:
-            logger.info("Kein Pool gefunden, erstelle neuen")
-            self.keys = []
+            # V19.8: Try auto-recovery from macOS Keychain
+            recovered = self._try_recover_from_keychain()
+            if recovered is not None:
+                self.keys = recovered
+            else:
+                logger.info("Kein Pool gefunden, erstelle neuen")
+                self.keys = []
+
+    def _try_recover_from_keychain(self) -> Optional[List[Dict[str, Any]]]:
+        """V19.8: Reconstruct pool entries from macOS Keychain if possible.
+
+        Returns:
+            List of recovered key entries, or None if recovery failed.
+        Side effect: writes the recovered pool to disk.
+        """
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["security", "dump-keychain"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                return None
+
+            accounts: List[str] = []
+            capture_next = False
+            for line in result.stdout.splitlines():
+                if '"svce"<blob>="com.sinator.pool"' in line:
+                    capture_next = True
+                    continue
+                if capture_next and '"acct"<blob>=' in line:
+                    start = line.index('"acct"<blob>="') + len('"acct"<blob>="')
+                    end = line.index('"', start)
+                    accounts.append(line[start:end])
+                    capture_next = False
+
+            if not accounts:
+                return None
+
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            entries: List[Dict[str, Any]] = []
+            for aid in accounts:
+                short = aid.split("-")[0] if "-" in aid else aid[:8]
+                entries.append({
+                    "id": aid,
+                    "api_key": _KEYCHAIN_SENTINEL,
+                    "alias_email": f"recovered-{short}@unknown.local",
+                    "key_name": "recovered-from-keychain",
+                    "created_at": now,
+                    "used": False,
+                    "used_at": None,
+                    "credits_initial": 6.0,
+                    "credits_remaining": 6.0,
+                    "credits_checked_at": None,
+                    "suspended": False,
+                    "recovered": True,
+                    "recovery_note": "Auto-recovered from macOS Keychain (V19.8)",
+                })
+
+            self.pool_path.parent.mkdir(parents=True, exist_ok=True)
+            self.pool_path.write_text(json.dumps(entries, indent=2))
+            logger.warning(
+                f"🚨 AUTO-RECOVERY: Pool-JSON fehlte, {len(entries)} Keys aus "
+                f"macOS Keychain rekonstruiert. Original-Metadaten verloren. "
+                f"Siehe tools/recover_pool.py"
+            )
+            return entries
+        except Exception as e:
+            logger.error(f"Keychain-Recovery fehlgeschlagen: {e}")
+            return None
 
     def reload(self):
         """Lädt den Pool frisch von Disk (sync mit externen Änderungen)."""
