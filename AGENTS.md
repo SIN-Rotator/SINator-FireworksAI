@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.11 (2026-06-02) — **SOTA + E2E PROVEN + GHOST-LEASE + RETURN-OLD-KEY**
+# AGENTS.md — SINator Fireworks AI Rotator V19.12 (2026-06-02) — **SOTA + E2E PROVEN + LEASE-HYDRATION + 401-CASCADE-FIXED**
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02 07:25
 
@@ -67,6 +67,35 @@ Dashboard zeigte "71 leased" + "12 verfügbar" bei nur 1 Proxy-Request. Pool war
   • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
   • **Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
 
+## 🔧 V19.12 FIXES (2026-06-02) — Lease-Hydration + 401-Cascade end-to-end
+
+### Symptom
+Chat-Requests an `https://sinatorpool-router.delqhi.com/inference/v1/chat/completions` lieferten permanent `401 UNAUTHORIZED`. Symptomatisch sah der Proxy gesund aus, `/v1/models` lieferte die 12 Modelle korrekt, aber `chat/completions` schlug durchgehend fehl. `opencode` zeigte „no answer". Pool meldete 24 verfügbar / 234 suspended, aber alle 24 verfügbaren Keys waren effektiv tot.
+
+### Root Cause: 4 zusammenwirkende Bugs
+1. **Lease-Endpoint hydratisierte nie aus dem Keychain.** Nach V19.8 wurde `api_key` in `data/fireworksai-pool.json` durch den Sentinel `"STORED_IN_KEYCHAIN"` ersetzt. `POST /pool/lease` und `GET /pool-lease` haben den Sentinel-String **direkt** an den Client zurückgegeben, ohne `hydrate_single()` aus `keychain_store` aufzurufen. → Der Proxy schickte `"Bearer STORED_IN_KEYCHAIN"` an Fireworks → 401.
+2. **Proxy `main()` health-checkte `:8000` statt `:8100`.** Backend wurde auf 8100 migriert, `proxy/server.py:619` checkte aber weiterhin `http://localhost:8000/health`. Der `else`-Branch der for-Loop benutzte `sleep` statt `time.sleep` → `NameError` killte den Proxy beim Start (`exit code 1`).
+3. **`proxy/pool_client.py` sendete keinen `Authorization`-Header.** Backend verlangt `Bearer $SINATOR_AUTH_TOKEN` für `/pool/lease` etc., Proxy tat nichts dazu → 401 auch bei korrekt hydratierten Keys.
+4. **LaunchAgents `com.sinator.pool-proxy-*.plist` zeigten `SIN_POOL_API_URL=http://localhost:8000/api/v1`.** `proxy/config.py` fiel bei fehlender `~/.sin-pool/config.json` auf `localhost:8000` zurück, und die plists gaben das explizit so weiter.
+
+### Fixes
+1. **`agent_toolbox/api/routes/pool.py`:** `hydrate_single` in `POST /pool/lease` und `GET /pool-lease`. Wenn `result["api_key"]` leer ist, hole aus Keychain. Gleiches für `backup` bei `lease_backup=True`.
+2. **`proxy/server.py:main()`:** `SIN_BACKEND_HEALTH_URL` env-var mit Default `http://localhost:8100/health`. `time.sleep(1)` statt `sleep`. Saubere Log-Strings.
+3. **`proxy/pool_client.py`:** `self.auth_token = os.environ.get("SINATOR_AUTH_TOKEN", "").strip()`, `_headers()` baut `{"Authorization": f"Bearer {self.auth_token}"}`. Wird in `lease`/`return_key`/`report`/`stats` mitgesendet. **Außerdem:** leere `api_key` aus Lease → sofort `report(reason="empty_api_key")` + retry, damit kaputte IDs nicht immer wieder gezogen werden.
+4. **`proxy/config.py` + `~/Library/LaunchAgents/com.sinator.pool-proxy-{8888..8897}.plist`:** `pool_api_url` und `SIN_POOL_API_URL` auf `http://localhost:8100/api/v1`.
+
+### Verifikation
+- `curl http://localhost:8888/inference/v1/chat/completions -d '{"model":"accounts/fireworks/models/deepseek-v4-flash","messages":[{"role":"user","content":"hi"}],"max_tokens":4}'` → echte Fireworks-Antwort
+- `opencode chat` (nach Restart) → Antworten kommen
+- 17 von 24 verfügbaren Keys sind wieder hydratable (7 IDs kaputt, werden in V19.13 repariert)
+- `git log` auf main: `a22b4b3 fix(pool): V19.12 lease-hydration + 401-cascade end-to-end`
+- `git push origin v19.12-lease-hydration-fix` ✅
+
+### Immortal Tag
+- `v19.12-lease-hydration-fix` — markiert den letzten bekannten funktionierenden Stand. Vor JEDER Änderung an `proxy/server.py`, `proxy/pool_client.py`, `proxy/config.py` oder `agent_toolbox/api/routes/pool.py`: `git diff v19.12-lease-hydration-fix -- <datei>` und sicherstellen dass die 4 Fixes erhalten bleiben.
+
+---
+
 ## 🔧 V19.11 FIXES (2026-06-02) — Return-Old-Key + Lease-Field-Cleanup
 
 ### Symptom
@@ -100,7 +129,7 @@ Nach V19.10 Fix waren 77 Keys verfügbar, aber jeder Cache-Expiry (30min) würde
 > 3. Annotated Tag `v<major>.<minor>-<suffix>` für wichtige Fixes
 > 4. Push zu `origin` (force-with-lease nur bei amend)
 >
-> **Tag `v19.2-onboarding-fixed` markiert den letzten bekannten funktionierenden Stand.**
+> **Tag `v19.12-lease-hydration-fix` markiert den letzten bekannten funktionierenden Stand.**
 > **Vor JEDER Änderung an Code-Dateien: `git diff v19.2-onboarding-fixed` und verifizieren dass der Fix erhalten bleibt.**
 
 ### Warum diese Vorsicht?
@@ -597,7 +626,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-06-01 (V19.1 — 100% SIN-Browser-Tools, E2E Flow Fixed)*
+*Last Updated: 2026-06-02 (V19.12 — Lease-Hydration + 401-Cascade-Fix)*
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
