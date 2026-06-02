@@ -136,6 +136,20 @@ class PoolProxy:
         except ImportError:
             from key_cache import AgentKeyCache
         self.cache = AgentKeyCache(agent_id=self.agent_id)
+        # V19.14 Phase 2: Per-session AgentKeyCaches, keyed by x-agent-id header
+        self._session_caches: Dict[str, Any] = {}
+        self._session_caches[self.agent_id] = self.cache  # default proxy cache
+
+    def _get_session_cache(self, agent_id: str):
+        """V19.14 Phase 2: Get or create AgentKeyCache for a session agent_id."""
+        if agent_id not in self._session_caches:
+            try:
+                from proxy.key_cache import AgentKeyCache
+            except ImportError:
+                from key_cache import AgentKeyCache
+            self._session_caches[agent_id] = AgentKeyCache(agent_id=agent_id)
+            logger.info(f"V19.14: New session cache for {agent_id} (total sessions: {len(self._session_caches)})")
+        return self._session_caches[agent_id]
 
     def create_app(self) -> web.Application:
         app = web.Application()
@@ -161,36 +175,43 @@ class PoolProxy:
         logger.info(f"  Pool API: {self.pool_client.pool_api_url}")
 
     async def _on_shutdown(self, app):
-        """V19.14: Release agent keys on shutdown via agent-release."""
-        if self.cache.primary:
-            await self.pool_client.release_agent_key(
-                self.agent_id,
-                self.cache.primary.get("key_id", ""),
-            )
-            logger.info("Released agent key on shutdown")
+        """V19.14: Release ALL session keys on shutdown."""
+        for agent_id, cache in list(self._session_caches.items()):
+            if cache.primary:
+                await self.pool_client.release_agent_key(
+                    agent_id,
+                    cache.primary.get("key_id", ""),
+                )
+                logger.info(f"Released session key for {agent_id}")
         await self.pool_client.close()
         if self.fw_session:
             await self.fw_session.close()
 
-    async def _ensure_key(self):
+    async def _ensure_key(self, agent_id: str = None):
         """V19.14: Soft-ownership — never blocks, never retries.
         
-        If we have a cached key, use it. Otherwise fetch from backend.
-        If backend has no keys → return None (caller handles 503).
+        Uses per-session AgentKeyCache if x-agent-id header is present.
+        Falls back to proxy's default agent_id.
         """
+        if agent_id is None:
+            agent_id = self.agent_id
+        
+        # Get the right cache for this session
+        cache = self._get_session_cache(agent_id)
+        
         # 1. Cache hit
-        key = self.cache.get_primary()
+        key = cache.get_primary()
         if key:
             return key
         
         # 2. Get from backend (no retry loop!)
         result = await self.pool_client.get_agent_key(
-            agent_id=self.agent_id,
-            preferred_key_id=self.cache.preferred_key_id,
+            agent_id=agent_id,
+            preferred_key_id=cache.preferred_key_id,
         )
         
         if result and result.get("api_key"):
-            self.cache.set_primary(result)
+            cache.set_primary(result)
             return result
         
         return None
@@ -364,14 +385,14 @@ class PoolProxy:
         ]
         return web.json_response({"object": "list", "data": data})
 
-    async def _ensure_key_with_retry(self, max_attempts: int = 5, delay: float = 2.0) -> Optional[Dict[str, Any]]:
+    async def _ensure_key_with_retry(self, agent_id: str = None, max_attempts: int = 5, delay: float = 2.0) -> Optional[Dict[str, Any]]:
         """V19.14: Short retry for transient empty-pool resets (max 5 attempts, 2s each).
         
         Down from 300 attempts (5min) in V19.12. Soft-ownership means keys
         are never permanently blocked by leases.
         """
         for attempt in range(max_attempts):
-            key_info = await self._ensure_key()
+            key_info = await self._ensure_key(agent_id=agent_id)
             if key_info:
                 return key_info
             if attempt < max_attempts - 1:
@@ -379,7 +400,9 @@ class PoolProxy:
         return None
 
     async def _do_proxy(self, request: web.Request, fw_url: str) -> web.Response:
-        key_info = await self._ensure_key_with_retry()
+        # V19.14 Phase 2: Per-session key assignment via x-agent-id header
+        session_agent_id = request.headers.get("x-agent-id", self.agent_id)
+        key_info = await self._ensure_key_with_retry(agent_id=session_agent_id)
         if not key_info:
             return web.json_response(
                 {"error": "no_api_key", "message": "No API key available in pool"},

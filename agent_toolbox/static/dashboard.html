@@ -20,6 +20,8 @@
     .stat-card .value { font-size: 32px; font-weight: 700; margin-bottom: 4px; }
     .stat-card .label { color: #94a3b8; font-size: 14px; }
     .stat-card.credits .value { color: #22c55e; }
+    .stat-card.assigned .value { color: #6366f1; }
+    .stat-card.shared .value { color: #f59e0b; }
     .card { background: #1e293b; border-radius: 8px; padding: 20px; border: 1px solid #334155; margin-bottom: 24px; }
     .card h2 { font-size: 16px; margin-bottom: 12px; color: #94a3b8; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -83,6 +85,8 @@
     <div class="stat-card"><div class="value" id="stat-available">—</div><div class="label">Available</div></div>
     <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used / Suspended</div></div>
     <div class="stat-card leased"><div class="value" id="stat-leased">—</div><div class="label">Leased</div></div>
+    <div class="stat-card assigned"><div class="value" id="stat-assigned">—</div><div class="label">Zugewiesen</div></div>
+    <div class="stat-card shared"><div class="value" id="stat-shared">—</div><div class="label">Geteilt</div></div>
     <div class="stat-card credits"><div class="value" id="stat-credits">—</div><div class="label">Credits</div></div>
   </div>
 
@@ -160,8 +164,10 @@ function connectSSE() {
       const d = JSON.parse(e.data);
       document.getElementById('stat-total').textContent = d.total || 0;
       document.getElementById('stat-available').textContent = d.available || 0;
-      document.getElementById('stat-used').textContent = d.used || 0;
+      document.getElementById('stat-used').textContent = d.used || d.suspended || 0;
       document.getElementById('stat-leased').textContent = d.leased || 0;
+      document.getElementById('stat-assigned').textContent = d.assigned || 0;
+      document.getElementById('stat-shared').textContent = d.shared || 0;
     });
     evtSource.onerror = () => { /* auto-reconnect */ };
   } catch (e) { /* SSE not available */ }
@@ -214,8 +220,10 @@ async function loadDashboard() {
     const stats = await api('GET', '/pool/stats');
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-available').textContent = stats.available || 0;
-    document.getElementById('stat-used').textContent = stats.used || 0;
+    document.getElementById('stat-used').textContent = stats.used || stats.suspended || 0;
     document.getElementById('stat-leased').textContent = stats.leased || 0;
+    document.getElementById('stat-assigned').textContent = stats.assigned || 0;
+    document.getElementById('stat-shared').textContent = stats.shared || 0;
     document.getElementById('stat-credits').textContent = '—';
     updateActiveKeyCard(stats.keys || []);
     renderKeys(stats.keys || []);
