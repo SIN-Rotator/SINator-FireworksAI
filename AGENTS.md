@@ -8,7 +8,7 @@ python tools/rotate.py
 # → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
-**Pool:** 243 Keys (7 available, 0 leased, 10 used, 226 suspended) — **+1 NEUER KEY nach Onboarding-Fix**
+**Pool:** 245 Keys (6 active: 5 leased, 1 available; 239 suspended) — **+1 NEUER KEY nach V19.3 Delete-Fix** (beta-raven-874@gmx.de)
 **Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
 **CF Tunnel:** `sinator` — `cloudflared tunnel run sinator --config config-sinator.yml`
