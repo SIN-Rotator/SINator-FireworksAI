@@ -813,38 +813,43 @@ class GmxService:
             })
             await asyncio.sleep(1.5)
 
-            # 4) Delete-Icon INNERHALB der Zeile suchen
-            delete_pos = await frame.evaluate(f"""() => {{
-                var rows = document.querySelectorAll('tr, li, .row, [class*="row"]');
-                for (var i=0; i<rows.length; i++) {{
-                    if (rows[i].textContent.includes('{alias_email}')) {{
-                        var delEl = rows[i].querySelector('[title*="lösch"], [aria-label*="lösch"], [title*="lösch"], [class*="delete"]');
-                        if (!delEl) {{
-                            delEl = rows[i].querySelector('a, button, span, i, img, svg');
-                        }}
-                        if (delEl) {{
-                            var r = delEl.getBoundingClientRect();
-                            if (r.width > 5 && r.height > 5) {{
-                                return {{x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), title: delEl.getAttribute('title') || ''}};
-                            }}
-                        }}
-                    }}
-                }}
+            # 4) Delete-Icon suchen — GMX-Struktur: Hover-Menu ist SIBLING der Row,
+            #    nicht IN der Row! Selektor: a.table-hover_icon[title*="löschen"]
+            #    Hidden in <div class="js-template is-hidden"> bis Row gehovert wird.
+            delete_pos = await frame.evaluate("""() => {
+                // Spezifischer Selektor: nur .table-hover_icon links mit "löschen" im title
+                var delLinks = document.querySelectorAll('a.table-hover_icon[title*="löschen"], a.table-hover_icon[title*="Löschen"]');
+                for (var i = 0; i < delLinks.length; i++) {
+                    var el = delLinks[i];
+                    var r = el.getBoundingClientRect();
+                    // Muss sichtbar sein (Hover hat Template unhidden gemacht)
+                    if (r.width > 5 && r.height > 5) {
+                        return {
+                            x: Math.round(r.x + r.width/2),
+                            y: Math.round(r.y + r.height/2),
+                            title: el.getAttribute('title') || ''
+                        };
+                    }
+                }
                 return null;
-            }}""")
+            }""")
             if not delete_pos:
-                logger.warning("Delete icon not found in alias row — global search as fallback")
-                # Fallback: global search
+                logger.warning("Delete icon not found via .table-hover_icon selector — retrying with broader search")
+                # Fallback: alle sichtbaren Delete-Links (z.B. wenn class-Name sich ändert)
                 delete_pos = await frame.evaluate("""() => {
-                    var allEls = document.querySelectorAll('a, button, span, i, img, svg');
-                    for (var i=0; i<allEls.length; i++) {
-                        var el = allEls[i];
+                    var allLinks = document.querySelectorAll('a');
+                    for (var i = 0; i < allLinks.length; i++) {
+                        var el = allLinks[i];
                         var title = (el.getAttribute('title') || '').toLowerCase();
                         var aria = (el.getAttribute('aria-label') || '').toLowerCase();
-                        if (title.includes('l\u00f6sch') || aria.includes('l\u00f6sch') || title.includes('delete')) {
+                        if (title.indexOf('lösch') !== -1 || aria.indexOf('lösch') !== -1) {
                             var r = el.getBoundingClientRect();
                             if (r.width > 5 && r.height > 5) {
-                                return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2), title: el.getAttribute('title') || ''};
+                                return {
+                                    x: Math.round(r.x + r.width/2),
+                                    y: Math.round(r.y + r.height/2),
+                                    title: el.getAttribute('title') || ''
+                                };
                             }
                         }
                     }

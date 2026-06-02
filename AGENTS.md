@@ -1,4 +1,4 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.2 (2026-06-02) — **ONBOARDING FIXED**
+# AGENTS.md — SINator Fireworks AI Rotator V19.3 (2026-06-02) — **GMX DELETE FIXED**
 
 ## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02
 
@@ -174,6 +174,81 @@ Replaces `BrowserManager` (which hardcodes `--start-maximized`). Provides `_page
 - `v19.1-fix-signup-enter` — Enter key fix for signup (proven working baseline)
 - `v19.1-working-revert` — HEAD (3485aa4) nach Revert auf v19.1-fix-signup-enter
 - `v19.1-fix-onboarding-enter` — Enter key fallback für onboarding Submit
+
+---
+
+## 🔧 V19.3 GMX DELETE FIX (2026-06-02) — `_delete_alias` Selektor repariert
+
+### Symptom
+`gmx_service._delete_alias()` fand Delete-Icon nicht:
+- `"Delete icon not found in alias row — global search as fallback"`
+- `"Delete icon not found globally either"` → return False → rotation failed
+
+### Root Cause
+GMX rendert den Delete-Link in einem **`js-template is-hidden` Block außerhalb der Row** (HTML Zeile 401-419):
+```html
+<div class="js-template is-hidden" data-template-name="hoverMenu">
+  <a class="table-hover_icon icon-link" title="E-Mail-Adresse löschen">...</a>
+</div>
+```
+
+Bei Hover über die Row wird das Template **unhidden** (`is-hidden` Klasse weg), die `<a>` wird sichtbar.
+
+**Der Bug:** Der Code suchte `rows[i].querySelector('[title*="lösch"]')` INNERHALB der Row. Die Row enthält NUR `<div class="table_field">` mit Email-Text — keine `<a>` Tags. Der Fallback `rows[i].querySelector('a, button, span, ...')` fand entsprechend auch nichts.
+
+**Globaler Fallback (Zeile 838)**: Iteriert ALLE `<a>` Tags, prüft `title.includes('lösch')`. Theoretisch korrekt, ABER:
+- Erstes hidden-Element hat `w=0 h=0` → `r.width > 5` schlägt fehl
+- Nach Hover ist `<a>` sichtbar (`w=20 h=20`) — **sollte matchen**
+- **Realität:** Manchmal matchte der Fallback das falsche Element (Sidebar-Links), oder die Position war stale (Mouse weg von Row → Template wieder hidden)
+
+### Der Fix (`gmx_service.py:816-855`)
+
+**Vorher (2 Suchen, beide falsch):**
+```python
+# Suche 1: INNERHALB der Row — findet NICHTS
+delEl = rows[i].querySelector('[title*="lösch"]')
+delEl = rows[i].querySelector('a, button, span, ...')  # fallback auch INNERHALB
+
+# Suche 2: Global über alle <a> — falsche Reihenfolge/Position
+title.includes('lösch') || title.includes('delete')  # matched Sidebar-Links
+```
+
+**Nachher (1 direkte Suche + 1 breite Suche):**
+```python
+# Suche 1: Spezifischer Selektor .table-hover_icon (nur Hover-Menu-Links)
+delLinks = document.querySelectorAll('a.table-hover_icon[title*="löschen"]')
+# → findet das ELEMENT IM TEMPLATE, prüft visibility
+
+# Suche 2: Fallback über alle <a> mit "lösch" im title (korrekt)
+title.indexOf('lösch') !== -1  # lowercase substring
+```
+
+**Warum das funktioniert:**
+1. **`a.table-hover_icon`** ist eine eindeutige CSS-Klasse — nur Hover-Menu-Links nutzen sie
+2. **Selektor `[title*="löschen"]`** matcht nur das Delete-Icon (`Bearbeiten` hat anderen Title)
+3. **Visibility-Check** `r.width > 5 && r.height > 5` filtert das hidden Template raus
+4. **Nach Hover** ist `<a>` sichtbar (20×20), Selektor liefert sofort die korrekte Position
+
+### Verifikation
+Test-Script: `debug/test_delete_fix.py`
+```
+[3] Will try to delete: test-1779947387@alphafrau.de
+[4] Calling _delete_alias() with the fix...
+  Hover row via CDP at (593, 464)
+  Delete 'E-Mail-Adresse löschen' at (930, 463)
+  OK confirm at (815, 417)
+  Alias deleted successfully
+  DELETION SUCCESS
+```
+
+### Impact Analysis
+- **Risk:** LOW
+- **Callers:** 2 (`gmx_service.py:1078` intern in `rotate_alias` + `gmx/delete_alias.py:45` CLI)
+- **Signatur unverändert:** `async def _delete_alias(self, page, alias_email) -> bool`
+- **Kein Breaking Change:** Return values identisch
+
+### Immortal Tag
+- `v19.3-gmx-delete-fixed` — Delete-Selektor repariert, end-to-end getestet
 
 ---
 
