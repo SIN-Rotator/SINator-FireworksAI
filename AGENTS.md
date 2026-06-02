@@ -1,6 +1,6 @@
-# AGENTS.md — SINator Fireworks AI Rotator V19.3 (2026-06-02) — **GMX DELETE FIXED**
+# AGENTS.md — SINator Fireworks AI Rotator V19.7 (2026-06-02) — **SOTA + E2E PROVEN**
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-02 07:25
 
 ```bash
 python tools/rotate.py
@@ -8,8 +8,28 @@ python tools/rotate.py
 # → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
 ```
 
-**Pool:** 245 Keys (6 active: 5 leased, 1 available; 239 suspended) — **+1 NEUER KEY nach V19.3 Delete-Fix** (beta-raven-874@gmx.de)
-**Cycle Time:** ~37s GMX + ~60s Fireworks signup + ~30s API Key = ~130s total
+**Pool:** 256 Keys — **+1 NEUER KEY** (elron-wolf-580@gmx.de → `fw_G3yw1hoAVAwe2HmiHNqPwG`)
+**Cycle Time:** 158s total (V19.6 OK-confirm fix path) — see commit fff8983
+**sin-browser-tools:** v2.0.1 (Issue #41 logging fix merged, PR #42 → main @ 64c9abcc)
+**Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
+**CF Tunnel:** `sinator` — `cloudflared tunnel run sinator --config config-sinator.yml`
+**Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
+**API Key (alle Macs gleich):** `7avN1KkfInNqcOMn2CtwLTvx`
+**Services:** com.sinator.backend (:8000), com.sinator.pool-router (:9998), 10× pool-proxy (:8888-:8897), Pages (:8040)
+**Config Repos:**
+  • **OpenCode →** [SIN-Code-FireworksAI-OpenCode-Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config)
+  • **Hermes  →** [SIN-Hermes-Provider-Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
+
+## V19.7 Highlights (this commit)
+
+| Component | Status |
+|-----------|--------|
+| GMX delete (icon + OK confirm) | ✅ V19.3 + V19.6 (both merged to main) |
+| sin-browser-tools v2.0.1 | ✅ Issue #41 fixed, host log handlers preserved |
+| E2E rotation @ 07:25 UTC | ✅ 158s, key `fw_G3yw1hoAVAwe2HmiHNqPwG` |
+| Proxy `/v1/models` | ✅ 12 models (deepseek-v4-flash, glm-5p1, gpt-oss-120b/20b...) |
+| Proxy `/v1/chat/completions` | ✅ Real Fireworks response (test: 20 token limit) |
+| `toolbox.log` wächst | ✅ 9.5MB+ (war 0 vor #41 Fix) |
 **Pool-Router:** `sinatorpool-router.delqhi.com` (:9998, single endpoint, auto-failover)
 **CF Tunnel:** `sinator` — `cloudflared tunnel run sinator --config config-sinator.yml`
 **Pool Proxies:** 10 Instanzen (:8888-:8897) hinter Pool-Router
