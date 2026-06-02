@@ -3,6 +3,7 @@
 Docs: pool_manager.doc.md
 """
 import json
+import re
 import time
 import uuid
 import logging
@@ -17,6 +18,11 @@ from agent_toolbox.core.keychain_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.I,
+)
 
 DEFAULT_POOL_PATH = Path(__file__).parent.parent.parent / "data" / "fireworksai-pool.json"
 
@@ -97,6 +103,22 @@ class PoolManager:
                     end = line.index('"', start)
                     accounts.append(line[start:end])
                     capture_next = False
+
+            if not accounts:
+                return None
+
+            # V19.13: Reject non-UUID entries (ghost IDs from botched recovery)
+            filtered = [aid for aid in accounts if UUID_RE.match(aid)]
+            if len(filtered) != len(accounts):
+                rejected_count = len(accounts) - len(filtered)
+                logger.warning(
+                    f"V19.13: Filtered out {rejected_count} non-UUID ghost IDs "
+                    f"from keychain recovery"
+                )
+                for aid in accounts:
+                    if not UUID_RE.match(aid):
+                        logger.warning(f"  -> rejected: {aid[:60]}")
+                accounts = filtered
 
             if not accounts:
                 return None

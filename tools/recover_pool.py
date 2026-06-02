@@ -24,10 +24,13 @@ Usage:
 """
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import List, Dict, Any
+
+UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
 KEYCHAIN_SERVICE = "com.sinator.pool"
 SENTINEL = "STORED_IN_KEYCHAIN"
@@ -55,7 +58,15 @@ def _dump_keychain_accounts() -> List[str]:
             end = line.index('"', start)
             accounts.append(line[start:end])
             capture_next = False
-    return accounts
+    # V19.13: Reject non-UUID entries (ghost IDs from botched recovery)
+    filtered = [aid for aid in accounts if UUID_RE.match(aid)]
+    rejected = len(accounts) - len(filtered)
+    if rejected > 0:
+        print(f"WARNING: Rejected {rejected} non-UUID ghost IDs from keychain (V19.13 guard)")
+        for aid in accounts:
+            if not UUID_RE.match(aid):
+                print(f"  -> rejected: {aid[:80]}")
+    return filtered
 
 
 def _verify_keychain_entry(account: str) -> bool:
@@ -78,6 +89,9 @@ def build_pool_entries(account_ids: List[str]) -> List[Dict[str, Any]]:
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
     entries: List[Dict[str, Any]] = []
     for aid in account_ids:
+        if not UUID_RE.match(aid):
+            print(f"  SKIPPING non-UUID ghost ID: {aid[:80]}")
+            continue
         short = aid.split("-")[0] if "-" in aid else aid[:8]
         entries.append({
             "id": aid,
