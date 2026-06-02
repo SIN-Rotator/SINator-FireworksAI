@@ -31,11 +31,12 @@ Generate 10 fresh Fireworks API keys via sequential `rotate.py` calls. V19.4 wra
 
 ## Known Caveats
 
-- **BlockingIOError on rotation 10**: asyncio subprocess pipe (`proc.stdout`) can block with `Errno 35` when child writes too much output. If this happens, the batch dies silently — workaround is to run `rotate.py` manually.
+- **BlockingIOError (FIXED V19.5)**: previously crashed on rotation 10 when `print(..., flush=True)` hit a non-blocking stdout under nohup redirect. Now uses `await proc.communicate()` to drain output in one shot + `try/except BlockingIOError` on every log call. See `v19.5-blockingio-fixed` tag.
 - **Chrome session must be alive** — if GMX session expires mid-batch, all subsequent rotations fail.
 - **No rate-limiting between rotations** — Fireworks may throttle if back-to-back signups from same IP. 160s/rotation provides natural pacing.
 - **Subprocess approach means no shared state** — each rotation launches a fresh Python interpreter (~0.5s overhead per call).
 - **Log file overwritten on each run** (`LOG.write_text("")` at start) — historical logs are lost.
+- **No real-time output** (V19.5 trade-off) — using `communicate()` means you only see output AFTER each rotation completes, not streaming. Acceptable for batch.
 
 ## Usage
 

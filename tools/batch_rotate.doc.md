@@ -29,3 +29,5 @@ Runs `rotate.py` in a loop to generate N new keys (default 69) until the target 
 - **Chrome + GMX session must be alive** — each rotation expects CDP port 9222 with a valid session.
 - If no session backup is available, the batch may fail after the first rotation (GMX session expires).
 - The subprocess approach means each rotation is isolated; if Chrome crashes, the entire batch stops.
+- **BlockingIOError (FIXED V19.5)**: previously crashed on long runs when child wrote more than the pipe buffer could hold, or when `print(flush=True)` hit a non-blocking stdout. Fixed via `await proc.communicate()` + `try/except` on every log call. See `v19.5-blockingio-fixed` tag.
+- **No real-time output** (V19.5 trade-off) — using `communicate()` means you only see output AFTER each rotation completes. Use `tail -f tools/batch-rotate.log` for progress.

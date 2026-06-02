@@ -13,8 +13,15 @@ log_lines = []
 def log(msg):
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     log_lines.append(line)
-    print(line, flush=True)
-    LOG_FILE.write_text("\n".join(log_lines))
+    # stdout may be non-blocking under nohup/redirect — guard against Errno 35
+    try:
+        print(line, flush=True)
+    except BlockingIOError:
+        pass
+    try:
+        LOG_FILE.write_text("\n".join(log_lines))
+    except BlockingIOError:
+        pass
 
 async def count_available():
     import http.client
@@ -39,16 +46,16 @@ async def rotate_one():
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(ROTATE_SCRIPT.parent.parent),
     )
-    output = []
+    # Drain all output in one shot — prevents pipe-buffer deadlock on long runs
+    stdout_bytes, _ = await proc.communicate()
+    output = stdout_bytes.decode("utf-8", errors="replace").splitlines() if stdout_bytes else []
+
     gmx_alias = None
     api_key = None
-    async for line_bytes in proc.stdout:
-        line = line_bytes.decode("utf-8", errors="replace").rstrip()
-        output.append(line)
+    for line in output:
         if "ROTATION COMPLETE" in line or "API Key:" in line or "Alias:" in line:
             log(line)
-    await proc.wait()
-    
+
     success = any("ROTATION COMPLETE" in l for l in output) and any("API Key:" in l for l in output)
     return {"status": "success" if success else "failed", "output": output}
 
