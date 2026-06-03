@@ -58,6 +58,9 @@ class GmxService:
             "bear", "lion", "whale", "dolphin", "puma", "cheetah", "otter", "badger",
             "wolverine", "raptor", "condor", "viper", "scorpion", "spider", "mantis", "beetle",
         ]
+        # GMX FreeMail allows 2 aliases PER DOMAIN (not 2 total). Rotation tries
+        # these in order — if gmx.de is full, falls back to gmx.net, etc.
+        self.GMX_DOMAINS = ["gmx.de", "gmx.net", "gmx.com", "gmx.eu"]
 
     def generate_alias_name(self) -> str:
         adj = random.choice(self.adjectives)
@@ -1024,6 +1027,70 @@ class GmxService:
             logger.error(f"Error clicking add button: {e}")
             return False
 
+    async def _set_alias_domain(self, frame, domain: str) -> bool:
+        """Set the @gmx.TLD domain in the select dropdown next to the local-part input.
+
+        V19.17: Falls back across gmx.de → gmx.net → gmx.com → gmx.eu to bypass
+        the 2-alias-per-domain FreeMail limit.
+        """
+        try:
+            return await frame.evaluate("""(target) => {
+                var selects = document.querySelectorAll('select');
+                for (var i = 0; i < selects.length; i++) {
+                    var opts = Array.from(selects[i].options || []);
+                    for (var j = 0; j < opts.length; j++) {
+                        var val = (opts[j].value || '').toLowerCase();
+                        var txt = (opts[j].textContent || '').toLowerCase();
+                        if (val === target || val.endsWith('.' + target) ||
+                            txt === target || txt.endsWith('.' + target)) {
+                            selects[i].value = opts[j].value;
+                            selects[i].dispatchEvent(new Event('change', {bubbles: true}));
+                            selects[i].dispatchEvent(new Event('input', {bubbles: true}));
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""", domain)
+        except Exception as e:
+            logger.warning(f"[_set_alias_domain] Failed for {domain}: {e}")
+            return False
+
+    async def _check_alias_limit_error(self, frame) -> Optional[str]:
+        """Check for GMX 2-alias-per-domain limit error after Hinzufügen.
+
+        Returns the error message text if a limit was hit, else None.
+        V19.17: detects 'Sie können bis zu 2 E-Mail-Adressen mit GMX-Domains anlegen'.
+        """
+        try:
+            return await frame.evaluate("""() => {
+                // Look for warning/info banners in the page
+                var warnBodies = document.querySelectorAll(
+                    '.alert, .error, .warning, [class*="warn"], [class*="error"], [role="alert"], [class*="message"]'
+                );
+                for (var i = 0; i < warnBodies.length; i++) {
+                    var txt = (warnBodies[i].textContent || '').trim();
+                    if (txt.length > 0 && txt.length < 500) {
+                        var low = txt.toLowerCase();
+                        // GMX 2-alias-per-domain warning
+                        if (low.includes('können sie bis zu 2 e-mail') ||
+                            low.includes('2 gmx e-mail-adressen anlegen') ||
+                            low.includes('maximum') || low.includes('limit erreicht')) {
+                            return txt;
+                        }
+                    }
+                }
+                // Fallback: scan full body text (GMX renders warning as yellow box)
+                var body = (document.body.innerText || '').toLowerCase();
+                if (body.includes('sie können bis zu 2 e-mail-adressen mit gmx-domains anlegen')) {
+                    return 'GMX 2-Alias-Limit erreicht (sie können bis zu 2 E-Mail-Adressen mit GMX-Domains anlegen)';
+                }
+                return null;
+            }""")
+        except Exception as e:
+            logger.warning(f"[_check_alias_limit_error] Failed: {e}")
+            return None
+
     async def _verify_alias(self, page: Page, alias_email: str, present: bool = True, max_wait: float = 12.0) -> bool:
         """Verify alias is present/absent — searches iframe content (not top frame).
 
@@ -1130,23 +1197,64 @@ class GmxService:
             else:
                 steps.append("no_alias_to_delete")
 
-            # Create new alias
+            # Create new alias — V19.17: try each GMX domain, skip on 2-alias limit
             if not new_alias_name:
                 new_alias_name = self.generate_alias_name()
-            for attempt in range(3):
-                current_alias = new_alias_name if attempt == 0 else self.generate_alias_name()
-                alias_email = f"{current_alias}@gmx.de"
-                logger.info(f"Creating alias (attempt {attempt+1}/3): {alias_email}")
+            domain_errors = []
+            for domain_idx, domain in enumerate(self.GMX_DOMAINS):
+                if domain_idx > 0:
+                    # Reload page between domains to reset state
+                    logger.info(f"Reloading page to try next domain: {domain}")
+                    await self._navigate_to_all_email_addresses(page)
+                    await asyncio.sleep(2)
+                alias_created_for_domain = False
+                for attempt in range(2):  # 2 attempts per domain (different random names)
+                    current_alias = new_alias_name if (domain_idx == 0 and attempt == 0) else self.generate_alias_name()
+                    alias_email = f"{current_alias}@{domain}"
+                    logger.info(f"Creating alias (domain={domain}, attempt {attempt+1}): {alias_email}")
 
-                if await self._fill_alias_input(page, current_alias):
+                    if not await self._fill_alias_input(page, current_alias):
+                        logger.warning(f"Input fill failed for {alias_email}")
+                        continue
+                    await asyncio.sleep(0.5)
+
+                    # Set the domain in the dropdown (in case page reloaded with default)
+                    frame = await self._get_all_email_frame(page)
+                    if frame:
+                        await self._set_alias_domain(frame, domain)
+                        await asyncio.sleep(0.3)
+
+                    if not await self._click_add_button(page):
+                        logger.warning(f"Add button click failed for {alias_email}")
+                        continue
+                    await asyncio.sleep(3)
+
+                    # Check for 2-alias-per-domain limit BEFORE verify (limit = skip domain)
+                    frame = await self._get_all_email_frame(page)
+                    if frame:
+                        limit_err = await self._check_alias_limit_error(frame)
+                        if limit_err:
+                            logger.warning(f"Domain {domain} hit 2-alias limit: {limit_err[:100]}")
+                            domain_errors.append(f"{domain}: {limit_err[:50]}")
+                            steps.append(f"limit_{domain}")
+                            break  # break inner, try next domain
+
+                    if await self._verify_alias(page, alias_email, present=True):
+                        created_alias = alias_email
+                        steps.append(f"created_{domain}")
+                        alias_created_for_domain = True
+                        break
+                    logger.warning(f"Verify failed for {alias_email}")
                     await asyncio.sleep(1)
-                    if await self._click_add_button(page):
-                        await asyncio.sleep(3)
-                        if await self._verify_alias(page, alias_email, present=True):
-                            created_alias = alias_email
-                            steps.append("created")
-                            break
-                await asyncio.sleep(1)
+                if alias_created_for_domain:
+                    break
+
+            if not created_alias:
+                # All domains exhausted
+                err_msg = f"GMX Alias-Limit erreicht in allen Domains: {'; '.join(domain_errors) or 'verify timeout'}"
+                logger.error(err_msg)
+                return {"status": "alias_limit_exceeded", "deleted_alias": deleted_alias, "created_alias": None,
+                        "error": err_msg, "steps": steps, "execution_time": f"{time.time()-start_time:.2f}s"}
 
             if created_alias:
                 return {"status": "success", "deleted_alias": deleted_alias, "created_alias": created_alias,
