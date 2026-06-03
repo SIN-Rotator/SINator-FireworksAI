@@ -926,16 +926,16 @@ class GmxService:
             else:
                 logger.warning("OK confirm button NOT FOUND — delete will not complete. "
                                "Dialog may be in a frame we didn't check, or GMX changed button format.")
+                return False
 
-            # 7) Verifikation
-            for _ in range(10):
-                text = await frame.evaluate("() => document.body.innerText")
-                if alias_email not in text:
-                    logger.info("Alias deleted successfully")
-                    return True
-                await asyncio.sleep(1)
-
-            logger.warning("Alias still present after delete attempt")
+            # 7) Server-side verification: reload page, check alias truly gone
+            logger.info(f"[_delete_alias] Reload page to verify deletion...")
+            await self._navigate_to_all_email_addresses(page)
+            verify_ok = await self._verify_alias(page, alias_email, present=False, max_wait=15.0)
+            if verify_ok:
+                logger.info("Alias deleted successfully (server-side verified)")
+                return True
+            logger.warning(f"[_delete_alias] Alias {alias_email} still present after delete (server-side check)")
             return False
         except Exception as e:
             logger.error(f"Error deleting alias: {e}")
@@ -1108,17 +1108,25 @@ class GmxService:
                         "error": "Navigation fehlgeschlagen", "execution_time": f"{time.time()-start_time:.2f}s"}
             steps.append("navigated")
 
-            # Try to delete existing alias
+            # Try to delete existing alias (up to 3 attempts with page reload)
             alias_email = await self._find_alias_row(page)
             if alias_email:
                 logger.info(f"Found alias to delete: {alias_email}")
-                if await self._delete_alias(page, alias_email):
-                    deleted_alias = alias_email
-                    steps.append("deleted")
-                    # Don't reload — it breaks session. Just wait for DOM to settle.
-                    await asyncio.sleep(3)
-                else:
-                    logger.warning("Failed to delete alias, continuing")
+                for delete_attempt in range(3):
+                    if await self._delete_alias(page, alias_email):
+                        deleted_alias = alias_email
+                        steps.append("deleted")
+                        await asyncio.sleep(2)
+                        break
+                    logger.warning(f"Delete attempt {delete_attempt+1}/3 failed for {alias_email}")
+                    if delete_attempt < 2:
+                        logger.info(f"Reloading page for retry {delete_attempt+2}/3...")
+                        await self._navigate_to_all_email_addresses(page)
+                        await asyncio.sleep(2)
+                        # Re-find alias in case DOM shifted
+                        current = await self._find_alias_row(page)
+                        if current:
+                            alias_email = current
             else:
                 steps.append("no_alias_to_delete")
 
