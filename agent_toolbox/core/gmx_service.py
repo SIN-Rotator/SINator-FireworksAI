@@ -68,6 +68,42 @@ class GmxService:
         num = random.randint(100, 999)
         return f"{adj}-{noun}-{num}"
 
+    # ── V19.19: Safe JS-Eval Wrappers (Timeout + Recovery) ───────────────
+    # GMX pages sometimes enter a reload loop or hang (after many rotations).
+    # Bare frame.evaluate() blocks 30+ seconds on a hung page, wasting cycle time.
+    # These wrappers: short timeout, return None on timeout, caller can recover.
+    EVAL_TIMEOUT = 6.0  # seconds — short enough to fail fast, long enough for normal JS
+
+    async def _safe_eval(self, frame, js: str, arg=None, timeout: float = None):
+        """Run frame.evaluate with timeout. Returns None on timeout/error."""
+        to = timeout or self.EVAL_TIMEOUT
+        try:
+            if arg is not None:
+                return await asyncio.wait_for(frame.evaluate(js, arg), timeout=to)
+            return await asyncio.wait_for(frame.evaluate(js), timeout=to)
+        except asyncio.TimeoutError:
+            logger.warning(f"[_safe_eval] Timeout after {to}s — page likely hung")
+            return None
+        except Exception as e:
+            logger.warning(f"[_safe_eval] Error: {type(e).__name__}: {e}")
+            return None
+
+    async def _safe_recover(self, page) -> bool:
+        """Force-reload the page via CDP Page.reload (bypasses JS queue). Returns True if reload was issued."""
+        try:
+            # Use raw CDP for reload — Playwright's page.reload() also goes through JS-eval
+            cdp = await page.context.new_cdp_session(page)
+            await asyncio.wait_for(cdp.send("Page.enable"), timeout=3)
+            await asyncio.wait_for(cdp.send("Page.reload", {"ignoreCache": True}), timeout=3)
+            try: await cdp.detach()
+            except: pass
+            await asyncio.sleep(2)  # let page settle
+            logger.info("[_safe_recover] Page reloaded via CDP")
+            return True
+        except Exception as e:
+            logger.warning(f"[_safe_recover] Failed: {e}")
+            return False
+
     # ── Multi-Tab Architecture ───────────────────────────────────────────
 
     async def initialize_architecture(self, browser: Browser):
@@ -778,19 +814,26 @@ class GmxService:
 
     async def _find_alias_at_domain(self, page: Page, domain: str) -> Optional[str]:
         """V19.17: Find an alias at a SPECIFIC @gmx.TLD domain (excludes standard).
-
-        Used for per-domain delete-then-create to free up 1 slot at the target domain.
+        V19.19: Uses _safe_eval with timeout — returns None on hung page.
         """
         logger.info(f"[_find_alias_at_domain] Looking for alias at @{domain}")
         try:
             frame = await self._get_all_email_frame(page)
             if not frame:
                 return None
-            text = await frame.evaluate("() => document.body.innerText")
+            text = await self._safe_eval(frame, "() => document.body.innerText")
+            if text is None:
+                # Page hung — try recovery once
+                logger.warning("[_find_alias_at_domain] Page hung, reloading...")
+                if await self._safe_recover(page):
+                    frame = await self._get_all_email_frame(page)
+                    if frame:
+                        text = await self._safe_eval(frame, "() => document.body.innerText")
+                if text is None:
+                    return None
             import re
-            # Match email at exactly this domain, exclude delqhi/opensin standard addresses
             pattern = re.compile(r'[\w\.\-]+@' + re.escape(domain) + r'\b', re.IGNORECASE)
-            matches = pattern.findall(text)
+            matches = pattern.findall(text or "")
             for m in matches:
                 if m.lower() not in ('delqhi@gmx.de', 'opensin@gmx.de'):
                     logger.info(f"[_find_alias_at_domain] Found {m} at @{domain}")
@@ -810,13 +853,12 @@ class GmxService:
                 return False
 
             # 1) TABLE-ROW finden die den Alias enthält
-            row_data = await frame.evaluate(f"""() => {{
+            row_data = await self._safe_eval(frame, f"""() => {{
                 var rows = document.querySelectorAll('tr, li, .row, [class*="row"]');
                 for (var i=0; i<rows.length; i++) {{
                     if (rows[i].textContent.includes('{alias_email}')) {{
                         var r = rows[i].getBoundingClientRect();
                         if (r.width > 20 && r.height > 5) {{
-                            // Mitte der Zeile (für Hover)
                             return {{
                                 cx: Math.round(r.x + r.width/2),
                                 cy: Math.round(r.y + r.height/2)
@@ -843,13 +885,11 @@ class GmxService:
             # 4) Delete-Icon suchen — GMX-Struktur: Hover-Menu ist SIBLING der Row,
             #    nicht IN der Row! Selektor: a.table-hover_icon[title*="löschen"]
             #    Hidden in <div class="js-template is-hidden"> bis Row gehovert wird.
-            delete_pos = await frame.evaluate("""() => {
-                // Spezifischer Selektor: nur .table-hover_icon links mit "löschen" im title
+            delete_pos = await self._safe_eval(frame, """() => {
                 var delLinks = document.querySelectorAll('a.table-hover_icon[title*="löschen"], a.table-hover_icon[title*="Löschen"]');
                 for (var i = 0; i < delLinks.length; i++) {
                     var el = delLinks[i];
                     var r = el.getBoundingClientRect();
-                    // Muss sichtbar sein (Hover hat Template unhidden gemacht)
                     if (r.width > 5 && r.height > 5) {
                         return {
                             x: Math.round(r.x + r.width/2),
@@ -862,8 +902,7 @@ class GmxService:
             }""")
             if not delete_pos:
                 logger.warning("Delete icon not found via .table-hover_icon selector — retrying with broader search")
-                # Fallback: alle sichtbaren Delete-Links (z.B. wenn class-Name sich ändert)
-                delete_pos = await frame.evaluate("""() => {
+                delete_pos = await self._safe_eval(frame, """() => {
                     var allLinks = document.querySelectorAll('a');
                     for (var i = 0; i < allLinks.length; i++) {
                         var el = allLinks[i];
@@ -906,39 +945,32 @@ class GmxService:
             #    multiple frames (dialog may live in a different iframe).
             ok_pos = None
             for try_frame in [frame] + [f for f in page.frames if f is not frame]:
-                try:
-                    ok_pos = await try_frame.evaluate("""() => {
-                        // Search buttons, links, spans, AND role=button divs
-                        var allEls = document.querySelectorAll('button, a, span, div[role="button"], div[role="link"]');
-                        // Also try by class (GMX-specific)
-                        var classEls = document.querySelectorAll('.btn-primary, .confirm-button, [data-testid*="confirm"]');
-                        var all = Array.from(allEls).concat(Array.from(classEls));
-                        for (var i = 0; i < all.length; i++) {
-                            var el = all[i];
-                            if (!el) continue;
-                            var txt = (el.textContent || '').trim();
-                            // Match: "OK", "Ok", or buttons with class containing 'primary' inside a dialog
-                            if (txt === 'OK' || txt === 'Ok' || txt === 'ok' ||
-                                (txt.length > 0 && txt.length < 20 && txt.toLowerCase() === 'ok')) {
-                                var r = el.getBoundingClientRect();
-                                if (r.width > 5 && r.height > 5) {
-                                    return {
-                                        x: Math.round(r.x + r.width/2),
-                                        y: Math.round(r.y + r.height/2),
-                                        text: txt,
-                                        frame: window === window.top ? 'top' : 'iframe'
-                                    };
-                                }
+                ok_pos = await self._safe_eval(try_frame, """() => {
+                    var allEls = document.querySelectorAll('button, a, span, div[role="button"], div[role="link"]');
+                    var classEls = document.querySelectorAll('.btn-primary, .confirm-button, [data-testid*="confirm"]');
+                    var all = Array.from(allEls).concat(Array.from(classEls));
+                    for (var i = 0; i < all.length; i++) {
+                        var el = all[i];
+                        if (!el) continue;
+                        var txt = (el.textContent || '').trim();
+                        if (txt === 'OK' || txt === 'Ok' || txt === 'ok' ||
+                            (txt.length > 0 && txt.length < 20 && txt.toLowerCase() === 'ok')) {
+                            var r = el.getBoundingClientRect();
+                            if (r.width > 5 && r.height > 5) {
+                                return {
+                                    x: Math.round(r.x + r.width/2),
+                                    y: Math.round(r.y + r.height/2),
+                                    text: txt,
+                                    frame: window === window.top ? 'top' : 'iframe'
+                                };
                             }
                         }
-                        return null;
-                    }""")
-                    if ok_pos:
-                        logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']}) in {ok_pos.get('frame','?')}, text='{ok_pos.get('text','')}'")
-                        break
-                except Exception as e:
-                    logger.debug(f"OK button search in frame failed: {e}")
-                    continue
+                    }
+                    return null;
+                }""")
+                if ok_pos:
+                    logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']}) in {ok_pos.get('frame','?')}, text='{ok_pos.get('text','')}'")
+                    break
             if ok_pos:
                 await cdp.send('Input.dispatchMouseEvent', {
                     'type': 'mousePressed', 'x': ok_pos['x'], 'y': ok_pos['y'],
@@ -973,34 +1005,51 @@ class GmxService:
     # ── Alias Creation ──────────────────────────────────────────────────
 
     async def _fill_alias_input(self, page: Page, alias_name: str) -> bool:
-        """Fill the alias input field in the allEmailAddresses iframe."""
+        """Fill the alias input field in the allEmailAddresses iframe.
+        V19.19: Overall timeout + page recovery on hang.
+        """
         logger.info(f"[_fill_alias_input] Filling with {alias_name}")
         try:
-            frame = await self._get_all_email_frame(page)
-            if not frame:
-                logger.warning("allEmailAddresses iframe not found")
-                return False
-            
-            # Try input[name*="localPart"]
-            inp = frame.locator('input[name*="localPart"]').first
-            if not await inp.is_visible(timeout=3000):
-                # Try any text input
-                inp = frame.locator('input[type="text"]').first
-
-            if await inp.is_visible(timeout=3000):
-                await inp.fill(alias_name)
-                # Trigger events for React
-                await inp.evaluate("el => el.dispatchEvent(new Event('input', {bubbles: true, composed: true}))")
-                await inp.evaluate("el => el.dispatchEvent(new Event('change', {bubbles: true}))")
-                value = await inp.input_value()
-                if value == alias_name:
-                    logger.info("Alias input filled successfully")
-                    return True
-            logger.warning("Alias input not found")
+            return await asyncio.wait_for(self._do_fill_alias_input(page, alias_name), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.warning(f"[_fill_alias_input] Timeout — page hung, recovering...")
+            if await self._safe_recover(page):
+                try:
+                    return await asyncio.wait_for(self._do_fill_alias_input(page, alias_name), timeout=10.0)
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.error(f"[_fill_alias_input] Recovery also failed: {e}")
             return False
         except Exception as e:
             logger.error(f"Error filling alias input: {e}")
             return False
+
+    async def _do_fill_alias_input(self, page: Page, alias_name: str) -> bool:
+        frame = await self._get_all_email_frame(page)
+        if not frame:
+            logger.warning("allEmailAddresses iframe not found")
+            return False
+
+        inp = frame.locator('input[name*="localPart"]').first
+        if not await inp.is_visible(timeout=3000):
+            inp = frame.locator('input[type="text"]').first
+
+        if await inp.is_visible(timeout=3000):
+            await inp.fill(alias_name)
+            # React events (V19.19: also timeoutsafe)
+            await asyncio.wait_for(
+                inp.evaluate("el => el.dispatchEvent(new Event('input', {bubbles: true, composed: true}))"),
+                timeout=3.0
+            )
+            await asyncio.wait_for(
+                inp.evaluate("el => el.dispatchEvent(new Event('change', {bubbles: true}))"),
+                timeout=3.0
+            )
+            value = await inp.input_value()
+            if value == alias_name:
+                logger.info("Alias input filled successfully")
+                return True
+        logger.warning("Alias input not found")
+        return False
 
     async def _click_add_button(self, page: Page) -> bool:
         """Click the add alias button via CDP native events (Wicket-kompatibel)."""
@@ -1128,36 +1177,79 @@ class GmxService:
             logger.warning(f"[_check_alias_limit_error] Failed: {e}")
             return None
 
+    async def _check_alias_limit_error_safe(self, frame) -> Optional[str]:
+        """V19.19: Wrapper around _check_alias_limit_error with timeout."""
+        return await self._safe_eval(frame, """() => {
+            var errorEls = document.querySelectorAll(
+                '[role="alertdialog"], .modal, .popup, .toast, .error-popup, .notification, ' +
+                '[class*="modal"][class*="error"], [class*="dialog"][class*="error"], ' +
+                '[class*="error"][class*="popup"], [class*="toast"][class*="error"]'
+            );
+            for (var i = 0; i < errorEls.length; i++) {
+                var el = errorEls[i];
+                var r = el.getBoundingClientRect();
+                if (r.width < 5 || r.height < 5) continue;
+                var txt = (el.textContent || '').trim();
+                var low = txt.toLowerCase();
+                if (low.includes('fehler') || low.includes('error') ||
+                    low.includes('limit') || low.includes('überschritten') ||
+                    low.includes('maximum') || low.includes('konnte nicht')) {
+                    return txt;
+                }
+            }
+            var inputs = document.querySelectorAll('input[name*="localPart"]');
+            for (var j = 0; j < inputs.length; j++) {
+                var inp = inputs[j];
+                if (inp.getAttribute('aria-invalid') === 'true' ||
+                    (inp.className || '').toLowerCase().includes('error') ||
+                    (inp.className || '').toLowerCase().includes('invalid')) {
+                    return 'Input validation error';
+                }
+            }
+            return null;
+        }""")
+
     async def _verify_alias(self, page: Page, alias_email: str, present: bool = True, max_wait: float = 12.0) -> bool:
         """Verify alias is present/absent — searches iframe content (not top frame).
-
-        Logs BOTH the check and the result to avoid confusion with the 'present' param.
+        V19.19: Uses _safe_eval with timeout per check. On timeout, recovers once via CDP reload.
         """
         logger.info(f"[_verify_alias] Checking {alias_email} expect_present={present}")
         try:
             deadline = time.time() + max_wait
+            recovered = False
             while time.time() < deadline:
                 frame = await self._get_all_email_frame(page)
                 if frame:
-                    text = await frame.evaluate("() => document.body.innerText")
-                    found = alias_email in text
-                    if present and found:
-                        logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
-                        return True
-                    if not present and not found:
-                        logger.info(f"[_verify_alias] {alias_email} gone as expected")
-                        return True
+                    text = await self._safe_eval(frame, "() => document.body.innerText", timeout=4.0)
+                    if text is None and not recovered:
+                        # Page hung — recover once via CDP reload
+                        logger.warning(f"[_verify_alias] Page hung, attempting CDP reload...")
+                        if await self._safe_recover(page):
+                            recovered = True
+                            await asyncio.sleep(2)
+                            frame = await self._get_all_email_frame(page)
+                            if frame:
+                                text = await self._safe_eval(frame, "() => document.body.innerText", timeout=4.0)
+                    if text is not None:
+                        found = alias_email in text
+                        if present and found:
+                            logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
+                            return True
+                        if not present and not found:
+                            logger.info(f"[_verify_alias] {alias_email} gone as expected")
+                            return True
                 else:
                     for f in page.frames:
                         if "allEmailAddresses" in f.url and "settings" in f.url:
-                            text = await f.evaluate("() => document.body.innerText")
-                            found = alias_email in text
-                            if present and found:
-                                logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
-                                return True
-                            if not present and not found:
-                                logger.info(f"[_verify_alias] {alias_email} gone as expected")
-                                return True
+                            text = await self._safe_eval(f, "() => document.body.innerText", timeout=4.0)
+                            if text is not None:
+                                found = alias_email in text
+                                if present and found:
+                                    logger.info(f"[_verify_alias] FOUND {alias_email} as expected")
+                                    return True
+                                if not present and not found:
+                                    logger.info(f"[_verify_alias] {alias_email} gone as expected")
+                                    return True
                             break
                 await asyncio.sleep(1)
             # Reached deadline without matching expectation
@@ -1277,12 +1369,15 @@ class GmxService:
                     # Check for 2-alias-per-domain limit BEFORE verify (limit = skip domain)
                     frame = await self._get_all_email_frame(page)
                     if frame:
-                        limit_err = await self._check_alias_limit_error(frame)
+                        limit_err = await self._check_alias_limit_error_safe(frame)
                         if limit_err:
                             logger.warning(f"Domain {domain} hit 2-alias limit: {limit_err[:100]}")
                             domain_errors.append(f"{domain}: {limit_err[:50]}")
                             steps.append(f"limit_{domain}")
                             break  # break inner, try next domain
+                        elif limit_err is None and not isinstance(limit_err, type(None)):
+                            # Recovery case — page was hung, but we recovered
+                            pass
 
                     if await self._verify_alias(page, alias_email, present=True):
                         created_alias = alias_email
