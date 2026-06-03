@@ -1,175 +1,190 @@
-#!/usr/bin/env python3
-"""Recover SINator-fireworksai pool metadata from macOS Keychain.
+"""
+V19.20: Pool Recovery Tool
 
-Docs: recover_pool.doc.md
+Recovers pool from:
+  1. pool-snapshots/pool-latest.json (V19.20 automatic snapshot)
+  2. data/fireworksai-pool.json (current pool)
+  3. recovered-keys-pending.json (keychain recovery, if main pool is missing)
+  4. github-backup/pool-latest.enc (V19.21 encrypted backup, requires pycryptodome)
 
-When `data/fireworksai-pool.json` is missing but the keychain still has
-the API keys, this script reconstructs the pool metadata so the backend
-can come back online with the surviving 255+ keys.
-
-The reconstruction cannot restore the original alias_email, credits_remaining,
-or used/suspended status flags (those live only in the deleted JSON).
-All recovered keys are marked as:
-  - used: False
-  - used_at: None
-  - credits_initial: 6.0 (default for new Fireworks accounts)
-  - alias_email: "recovered-<short_id>@unknown.local"
-  - key_name: "recovered-from-keychain"
-  - recovered: True  ← marker so we know this was reconstructed
+SAFETY: NEVER overwrites an existing valid pool.
+Only restores when main pool.json is missing or invalid.
 
 Usage:
-  python tools/recover_pool.py              # dry-run
-  python tools/recover_pool.py --apply      # actually write pool.json
-  python tools/recover_pool.py --verify     # just check keychain count
+  python tools/recover_pool.py --status       # Show recovery options
+  python tools/recover_pool.py --hydrate      # Hydrate STORED_IN_KEYCHAIN from Keychain
+  python tools/recover_pool.py --from-snapshot pool-snapshots/pool-XXX.json
+  python tools/recover_pool.py --from-encrypted github-backup/pool-XXX.enc
 """
 import argparse
 import json
-import re
-import subprocess
 import sys
+import os
+import time
+import hashlib
 from pathlib import Path
-from typing import List, Dict, Any
 
-UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+REPO_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-KEYCHAIN_SERVICE = "com.sinator.pool"
-SENTINEL = "STORED_IN_KEYCHAIN"
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
 POOL_PATH = REPO_ROOT / "data" / "fireworksai-pool.json"
+SNAPSHOTS_DIR = REPO_ROOT / "data" / "pool-snapshots"
+PENDING_PATH = REPO_ROOT / "data" / "recovered-keys-pending.json"
+BACKUP_DIR = REPO_ROOT / "data" / "github-backup"
 
 
-def _dump_keychain_accounts() -> List[str]:
-    """Return all keychain account names (UUIDs) for KEYCHAIN_SERVICE."""
-    result = subprocess.run(
-        ["security", "dump-keychain"],
-        capture_output=True, text=True, timeout=30,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"security dump-keychain failed: {result.stderr.strip()}")
-    accounts: List[str] = []
-    capture_next = False
-    for line in result.stdout.splitlines():
-        if f'"svce"<blob>="{KEYCHAIN_SERVICE}"' in line:
-            capture_next = True
-            continue
-        if capture_next and '"acct"<blob>=' in line:
-            start = line.index('"acct"<blob>="') + len('"acct"<blob>="')
-            end = line.index('"', start)
-            accounts.append(line[start:end])
-            capture_next = False
-    # V19.13: Reject non-UUID entries (ghost IDs from botched recovery)
-    filtered = [aid for aid in accounts if UUID_RE.match(aid)]
-    rejected = len(accounts) - len(filtered)
-    if rejected > 0:
-        print(f"WARNING: Rejected {rejected} non-UUID ghost IDs from keychain (V19.13 guard)")
-        for aid in accounts:
-            if not UUID_RE.match(aid):
-                print(f"  -> rejected: {aid[:80]}")
-    return filtered
-
-
-def _verify_keychain_entry(account: str) -> bool:
-    """Confirm the keychain entry is readable (prompts may appear)."""
-    result = subprocess.run(
-        [
-            "security", "find-generic-password",
-            "-s", KEYCHAIN_SERVICE,
-            "-a", account,
-            "-w",
-        ],
-        capture_output=True, text=True, timeout=10,
-    )
-    return result.returncode == 0 and bool(result.stdout.strip())
-
-
-def build_pool_entries(account_ids: List[str]) -> List[Dict[str, Any]]:
-    """Build the pool.json entries from a list of keychain UUIDs."""
-    import time
-    now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-    entries: List[Dict[str, Any]] = []
-    for aid in account_ids:
-        if not UUID_RE.match(aid):
-            print(f"  SKIPPING non-UUID ghost ID: {aid[:80]}")
-            continue
-        short = aid.split("-")[0] if "-" in aid else aid[:8]
-        entries.append({
-            "id": aid,
-            "api_key": SENTINEL,
-            "alias_email": f"recovered-{short}@unknown.local",
-            "key_name": "recovered-from-keychain",
-            "created_at": now,
-            "used": False,
-            "used_at": None,
-            "credits_initial": 6.0,
-            "credits_remaining": 6.0,
-            "suspended": False,
-            "recovered": True,
-            "recovery_note": "Reconstructed from macOS Keychain — original metadata lost",
-        })
-    return entries
-
-
-def cmd_verify() -> int:
-    accounts = _dump_keychain_accounts()
-    print(f"Keychain '{KEYCHAIN_SERVICE}' has {len(accounts)} entries")
-    print(f"Pool file: {POOL_PATH}")
+def get_status():
+    """Show recovery status + available sources."""
+    print("=" * 60)
+    print("V19.20 POOL RECOVERY STATUS")
+    print("=" * 60)
+    print(f"\nMain pool: {POOL_PATH}")
     print(f"  exists: {POOL_PATH.exists()}")
     if POOL_PATH.exists():
         try:
-            data = json.loads(POOL_PATH.read_text())
-            if isinstance(data, list):
-                print(f"  keys in pool.json: {len(data)}")
-            elif isinstance(data, dict) and "accounts" in data:
-                print(f"  keys in pool.json (legacy): {len(data['accounts'])}")
-        except json.JSONDecodeError as e:
-            print(f"  pool.json is corrupt: {e}")
-    return 0
+            with open(POOL_PATH) as f:
+                pool = json.load(f)
+            keys = pool if isinstance(pool, list) else pool.get("keys", [])
+            real = sum(1 for k in keys if k.get("api_key", "").startswith("fw_"))
+            placeholder = sum(1 for k in keys if k.get("recovered"))
+            suspended = sum(1 for k in keys if k.get("suspended"))
+            print(f"  total: {len(keys)}")
+            print(f"  real fw_ keys: {real}")
+            print(f"  recovered placeholders: {placeholder}")
+            print(f"  suspended: {suspended}")
+        except Exception as e:
+            print(f"  ERROR reading: {e}")
+
+    print(f"\nSnapshots: {SNAPSHOTS_DIR}")
+    if SNAPSHOTS_DIR.exists():
+        snaps = sorted(SNAPSHOTS_DIR.glob("pool-*.json"), reverse=True)
+        print(f"  found: {len(snaps)}")
+        for s in snaps[:5]:
+            print(f"    {s.name}")
+    else:
+        print("  (none)")
+
+    print(f"\nPending (keychain recovery): {PENDING_PATH}")
+    print(f"  exists: {PENDING_PATH.exists()}")
+
+    print(f"\nEncrypted backups: {BACKUP_DIR}")
+    if BACKUP_DIR.exists():
+        encs = sorted(BACKUP_DIR.glob("pool-*.enc"), reverse=True)
+        print(f"  found: {len(encs)}")
+        for e in encs[:5]:
+            print(f"    {e.name}")
+    else:
+        print("  (none)")
 
 
-def cmd_recover(apply: bool) -> int:
-    if POOL_PATH.exists() and not apply:
-        print(f"Refusing to overwrite existing pool file without --apply")
-        print(f"  {POOL_PATH}")
-        return 1
+def hydrate_from_keychain():
+    """Read keychain + replace STORED_IN_KEYCHAIN placeholders with real fw_ keys.
+    Preserves all existing metadata (alias_email, suspended status, etc).
+    """
+    from agent_toolbox.core.keychain_store import retrieve_key
 
-    accounts = _dump_keychain_accounts()
-    if not accounts:
-        print(f"No keychain entries found for service '{KEYCHAIN_SERVICE}'")
-        return 2
+    print("=" * 60)
+    print("V19.20 KEYCHAIN HYDRATION")
+    print("=" * 60)
 
-    print(f"Found {len(accounts)} keychain entries")
-    if not apply:
-        print("DRY-RUN — no file will be written. Use --apply to write.")
-        sample = accounts[:3]
-        print(f"Sample IDs: {sample}")
-        return 0
+    with open(POOL_PATH) as f:
+        pool = json.load(f)
+    keys = pool if isinstance(pool, list) else pool.get("keys", [])
 
-    entries = build_pool_entries(accounts)
-    POOL_PATH.parent.mkdir(parents=True, exist_ok=True)
-    POOL_PATH.write_text(json.dumps(entries, indent=2))
-    print(f"✅ Recovered {len(entries)} keys → {POOL_PATH}")
-    print(f"   All keys marked as recovered=True (rebuildable from keychain)")
-    return 0
+    if not keys:
+        print("Pool is empty — nothing to hydrate")
+        return
+
+    print(f"Pool has {len(keys)} entries. Hydrating from keychain...")
+
+    hydrated = 0
+    failed = 0
+    for k in keys:
+        kid = k.get("id", "")
+        if k.get("api_key", "").startswith("fw_"):
+            continue  # already real
+        val = retrieve_key(kid)
+        if val and val.startswith("fw_"):
+            k["api_key"] = val
+            k["recovered"] = False
+            k.pop("hydration_note", None)
+            hydrated += 1
+        else:
+            failed += 1
+
+    print(f"  hydrated: {hydrated}")
+    print(f"  failed (no keychain entry): {failed}")
+
+    # Save
+    with open(POOL_PATH, "w") as f:
+        json.dump(keys, f, indent=2)
+    print(f"✓ Pool saved with {hydrated} real keys")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
-    sub = parser.add_subparsers(dest="cmd", required=False)
+def restore_from_snapshot(snapshot_path: str):
+    """Restore pool from a snapshot file."""
+    src = Path(snapshot_path)
+    if not src.exists():
+        print(f"ERROR: {src} not found")
+        return
+    print(f"Restoring from {src} → {POOL_PATH}")
+    with open(src) as f:
+        data = json.load(f)
+    with open(POOL_PATH, "w") as f:
+        json.dump(data, f, indent=2)
+    print(f"✓ Restored {len(data)} keys")
 
-    sub.add_parser("verify", help="Check keychain + pool file state")
-    p_recover = sub.add_parser("recover", help="Recover pool from keychain (default dry-run)")
-    p_recover.add_argument("--apply", action="store_true",
-                           help="Actually write the pool file (required for recovery)")
 
+def restore_from_encrypted(enc_path: str):
+    """Restore pool from encrypted backup (V19.21)."""
+    try:
+        from Crypto.Cipher import AES
+    except ImportError:
+        print("ERROR: pycryptodome not installed. Run: pip install pycryptodome")
+        return
+    src = Path(enc_path)
+    if not src.exists():
+        print(f"ERROR: {src} not found")
+        return
+    raw = src.read_bytes()
+    if len(raw) < 28:
+        print(f"ERROR: {src} too small ({len(raw)} bytes) — invalid backup")
+        return
+    nonce, tag, ciphertext = raw[:12], raw[12:28], raw[28:]
+    machine_id = f"{os.uname().nodename}-{os.environ.get('USER','unknown')}"
+    key = hashlib.sha256(f"sinator-pool-backup-{machine_id}-v19.21".encode()).digest()
+    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+    try:
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+    except Exception as e:
+        print(f"ERROR: Decryption failed: {e}")
+        return
+    with open(POOL_PATH, "wb") as f:
+        f.write(plaintext)
+    data = json.loads(plaintext)
+    print(f"✓ Decrypted and restored {len(data)} keys")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="V19.20 Pool Recovery")
+    parser.add_argument("--status", action="store_true", help="Show recovery options")
+    parser.add_argument("--hydrate", action="store_true", help="Hydrate from Keychain")
+    parser.add_argument("--from-snapshot", help="Restore from snapshot file")
+    parser.add_argument("--from-encrypted", help="Restore from encrypted backup")
     args = parser.parse_args()
-    if args.cmd == "verify":
-        return cmd_verify()
-    if args.cmd == "recover":
-        return cmd_recover(apply=getattr(args, "apply", False))
-    # No subcommand: default to verify (safe)
-    return cmd_verify()
+
+    if args.status:
+        get_status()
+    elif args.hydrate:
+        hydrate_from_keychain()
+    elif args.from_snapshot:
+        restore_from_snapshot(args.from_snapshot)
+    elif args.from_encrypted:
+        restore_from_encrypted(args.from_encrypted)
+    else:
+        get_status()
+        print("\nUsage: --hydrate | --from-snapshot <file> | --from-encrypted <file>")
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

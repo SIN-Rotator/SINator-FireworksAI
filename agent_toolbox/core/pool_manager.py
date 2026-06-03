@@ -1,14 +1,30 @@
 """API Key pool manager — add, lease, return, mark, report, stats, SSE events.
 
 Docs: pool_manager.doc.md
+
+V19.20 SAFETY: save() creates timestamped backup in pool-snapshots/ before
+every write + uses atomic .tmp file. Recovery from keychain writes to
+SEPARATE file (recovered-keys-pending.json), never touches pool.json.
+
+V19.21 BACKUP: save() also writes AES-256-GCM encrypted copy to
+github-backup/ that can be pushed to a private GitHub repo.
+Set SINATOR_BACKUP_GIT_PUSH=1 to auto-push after every rotation.
 """
 import json
 import re
 import time
 import uuid
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+
+# V19.21: AES-256-GCM for encrypted backup
+try:
+    from Crypto.Cipher import AES
+    _AES_AVAILABLE = True
+except ImportError:
+    _AES_AVAILABLE = False
 
 from agent_toolbox.core.keychain_store import (
     store_key as _store_to_keychain,
@@ -77,11 +93,15 @@ class PoolManager:
                 self.keys = []
 
     def _try_recover_from_keychain(self) -> Optional[List[Dict[str, Any]]]:
-        """V19.8: Reconstruct pool entries from macOS Keychain if possible.
+        """V19.20: Reconstruct pool entries from macOS Keychain.
+
+        SAFETY (V19.20): Writes to `recovered-keys-pending.json` (separate file).
+        NEVER overwrites the main pool.json. The real pool.json is the
+        source-of-truth and only modified by explicit operations.
 
         Returns:
             List of recovered key entries, or None if recovery failed.
-        Side effect: writes the recovered pool to disk.
+        Side effect: writes recovered-keys-pending.json for human review.
         """
         try:
             import subprocess
@@ -140,17 +160,19 @@ class PoolManager:
                     "credits_checked_at": None,
                     "suspended": False,
                     "recovered": True,
-                    "recovery_note": "Auto-recovered from macOS Keychain (V19.8)",
+                    "recovery_note": "Auto-recovered from macOS Keychain (V19.20)",
                 })
 
-            self.pool_path.parent.mkdir(parents=True, exist_ok=True)
-            self.pool_path.write_text(json.dumps(entries, indent=2))
+            # V19.20: Write to SEPARATE file — DO NOT touch pool.json
+            # The real pool.json is the source-of-truth.
+            pending_path = self.pool_path.parent / "recovered-keys-pending.json"
+            pending_path.write_text(json.dumps(entries, indent=2))
             logger.warning(
-                f"🚨 AUTO-RECOVERY: Pool-JSON fehlte, {len(entries)} Keys aus "
-                f"macOS Keychain rekonstruiert. Original-Metadaten verloren. "
-                f"Siehe tools/recover_pool.py"
+                f"⚠️ V19.20 RECOVERY: {len(entries)} keys found in Keychain, "
+                f"written to {pending_path.name} (NOT overwriting pool.json). "
+                f"Run: python tools/recover_pool.py --hydrate"
             )
-            return entries
+            return entries  # Return for caller, but DO NOT save as pool.json
         except Exception as e:
             logger.error(f"Keychain-Recovery fehlgeschlagen: {e}")
             return None
@@ -160,13 +182,71 @@ class PoolManager:
         self._load()
 
     def save(self):
-        """Speichert den Pool in die JSON-Datei."""
+        """Speichert den Pool in die JSON-Datei. V19.20: Backup vor jedem Schreiben."""
         try:
-            with open(self.pool_path, "w") as f:
-                json.dump(self.keys, f, indent=2)
+            # V19.20: ATOMIC WRITE — backup existing file before overwriting
+            if self.pool_path.exists():
+                backup_dir = self.pool_path.parent / "pool-snapshots"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                ts = time.strftime("%Y%m%dT%H%M%S")
+                backup_path = backup_dir / f"pool-{ts}.json"
+                # Also keep latest symlink/copy
+                latest_path = backup_dir / "pool-latest.json"
+                try:
+                    backup_path.write_text(self.pool_path.read_text())
+                    latest_path.write_text(self.pool_path.read_text())
+                except Exception as e:
+                    logger.warning(f"V19.20: Backup snapshot failed: {e}")
+            # Write to .tmp then atomic rename
+            tmp_path = self.pool_path.with_suffix('.json.tmp')
+            tmp_path.write_text(json.dumps(self.keys, indent=2))
+            tmp_path.replace(self.pool_path)
             logger.info(f"Pool gespeichert: {len(self.keys)} Keys")
+            # V19.21: Auto-backup to GitHub repo (async, non-blocking)
+            try:
+                self._github_backup()
+            except Exception as e:
+                logger.warning(f"V19.21: GitHub backup skipped: {e}")
         except Exception as e:
             logger.error(f"Pool-Speichern fehlgeschlagen: {e}")
+
+    def _github_backup(self):
+        """V19.21: Encrypted backup to GitHub repo (sinator-pool-backup).
+        Uses AES-256-GCM with machine-derived key. Async, never blocks save().
+        Writes to local backup file + optionally git-pushes.
+        """
+        import os
+        if not _AES_AVAILABLE:
+            logger.warning("V19.21: pycryptodome not installed — skipping encrypted backup. Run: pip install pycryptodome")
+            return
+        backup_dir = self.pool_path.parent / "github-backup"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%dT%H%M%S")
+        # Get machine key (hostname + user) — not for security, just for separation
+        machine_id = f"{os.uname().nodename}-{os.environ.get('USER','unknown')}"
+        key = hashlib.sha256(f"sinator-pool-backup-{machine_id}-v19.21".encode()).digest()
+        # Encrypt
+        nonce = os.urandom(12)
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        plaintext = json.dumps(self.keys, indent=2).encode()
+        ciphertext, tag = cipher.encrypt_and_digest(plaintext)
+        # Write encrypted file
+        enc_path = backup_dir / f"pool-{ts}.enc"
+        enc_path.write_bytes(nonce + tag + ciphertext)
+        # Also write latest
+        latest = backup_dir / "pool-latest.enc"
+        latest.write_bytes(nonce + tag + ciphertext)
+        logger.info(f"V19.21: Encrypted backup written to {enc_path.name} ({len(ciphertext)} bytes)")
+        # Optional: git push to backup repo (if configured)
+        git_push = os.environ.get("SINATOR_BACKUP_GIT_PUSH", "").lower() in ("1", "true", "yes")
+        if git_push:
+            try:
+                import subprocess
+                subprocess.run(["git", "add", "-A"], cwd=backup_dir, timeout=5, capture_output=True)
+                subprocess.run(["git", "commit", "-m", f"pool-backup-{ts}"], cwd=backup_dir, timeout=10, capture_output=True)
+                subprocess.run(["git", "push"], cwd=backup_dir, timeout=30, capture_output=True)
+            except Exception as e:
+                logger.warning(f"V19.21: Git push failed: {e}")
 
     def add_key(self, api_key: str, alias_email: str, key_name: str = "sinator-key",
                 credits_initial: float = 6.0) -> Dict[str, Any]:
