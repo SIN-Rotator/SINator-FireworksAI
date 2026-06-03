@@ -1,217 +1,254 @@
-#!/usr/bin/env python3
 """
-SINator - Rotation Tool V19 (SIN-Browser-Tools, 2026-06-01)
+SINator v0+Vercel — Full Rotation Orchestrator
+Docs: rotate.doc.md
 
-Fireworks flow via SIN-Browser-Tools. Bot Chrome bleibt GEÖFFNET bis API Key.
-GMX flow in User Chrome (Profile 73, CDP).
-OTP polling via User Chrome (GMX session).
+End-to-End Flow:
+  1. Chrome via CDP verbinden (Port 9222, Profile 73)
+  2. GMX Alias rotieren (löschen + erstellen)
+  3. Vercel Signup mit Referral-Link (v0.app/ref/6IMSRI)
+  4. GMX OTP (6-stellig numerisch) abrufen
+  5. SMSPool UK-Nummer für Telefon-Verifizierung
+  6. API-Token generieren und extrahieren
+  7. In Pool speichern
+
+Usage:
+  python tools/rotate.py
 """
-import sys
-import os
 import asyncio
+import json
 import time
+import random
 import logging
-import argparse
-import socket
-import re
+import uuid
 from pathlib import Path
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+from sin_browser_tools.core.manager import BrowserManager
+from sin_browser_tools.tools.navigation import manager as nav_mgr
+
+# Import our services
+import sys
 sys.path.insert(0, str(Path(__file__).parent.parent / "agent_toolbox" / "core"))
+from gmx_service import GmxService, get_gmx_service
+from vercel_service import VercelService
+from smspool_service import SMSPoolService
 
-logging.basicConfig(level=logging.DEBUG if os.environ.get("LOG_LEVEL") == "DEBUG" else logging.INFO, format='%(message)s')
-logger = logging.getLogger("rotate")
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setLevel(logging.DEBUG)
+    _formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    _handler.setFormatter(_formatter)
+    logger.addHandler(_handler)
+
+# ── Configuration ───────────────────────────────────────────────────────
+
+CDP_PORT = 9222
+POOL_FILE = Path(__file__).parent.parent / "data" / "vercel-pool.json"
+SMSPOOL_API_KEY = "nKw7Vo0JVNqPGkLSRYkn66KVockWfcoa"  # Set via env var SMSPOOL_API_KEY
+GMX_PASSWORD = ""     # Set via env var GMX_PASSWORD
 
 
-def _find_free_port(start: int = 9230) -> int:
-    for port in range(start, start + 50):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(('127.0.0.1', port)) != 0:
-                return port
-    raise RuntimeError("No free port found")
+# ── Pool Storage ────────────────────────────────────────────────────────
 
-
-async def main():
-    parser = argparse.ArgumentParser(description="GMX + Fireworks Rotation V19")
-    parser.add_argument("alias", nargs="?", help="Optional alias name")
-    parser.add_argument("--gmx-email", help="GMX account email (required)")
-    parser.add_argument("--gmx-password", help="GMX account password (required)")
-    parser.add_argument("--password", help="Fireworks account password (required)")
-    parser.add_argument("--save", action="store_true", default=True, help="Save API key to pool")
-    parser.add_argument("--cdp-port", type=int, default=0, help="CDP port (0 = chromium.launch)")
-    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
-    args = parser.parse_args()
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        for h in logging.getLogger().handlers:
-            h.setLevel(logging.DEBUG)
-
-    from agent_toolbox.core.config_manager import get_config
-    cfg = get_config()
-    if not args.gmx_email:
-        args.gmx_email = cfg.gmx_email
-    if not args.gmx_password:
-        args.gmx_password = cfg.gmx_password
-    if not args.password:
-        args.password = cfg.fireworks_password
-
-    t0 = time.time()
-
-    from playwright.async_api import async_playwright
-    p = await async_playwright().start()
-
-    # ══════════════════════════════════════════════════════════════════
-    # User Chrome (GMX)
-    # ══════════════════════════════════════════════════════════════════
-    gmx_browser = None
-    ctx = None
-
-    if args.cdp_port:
-        logger.info(f"=== Connecting to User Chrome on CDP port {args.cdp_port} ===")
-        gmx_browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{args.cdp_port}")
-        logger.info("Connected to User Chrome")
-    else:
-        cdp_port = _find_free_port()
-        gmx_browser = await p.chromium.launch(
-            headless=False,
-            args=[f'--remote-debugging-port={cdp_port}']
-        )
-
-    fw_mgr = None
-    alias = None
-    try:
-        from gmx_service import GmxService
-        gmx = GmxService()
-
-        ctx = await gmx_browser.new_context()
-        work_tab = await ctx.new_page()
-        gmx.work_tab = work_tab
-        gmx.inbox_tab = work_tab
-        await work_tab.bring_to_front()
-
-        # Step 0: GMX Login
-        logged_in = False
-        await work_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
-        await asyncio.sleep(3)
-        if "navigator.gmx.net/mail" in work_tab.url and "login" not in work_tab.url.lower():
-            logger.info("GMX session active in Profile 73")
-            logged_in = True
-        else:
-            logger.info("GMX login via Profile 73")
-            logged_in = await gmx._login(work_tab, email=args.gmx_email, password=args.gmx_password)
-            if not logged_in:
-                logger.error("GMX Login failed")
-                return
-
-        sid_match = re.search(r"[?&]sid=([a-f0-9]{40,})", work_tab.url)
-        gmx_sid = sid_match.group(1) if sid_match else None
-        gmx_work_url = work_tab.url
-
-        # Step 1: GMX Alias Rotation
-        logger.info("=== GMX Alias Rotation ===")
-        result = await gmx.rotate_alias(new_alias_name=args.alias, page=work_tab)
-        if result.get('status') not in ('success', 'partial'):
-            logger.error(f"GMX rotation failed: {result.get('error')}")
-            return
-        alias = result.get('created_alias')
-        logger.info(f"GMX Alias: {alias}")
-        if not alias:
-            logger.error("No alias created")
-            return
-
-        # ══════════════════════════════════════════════════════════════
-        # Bot Chrome (Fireworks) — SIN-Browser-Tools
-        # Bleibt GEÖFFNET bis API Key generiert
-        # ══════════════════════════════════════════════════════════════
-        logger.info("=== Launching Bot Chrome via SIN-Browser-Tools ===")
-        from fireworks_service import launch, cleanup_bot, signup_fireworks
-        from fireworks_service import verify_account, create_api_key
-
-        launch_result = await launch()
-        fw_mgr = launch_result.get("browser_manager")
-        logger.info("Bot Chrome launched and registered with SIN-Browser-Tools")
-
-        # Step 2: Fireworks Signup
-        logger.info("=== Fireworks Signup ===")
-        signup_result = await signup_fireworks(alias, args.password)
-        steps_done = signup_result.get('steps_completed', [])
-        logger.info(f"Signup: {signup_result.get('status')} - steps: {steps_done}")
-        if signup_result.get('status') == 'error':
-            logger.error(f"Signup failed: {signup_result.get('error')} — aborting")
-            return
-        if 'passwords_filled' not in steps_done or 'create_clicked' not in steps_done:
-            logger.error(f"Signup incomplete (steps: {steps_done}) — no account created, aborting")
-            return
-
-        # Step 3: OTP Poll (User Chrome)
-        logger.info("=== OTP Polling (User Chrome) ===")
-        await work_tab.bring_to_front()
-        await work_tab.goto(gmx_work_url, wait_until="domcontentloaded")
-        await asyncio.sleep(2)
-        # Refresh once so the verify email from the Fireworks signup shows up
-        await work_tab.reload(wait_until="domcontentloaded")
-        await asyncio.sleep(3)
-
-        verify_ok = False
-        otp_url = None
+def load_pool() -> list:
+    if POOL_FILE.exists():
         try:
-            otp_result = await gmx.read_otp_main_frame_only(sender_keyword="fireworks", timeout=80)
-            otp_url = otp_result.get("otp_url")
-        except AttributeError:
-            logger.info("Fallback to CDP AXTree OTP scanner")
-            otp_result = await gmx.read_otp_cdp_axtree(sender_keyword="fireworks", timeout=80)
-            otp_url = otp_result.get("otp_url")
+            with open(POOL_FILE, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Pool load error: {e}, starting fresh")
+    return []
 
-        if otp_url:
-            logger.info(f"OTP-URL: {otp_url[:60]}")
-            verify_ok = await verify_account(otp_url)
-            logger.info(f"Verify: {'OK' if verify_ok else 'Failed'}")
-        else:
-            logger.warning(f"OTP nicht gefunden: {otp_result.get('error')}")
 
-        # Step 4: Login + Onboarding (verify URL does NOT establish session)
-        logger.info("=== Fireworks Login + Onboarding ===")
-        from fireworks_service import login_fireworks
-        login_result = await login_fireworks(alias, args.password)
-        if login_result.get('status') == 'success':
-            logger.info(f"Login OK: {login_result.get('steps_completed', [])}")
-        else:
-            logger.info(f"Login: {login_result.get('status')} - {login_result.get('error', '')}")
+def save_pool(pool: list):
+    POOL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(POOL_FILE, "w") as f:
+        json.dump(pool, f, indent=2, default=str)
+    logger.info(f"Pool saved: {len(pool)} entries")
 
-        # Step 5: API Key
-        logger.info("=== API Key ===")
-        key_name = alias.split("@")[0].split("-")[0] if alias else "sinator-key"
-        api_result = await create_api_key(key_name=key_name)
-        api_key = api_result.get("api_key")
 
-        if not api_key:
-            logger.error(f"API Key creation failed: {api_result.get('error')}")
-            return
+def add_to_pool(entry: Dict[str, Any]):
+    pool = load_pool()
+    entry["id"] = str(uuid.uuid4())
+    entry["created_at"] = datetime.now(timezone.utc).isoformat()
+    pool.append(entry)
+    save_pool(pool)
+    logger.info(f"Added to pool: {entry.get('email')} -> key={entry.get('api_key','')[:12]}...")
 
-        logger.info(f"API Key: {api_key}")
+
+# ── Main Rotation ───────────────────────────────────────────────────────
+
+async def run_rotation() -> Dict[str, Any]:
+    start_time = time.time()
+    steps = []
+
+    # Load credentials from env
+    import os
+    smspool_key = os.environ.get("SMSPOOL_API_KEY", SMSPOOL_API_KEY)
+    gmx_password = os.environ.get("GMX_PASSWORD", GMX_PASSWORD)
+
+    if not gmx_password:
+        logger.error("GMX_PASSWORD not set — cannot login to GMX")
+        return {"status": "failed", "error": "GMX_PASSWORD missing", "steps": steps}
+
+    # Step 0: Connect to Chrome via CDP
+    logger.info("=== STEP 0: Connect to Chrome via CDP ===")
+    mgr = BrowserManager(headless=False)
+    try:
+        await mgr.connect_cdp(f"http://127.0.0.1:{CDP_PORT}")
+        nav_mgr._set_instance(mgr)
+        logger.info(f"Connected to Chrome: {len(mgr._browser.contexts)} context(s)")
+        steps.append("chrome_connected")
+    except Exception as e:
+        logger.error(f"Chrome connect failed: {e}")
+        return {"status": "failed", "error": f"Chrome connect: {e}", "steps": steps}
+
+    # Step 1: Initialize GMX Service
+    logger.info("=== STEP 1: Initialize GMX Service ===")
+    gmx = get_gmx_service(
+        browser=mgr._browser,
+        context=mgr._context,
+        password=gmx_password
+    )
+
+    # Initialize multi-tab architecture
+    await gmx.initialize_architecture(mgr._browser)
+    # Navigate inbox_tab to GMX mail (if already logged in)
+    await gmx.inbox_tab.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded")
+    await asyncio.sleep(5)
+    steps.append("gmx_initialized")
+
+    # Step 2: Rotate GMX Alias
+    logger.info("=== STEP 2: Rotate GMX Alias ===")
+    alias_result = await gmx.rotate_alias(page=gmx.work_tab)
+    if alias_result.get("status") != "success":
+        logger.error(f"Alias rotation failed: {alias_result}")
+        await mgr.cleanup()
+        return {"status": "failed", "error": f"Alias rotation: {alias_result}", "steps": steps}
+    alias_email = alias_result["created_alias"]
+    logger.info(f"Alias created: {alias_email}")
+    steps.append("alias_rotated")
+
+    # Step 3: Initialize Vercel Service and start signup
+    logger.info("=== STEP 3: Vercel Signup ===")
+    # Switch active page to a new tab for Vercel
+    vercel_tab = await mgr.new_page()
+    mgr.set_active_page(vercel_tab)
+    vercel = VercelService(manager=mgr)
+
+    # Open referral link and fill email (without OTP yet)
+    logger.info("Navigating to referral link and filling email...")
+    from sin_browser_tools.tools.navigation import browser_navigate
+    from sin_browser_tools.tools.interaction import browser_fill_react, browser_click_by_text, browser_press
+    from sin_browser_tools.tools.extraction import browser_get_html
+
+    await browser_navigate("https://v0.app/ref/6IMSRI")
+    await asyncio.sleep(5)
+    await vercel._handle_cookie_banner()
+    await asyncio.sleep(1)
+
+    # Wait for email field and fill
+    for _ in range(15):
+        html = await browser_get_html()
+        if 'type="email"' in str(html).lower() or 'name="email"' in str(html).lower():
+            break
+        await asyncio.sleep(1)
+
+    await browser_fill_react('input[type="email"]', alias_email)
+    await asyncio.sleep(0.5)
+    try:
+        await browser_click_by_text("Continue with Email", role="button", exact=False)
+    except Exception:
+        try:
+            await browser_click_by_text("Continue", role="button", exact=False)
+        except Exception:
+            await browser_press("Enter")
+    await asyncio.sleep(3)
+    steps.append("vercel_email_submitted")
+
+    # Step 4: Read OTP from GMX
+    logger.info("=== STEP 4: Read OTP from GMX ===")
+    otp_result = await gmx.read_otp(sender_filter="vercel", max_retries=20, retry_delay=5)
+    if otp_result.get("status") != "success":
+        logger.error(f"OTP read failed: {otp_result}")
+        # Try fallback with CDP AXTree
+        otp_result = await gmx.read_otp_cdp_axtree(sender_keyword="vercel", timeout=100)
+    if otp_result.get("status") != "success":
+        logger.error("OTP read failed completely")
+        await mgr.cleanup()
+        return {"status": "failed", "error": f"OTP: {otp_result}", "steps": steps}
+    otp_code = otp_result["otp_code"]
+    logger.info(f"OTP received: {otp_code}")
+    steps.append("otp_received")
+
+    # Step 5: Complete signup with OTP, password, phone, API key
+    logger.info("=== STEP 5: Complete Vercel Signup ===")
+    # Switch back to Vercel tab
+    mgr.set_active_page(vercel_tab)
+
+    smspool = None
+    if smspool_key:
+        smspool = SMSPoolService(api_key=smspool_key)
+    else:
+        logger.warning("SMSPOOL_API_KEY not set — phone verification will be skipped")
+
+    signup_result = await vercel.signup(
+        alias_email=alias_email,
+        otp_code=otp_code,
+        smspool_service=smspool,
+        password=None  # auto-generate
+    )
+
+    if smspool:
+        await smspool.close()
+
+    steps.extend(signup_result.get("steps", []))
+
+    if signup_result.get("status") == "success":
+        api_key = signup_result["api_key"]
+        password = signup_result.get("password", "")
+        logger.info(f"Signup successful! API key: {api_key[:12]}...")
+        steps.append("signup_success")
 
         # Step 6: Save to pool
-        if args.save:
-            try:
-                from pool_manager import PoolManager
-                pool = PoolManager()
-                pool.add_key(api_key=api_key, alias_email=alias, key_name=key_name)
-                logger.info(f"Saved to pool ({pool.get_stats()['total']} keys total)")
-            except Exception as e:
-                logger.warning(f"Pool save skipped: {e}")
+        logger.info("=== STEP 6: Save to Pool ===")
+        add_to_pool({
+            "email": alias_email,
+            "api_key": api_key,
+            "password": password,
+            "otp_result": otp_result,
+            "signup_result": {k: v for k, v in signup_result.items() if k != "screenshots"},
+        })
+        steps.append("saved_to_pool")
+    else:
+        logger.error(f"Signup failed: {signup_result.get('error')}")
+        # Still save partial result for debugging
+        add_to_pool({
+            "email": alias_email,
+            "api_key": signup_result.get("api_key"),
+            "password": signup_result.get("password", ""),
+            "status": signup_result.get("status"),
+            "error": signup_result.get("error"),
+            "steps": steps,
+        })
 
-    finally:
-        elapsed = time.time() - t0
-        logger.info("=== Shutdown ===")
-        if fw_mgr:
-            logger.info("Closing Bot Chrome (Fireworks)")
-            await cleanup_bot(fw_mgr)
-        if gmx_browser:
-            logger.info("Disconnecting from User Chrome (GMX)")
-            await gmx_browser.close()
-        await p.stop()
-        logger.info(f"\nROTATION COMPLETE - {elapsed:.1f}s")
+    elapsed = time.time() - start_time
+    logger.info(f"Rotation completed in {elapsed:.1f}s")
+
+    await mgr.cleanup()
+    return {
+        "status": signup_result.get("status"),
+        "alias_email": alias_email,
+        "api_key": signup_result.get("api_key"),
+        "password": signup_result.get("password"),
+        "steps": steps,
+        "execution_time": f"{elapsed:.1f}s",
+    }
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    result = asyncio.run(run_rotation())
+    print(json.dumps(result, indent=2, default=str))
