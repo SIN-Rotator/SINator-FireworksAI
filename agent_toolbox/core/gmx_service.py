@@ -761,7 +761,7 @@ class GmxService:
             if not frame:
                 logger.warning("allEmailAddresses iframe not found")
                 return None
-            
+
             text = await frame.evaluate("() => document.body.innerText")
             lines = text.split('\n')
             for line in lines:
@@ -775,6 +775,30 @@ class GmxService:
         except Exception as e:
             logger.warning(f"Error finding alias: {e}")
         return None
+
+    async def _find_alias_at_domain(self, page: Page, domain: str) -> Optional[str]:
+        """V19.17: Find an alias at a SPECIFIC @gmx.TLD domain (excludes standard).
+
+        Used for per-domain delete-then-create to free up 1 slot at the target domain.
+        """
+        logger.info(f"[_find_alias_at_domain] Looking for alias at @{domain}")
+        try:
+            frame = await self._get_all_email_frame(page)
+            if not frame:
+                return None
+            text = await frame.evaluate("() => document.body.innerText")
+            import re
+            # Match email at exactly this domain, exclude delqhi/opensin standard addresses
+            pattern = re.compile(r'[\w\.\-]+@' + re.escape(domain) + r'\b', re.IGNORECASE)
+            matches = pattern.findall(text)
+            for m in matches:
+                if m.lower() not in ('delqhi@gmx.de', 'opensin@gmx.de'):
+                    logger.info(f"[_find_alias_at_domain] Found {m} at @{domain}")
+                    return m
+            return None
+        except Exception as e:
+            logger.warning(f"[_find_alias_at_domain] Error: {e}")
+            return None
 
     async def _delete_alias(self, page: Page, alias_email: str) -> bool:
         """Delete an alias via CDP Input.dispatchMouseEvent (Wicket-kompatibel)."""
@@ -1057,33 +1081,46 @@ class GmxService:
             return False
 
     async def _check_alias_limit_error(self, frame) -> Optional[str]:
-        """Check for GMX 2-alias-per-domain limit error after Hinzufügen.
+        """Check for GMX 2-alias-per-domain error DIALOG/POPUP after Hinzufügen.
 
-        Returns the error message text if a limit was hit, else None.
-        V19.17: detects 'Sie können bis zu 2 E-Mail-Adressen mit GMX-Domains anlegen'.
+        Returns the error message text if a real error popup is shown, else None.
+
+        V19.18: ONLY looks for actual error popups/dialogs (role="alertdialog",
+        .modal, .popup, .toast with 'fehler'/'error'/'limit'). Does NOT match the
+        persistent informational warning ('Sie können bis zu 2 E-Mail-Adressen')
+        which is always shown on the page for FreeMail users.
         """
         try:
             return await frame.evaluate("""() => {
-                // Look for warning/info banners in the page
-                var warnBodies = document.querySelectorAll(
-                    '.alert, .error, .warning, [class*="warn"], [class*="error"], [role="alert"], [class*="message"]'
+                // Look for ACTUAL error popups/dialogs/toasts
+                // These are dynamically created and disappear when dismissed
+                var errorEls = document.querySelectorAll(
+                    '[role="alertdialog"], .modal, .popup, .toast, .error-popup, .notification, ' +
+                    '[class*="modal"][class*="error"], [class*="dialog"][class*="error"], ' +
+                    '[class*="error"][class*="popup"], [class*="toast"][class*="error"]'
                 );
-                for (var i = 0; i < warnBodies.length; i++) {
-                    var txt = (warnBodies[i].textContent || '').trim();
-                    if (txt.length > 0 && txt.length < 500) {
-                        var low = txt.toLowerCase();
-                        // GMX 2-alias-per-domain warning
-                        if (low.includes('können sie bis zu 2 e-mail') ||
-                            low.includes('2 gmx e-mail-adressen anlegen') ||
-                            low.includes('maximum') || low.includes('limit erreicht')) {
-                            return txt;
-                        }
+                for (var i = 0; i < errorEls.length; i++) {
+                    var el = errorEls[i];
+                    // Must be visible
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 5 || r.height < 5) continue;
+                    var txt = (el.textContent || '').trim();
+                    var low = txt.toLowerCase();
+                    if (low.includes('fehler') || low.includes('error') ||
+                        low.includes('limit') || low.includes('überschritten') ||
+                        low.includes('maximum') || low.includes('konnte nicht')) {
+                        return txt;
                     }
                 }
-                // Fallback: scan full body text (GMX renders warning as yellow box)
-                var body = (document.body.innerText || '').toLowerCase();
-                if (body.includes('sie können bis zu 2 e-mail-adressen mit gmx-domains anlegen')) {
-                    return 'GMX 2-Alias-Limit erreicht (sie können bis zu 2 E-Mail-Adressen mit GMX-Domains anlegen)';
+                // Check input field for validation error (aria-invalid or error class)
+                var inputs = document.querySelectorAll('input[name*="localPart"]');
+                for (var j = 0; j < inputs.length; j++) {
+                    var inp = inputs[j];
+                    if (inp.getAttribute('aria-invalid') === 'true' ||
+                        (inp.className || '').toLowerCase().includes('error') ||
+                        (inp.className || '').toLowerCase().includes('invalid')) {
+                        return 'Input validation error (aria-invalid or .error class)';
+                    }
                 }
                 return null;
             }""")
@@ -1175,29 +1212,15 @@ class GmxService:
                         "error": "Navigation fehlgeschlagen", "execution_time": f"{time.time()-start_time:.2f}s"}
             steps.append("navigated")
 
-            # Try to delete existing alias (up to 3 attempts with page reload)
-            alias_email = await self._find_alias_row(page)
-            if alias_email:
-                logger.info(f"Found alias to delete: {alias_email}")
-                for delete_attempt in range(3):
-                    if await self._delete_alias(page, alias_email):
-                        deleted_alias = alias_email
-                        steps.append("deleted")
-                        await asyncio.sleep(2)
-                        break
-                    logger.warning(f"Delete attempt {delete_attempt+1}/3 failed for {alias_email}")
-                    if delete_attempt < 2:
-                        logger.info(f"Reloading page for retry {delete_attempt+2}/3...")
-                        await self._navigate_to_all_email_addresses(page)
-                        await asyncio.sleep(2)
-                        # Re-find alias in case DOM shifted
-                        current = await self._find_alias_row(page)
-                        if current:
-                            alias_email = current
-            else:
-                steps.append("no_alias_to_delete")
+            # V19.17: per-domain delete-then-create inside the create loop below.
+            # (Old logic deleted any alias at the start; new logic only deletes
+            #  an alias at the SAME domain we're about to create, preserving the
+            #  2-alias-per-domain FreeMail limit cleanly.)
 
-            # Create new alias — V19.17: try each GMX domain, skip on 2-alias limit
+            # Create new alias — V19.17: per-domain delete-then-create across 4 GMX domains
+            # Strategy: for each domain, first delete an existing alias at that domain
+            # (to free up 1 of 2 slots), then create the new alias at that domain.
+            # This keeps pool size constant (~1 alias per domain) instead of growing.
             if not new_alias_name:
                 new_alias_name = self.generate_alias_name()
             domain_errors = []
@@ -1207,6 +1230,28 @@ class GmxService:
                     logger.info(f"Reloading page to try next domain: {domain}")
                     await self._navigate_to_all_email_addresses(page)
                     await asyncio.sleep(2)
+
+                # V19.17: Try to delete ALL non-standard aliases AT THIS DOMAIN to free up a slot.
+                # FreeMail 2-alias-per-domain includes the standard address in the count,
+                # so we need to delete EVERY rotation-created alias at this domain
+                # (and keep the standard one). Loop until no more non-standard exist,
+                # or hit the safety cap of 5 deletes per domain.
+                deleted_in_domain = 0
+                for del_round in range(5):  # safety cap
+                    existing_at_domain = await self._find_alias_at_domain(page, domain)
+                    if not existing_at_domain:
+                        break  # Only standard address left, slot is free
+                    logger.info(f"Freeing slot at @{domain} (round {del_round+1}): deleting {existing_at_domain}")
+                    if await self._delete_alias(page, existing_at_domain):
+                        deleted_alias = existing_at_domain
+                        deleted_in_domain += 1
+                        steps.append(f"deleted_{domain}_{del_round+1}")
+                        await asyncio.sleep(2)
+                    else:
+                        logger.warning(f"Delete {existing_at_domain} failed, reloading and retrying")
+                        await self._navigate_to_all_email_addresses(page)
+                        await asyncio.sleep(2)
+
                 alias_created_for_domain = False
                 for attempt in range(2):  # 2 attempts per domain (different random names)
                     current_alias = new_alias_name if (domain_idx == 0 and attempt == 0) else self.generate_alias_name()
