@@ -31,7 +31,7 @@ The onboarding is a React SPA with 2 steps:
 - **Step 2** (same URL, React transition): Checkboxes
   - "What are your goals for using Fireworks?" (9 options: "Prototype with open models", "Flexible capacity for experimentation", "Flexible capacity for production", "Faster speeds or lower costs", "Fine-tune models for quality", "High reliability inference for production", "Migrate from closed to open models", "Migrate from self-hosting to third-party", "Other")
   - "What are your primary use cases?" (6 options: "Code Assistance", "Conversational AI", "Agentic AI", "Search", "Multimedia RAG", "Other")
-  - "Submit to get $5 Credits" button
+  - "Submit to get $6 Credits" button
 - No URL change between steps — must poll DOM for step 2 content
 
 ### CookieYes Overlay

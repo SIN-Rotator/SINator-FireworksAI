@@ -71,7 +71,7 @@ Fireworks uses custom React checkboxes. `browser_click_checkbox_by_text` (sin_br
 It operates on the currently active page in SIN-Browser-Tools manager. The page is already on `/onboarding` after login redirect.
 
 ### Why button text uses partial match (`indexOf`) not strict equality?
-Fireworks button labels change over time (e.g., "Submit" → "Submit to get $5 Credits"). Strict `===` breaks silently. The old code used `'Submit' in txt` — restored in `v19.1-working-revert`.
+Fireworks button labels change over time (e.g., "Submit" → "Submit to get $6 Credits"). Strict `===` breaks silently. The old code used `'Submit' in txt` — restored in `v19.1-working-revert`.
 
 ## Flow Sequence
 ```

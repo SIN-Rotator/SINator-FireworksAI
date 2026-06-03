@@ -34,7 +34,7 @@ Das aktuelle Lease-System ist **exklusiv** — ein Key wird durch `leased_until`
 | Jeder Key = eigener Account = eigene Rate-Limits | Implizit durch Account-Struktur |
 | Sharing eines Keys = alle Consumer teilen EIN Rate-Limit | Schlussfolgerung aus obigem |
 | Serverless 429: adaptiv, wächst mit Usage | `serverless/rate-limits` |
-| Account-Suspension: $5 Credits aufgebraucht → Key tot | Proxy-Code `PERMANENT_429_KEYWORDS` |
+| Account-Suspension: $6 Credits aufgebraucht → Key tot | Proxy-Code `PERMANENT_429_KEYWORDS` |
 
 ### Wichtige Erkenntnis
 

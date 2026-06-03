@@ -23,7 +23,7 @@ await browser_press("Enter")
 ```python
 t.indexOf('Submit') !== -1  # NICHT t === 'Submit'
 ```
-Fireworks ändert Button-Texte ("Submit" → "Submit to get $5 Credits"). Strict equality `===` bricht. Nutze `.indexOf()` / `.includes()` für Button-Labels.
+Fireworks ändert Button-Texte ("Submit" → "Submit to get $6 Credits"). Strict equality `===` bricht. Nutze `.indexOf()` / `.includes()` für Button-Labels.
 
 ### 3. Disabled-Button Bypass (Onboarding)
 Wenn `browser_click_by_text("Submit")` fehlschlägt (disabled wegen React validation pending):

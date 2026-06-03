@@ -261,7 +261,7 @@ Keine Learnings nur im Chat lassen!
 
 ## 🚨 REGEL 11: Bekanntes Problem — Account Suspension
 
-Fireworks suspendiert Accounts bei Spending Limit ($5 Credits aufgebraucht):
+Fireworks suspendiert Accounts bei Spending Limit ($6 Credits aufgebraucht):
 ```
 Account XXX is suspended, possibly due to reaching the monthly
 spending limit or failure to pay past invoices.

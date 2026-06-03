@@ -453,7 +453,7 @@ Test-Script: `debug/test_delete_fix.py`
 
 **Symptom:** Onboarding Submit-Button wird nicht gefunden → kein Redirect → /onboarding bleibt → API Key fails.
 
-**Warum:** `browser_click_by_text("Submit", role="button")"` matched exakten Text "Submit". Fireworks Button heißt aber "Submit to get $5 Credits". Strict equality schlägt fehl. Auch der Fallback `browser_click_by_text("Get $5", role="button")"` matched nicht weil "Submit to get $5 Credits" !== "Get $5".
+**Warum:** `browser_click_by_text("Submit", role="button")"` matched exakten Text "Submit". Fireworks Button heißt aber "Submit to get $6 Credits". Strict equality schlägt fehl. Auch der Fallback `browser_click_by_text("Get $6", role="button")"` matched nicht weil "Submit to get $6 Credits" !== "Get $6".
 
 **Richtig:** JS dispatchEvent mit `.indexOf('Submit') !== -1` (partial match) — wie der alte pre-v19.1 Code mit `'Submit' in txt`. Genutzt für Continue UND Submit in `_playwright_onboarding`.
 
@@ -547,7 +547,7 @@ Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt. `status=inactive` URLs �
 ## 🐛 BEKANNTE PROBLEME
 
 ### Fireworks Account Suspension
-- Jeder FW Account hat $5 Credits — aufgebraucht = Suspension
+- Jeder FW Account hat $6 Credits — aufgebraucht = Suspension
 - Betroffene Keys als `used` markieren via `POST /pool/report`
 
 ### OTP-Email Verzögerung
@@ -567,7 +567,7 @@ Tabs mit `sid=` + `navigator.gmx.net` werden bevorzugt. `status=inactive` URLs �
 
 ### Pool Status (2026-06-02)
 - **~250/261 Keys suspended** — nur ~5 tatsächlich verfügbar
-- Ursache: Fireworks $5 Credits pro Account — aufgebraucht = Suspension
+- Ursache: Fireworks $6 Credits pro Account — aufgebraucht = Suspension
 - **NIEMALS suspended Keys löschen** — in separate Archive-DB verschieben
 
 ### ~/.sin-pool/ Deployment Problem
