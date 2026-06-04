@@ -176,7 +176,7 @@ Key als Fallback. **Niemals blockieren, niemals warten.**
 
 **Subagents DÜRFEN NIEMALS Chrome killen. NIEMALS `pkill -9 -f "Google Chrome"`.**
 
-Der AGENTS.md Chrome-Start-Command (`pkill -9 -f "Google Chrome"` → `nohup Chrome ...`) ist NUR für den MAIN-AGENT wenn Chrome tot ist.
+Ab v0.37 nutzt `rotate.py` isolierten Chrome mit temp-Profil (`BrowserManager.start_local()`). Es ist KEIN `pkill` mehr nötig — weder für Subagents noch für den Main-Agent. Der User-Chrome (Profile 73, Port 9222) bleibt unberührt.
 
 ### Warum
 - Chrome auf Port 9222 mit Profile 73 ist die EINZIGE lebende GMX-Session. Killen = Rotation kaputt.

@@ -60,11 +60,12 @@ python3 -m playwright install chromium
 
 ---
 
-## 4. Chrome starten (mit CDP)
+## 4. Chrome starten (für manuelle Operationen)
 
+**⚠️ `rotate.py` nutzt ab v0.37 isolierten Chrome mit temp-Profil — kein manuelles Starten nötig.**
+
+Für manuelle GMX-Operationen (nicht `rotate.py`):
 ```bash
-pkill -9 -f "Google Chrome" 2>/dev/null; sleep 2
-
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/simoneschulze/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 73" \
@@ -78,6 +79,8 @@ curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; d=json
 # ✅ "Chrome xxx"
 # ❌ "Connection refused" → Chrome nicht gestartet
 ```
+
+**🚫 NIEMALS `pkill -9 -f "Google Chrome"` — killt ALLE Chrome-Prozesse inklusive User-Chrome.**
 
 ---
 
