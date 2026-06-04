@@ -185,20 +185,16 @@ Ab v0.37 nutzt `rotate.py` isolierten Chrome mit temp-Profil (`BrowserManager.st
 
 ### Pflicht-Check VOR jeder Rotation im Subagent
 
+Ab v0.37 nutzt `rotate.py` isolierten Chrome (`BrowserManager.start_local()`). Kein CDP, kein laufender Chrome nötig — der Bot startet seinen eigenen Chromium.
+
 ```bash
-# 1. Chrome schon da?
-curl -s http://127.0.0.1:9222/json/version > /dev/null 2>&1 || {
-    echo "❌ Chrome NICHT auf 9222 — Main-Agent informieren, NICHT selbst starten!"
-    exit 1
-}
-
-# 2. Läuft schon eine Rotation?
+# 1. Läuft schon eine Rotation?
 pgrep -f "rotate.py" > /dev/null 2>&1 && {
-    echo "❌ rotate.py LÄUFT BEREITS — warten oder Main-Agent fragen!"
+    echo "❌ rotate.py LÄUFT BEREITS — warten!"
     exit 1
 }
 
-# 3. Beides OK → Rotation starten
+# 2. Rotation starten (isoliert, kein User-Chrome nötig)
 python3 tools/rotate.py
 ```
 
