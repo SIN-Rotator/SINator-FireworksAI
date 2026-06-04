@@ -322,8 +322,11 @@ class GmxService:
         url_pattern = re.compile(r'https://app\.fireworks\.ai/signup/confirm\?[^\s"\'<>]+')
 
         try:
-            # Connect SIN-Browser-Tools manager + register inbox_tab
-            await sin_mgr.connect_cdp('http://127.0.0.1:9222')
+            # Ensure SIN-Browser-Tools manager is active + register inbox_tab
+            # (connect_cdp is a no-op if already started by rotate.py)
+            if not sin_mgr.started:
+                logger.warning("[OTP-v2] sin_mgr not started — cannot scan frames")
+                return {"status": "error", "otp_url": None, "error": "browser manager not started"}
             sin_mgr.set_active_page(self.inbox_tab)
 
             # 1. Navigate to inbox

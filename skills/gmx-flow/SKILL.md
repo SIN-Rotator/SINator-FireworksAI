@@ -14,9 +14,12 @@ license: MIT
 | CDP Port | `9222` |
 | Binary | `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome` |
 
-## Chrome Start
+## Chrome Start (Manual / Legacy Only)
+
+**⚠️ WICHTIG: `rotate.py` nutzt ab v0.37 isolierten Chrome mit temp-Profil (`BrowserManager.start_local()`). Kein `pkill`, kein CDP-Connect zum User-Chrome nötig.**
+
+Für manuelle Operationen (nicht `rotate.py`):
 ```bash
-pkill -9 -f "Google Chrome" 2>/dev/null; sleep 2
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/simoneschulze/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 73" \
@@ -26,7 +29,9 @@ nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
 sleep 5
 curl -s http://127.0.0.1:9222/json/version
 ```
-**NIEMALS** `/Users/jeremy/...` Pfade, **NIEMALS** `/tmp/` Profile, **NIEMALS** Chrome ohne `--profile-directory="Profile 73"`.
+**NIEMALS** `/Users/jeremy/...` Pfade, **NIEMALS** Chrome ohne `--profile-directory="Profile 73"`.
+
+**🚫 VERBOTEN — `pkill -9 -f "Google Chrome"`**: Killt ALLE Chrome-Prozesse inklusive User-Chrome → Session tot → Rotation bricht ab. Siehe `banned.md`.
 
 ## Session Recovery
 1. **Validieren**: GMX Homepage → "E-Mail" click → URL `navigator.gmx.net/mail?sid=...`
