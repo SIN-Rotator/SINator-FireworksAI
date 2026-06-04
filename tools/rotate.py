@@ -94,12 +94,9 @@ async def run_rotation() -> Dict[str, Any]:
         logger.error("GMX_PASSWORD not set — cannot login to GMX")
         return {"status": "failed", "error": "GMX_PASSWORD missing", "steps": steps}
 
-    # Step 0: Start isolated Chrome (temp profile — NEVER touches user Chrome)
+    # Step 0: Start isolated Chrome (NEVER touches user Chrome)
     logger.info("=== STEP 0: Start isolated Chrome ===")
-    import tempfile
-    user_data_dir = tempfile.mkdtemp(prefix="sinator-automation-")
-    logger.info(f"Using temp profile: {user_data_dir}")
-    mgr = BrowserManager(headless=False, user_data_dir=user_data_dir)
+    mgr = BrowserManager(headless=False)
     try:
         await mgr.start_local()
         nav_mgr._set_instance(mgr)
@@ -242,14 +239,6 @@ async def run_rotation() -> Dict[str, Any]:
     logger.info(f"Rotation completed in {elapsed:.1f}s")
 
     await mgr.cleanup()
-    # Clean up temp profile directory
-    try:
-        import shutil
-        if user_data_dir and os.path.exists(user_data_dir):
-            shutil.rmtree(user_data_dir, ignore_errors=True)
-            logger.info(f"Cleaned up temp profile: {user_data_dir}")
-    except Exception as e:
-        logger.warning(f"Temp profile cleanup failed (non-critical): {e}")
     return {
         "status": signup_result.get("status"),
         "alias_email": alias_email,
