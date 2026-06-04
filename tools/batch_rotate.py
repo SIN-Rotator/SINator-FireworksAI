@@ -40,7 +40,6 @@ async def rotate_one():
         "--gmx-email", cfg.gmx_email,
         "--gmx-password", cfg.gmx_password,
         "--password", cfg.fireworks_password,
-        "--cdp-port", "9222",
         "--debug",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,

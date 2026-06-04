@@ -54,7 +54,6 @@ async def rotate_one(idx):
     t0 = time.time()
     proc = await asyncio.create_subprocess_exec(
         "python3", str(ROTATE),
-        "--cdp-port", "9222",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(ROTATE.parent.parent)
