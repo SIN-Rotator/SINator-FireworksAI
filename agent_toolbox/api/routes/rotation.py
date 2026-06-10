@@ -39,12 +39,15 @@ async def full_rotation(request: RotationRequest):
         "--gmx-email", cfg.gmx_email,
         "--gmx-password", cfg.gmx_password,
         "--password", fireworks_pw,
-        "--cdp-port", "9222",
+        # KEIN --cdp-port: rotate.py nutzt seinen festen, kollisionssicheren
+        # Default-Port (59230). Port 9222 ist Chrome-Standard-Debugport und
+        # oft belegt -> Launch-Fehler. Im Flow läuft alles über page=page,
+        # daher ist kein externer CDP-Reconnect nötig.
     ]
     if request.new_alias_name:
         cmd.append(request.new_alias_name)
 
-    logger.info(f"Running rotate.py --cdp-port 9222")
+    logger.info("Running rotate.py (default CDP port 59230)")
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -89,7 +92,7 @@ async def full_rotation(request: RotationRequest):
         else:
             steps_failed.append("api_key_creation_failed")
 
-        if any("Login + Onboarding OK" in l for l in output_lines[-20:]):
+        if any("✅ Login OK" in l for l in output_lines):
             steps_completed.append("fireworks_login")
         else:
             steps_failed.append("fireworks_login_failed")
