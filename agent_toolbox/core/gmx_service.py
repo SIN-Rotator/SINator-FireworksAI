@@ -66,52 +66,10 @@ class GmxService:
     # ── Playwright Connection ────────────────────────────────────────────
 
     async def _pw_connect(self, cdp_port: int = 9222, page: Optional[Page] = None) -> Page:
-        """Connect to existing Chrome via CDP and return a Playwright Page.
-        If page is provided (V15.4 ONE Browser), returns it directly.
-        Otherwise connects via CDP and looks for existing GMX pages."""
-        if page is not None:
-            logger.info("[_pw_connect] Using provided page (V15.4 ONE Browser)")
-            return page
-        logger.info(f"[_pw_connect] Connecting to Chrome on CDP port {cdp_port}")
-        p = await async_playwright().start()
-        browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-        
-        # First, look for allEmailAddresses page
-        page = None
-        for ctx in browser.contexts:
-            for pg in ctx.pages:
-                url = pg.url or ""
-                if "allEmailAddresses" in url and "settings" in url and "iac/restart" not in url:
-                    page = pg
-                    logger.info(f"[_pw_connect] Found allEmailAddresses page: {url[:60]}...")
-                    return page
-        
-        # Otherwise, look for any valid GMX page (not iac/restart)
-        for ctx in browser.contexts:
-            for pg in ctx.pages:
-                url = pg.url or ""
-                if "gmx.net" in url and "iac/restart" not in url and "session-expired" not in url and "logoutlounge" not in url:
-                    page = pg
-                    logger.info(f"[_pw_connect] Found GMX page: {url[:60]}...")
-                    return page
-        
-        # Fallback to first page that is not iac/restart
-        for ctx in browser.contexts:
-            for pg in ctx.pages:
-                url = pg.url or ""
-                if "iac/restart" not in url and "session-expired" not in url and "logoutlounge" not in url:
-                    page = pg
-                    logger.info(f"[_pw_connect] Using fallback page: {url[:60]}...")
-                    return page
-        
-        # Last resort: create new page
-        if browser.contexts and browser.contexts[0].pages:
-            page = browser.contexts[0].pages[0]
-            logger.info(f"[_pw_connect] Using first page: {page.url[:60]}...")
-        else:
-            page = await browser.contexts[0].new_page() if browser.contexts else await browser.new_page()
-            logger.info(f"[_pw_connect] Created new page")
-        
+        """ONE Browser: requires page. No fallback connect/new_page."""
+        if page is None:
+            raise ValueError("_pw_connect: page required (ONE Browser mode)")
+        logger.debug("[_pw_connect] Using shared page")
         return page
 
     async def _login(self, page: Page, email: str, password: str) -> bool:
@@ -717,32 +675,16 @@ class GmxService:
     async def read_otp_via_playwright(self, browser, sender_filter: str = "fireworks",
                                        max_retries: int = 15, retry_delay: int = 6,
                                        existing_page: Optional[Page] = None) -> Dict[str, Any]:
-        """Read OTP via Playwright. Wenn existing_page übergeben, reuse (bleibt im logged-in Tab).
-        Sonst frische Page pro Versuch (fallback).
-        """
+        """Read OTP via Playwright. ONLY uses existing_page — no new_page() anywhere.
+        Navigates existing_page to GMX mail, scans, returns. Caller navigates back."""
         start_time = time.time()
         pattern = re.compile(r'https://app\.fireworks\.ai/(?:signup/(?:confirm|verify)|confirm|verify|accounts/confirm)\S+')
         for attempt in range(max_retries):
-            pw_page = None
-            own_page = False
+            pw_page = existing_page
+            if pw_page is None:
+                logger.error("[otp] No existing_page provided — cannot check OTP")
+                return {"status": "error", "otp_url": None, "error": "No page provided"}
             try:
-                if existing_page is not None and attempt == 0:
-                    # Check if existing_page is on GMX — if not, create a new page
-                    # to avoid navigating the shared page away from Fireworks
-                    try:
-                        cur_url = existing_page.url
-                    except Exception:
-                        cur_url = ""
-                    if "gmx.net" in cur_url or "navigator.gmx.net" in cur_url:
-                        pw_page = existing_page
-                        logger.info("[otp] Reusing existing GMX page")
-                    else:
-                        pw_page = await browser.new_page()
-                        own_page = True
-                        logger.info(f"[otp] Existing page on {cur_url[:40]}... — created new GMX page")
-                else:
-                    pw_page = await browser.new_page()
-                    own_page = True
                 await pw_page.goto("https://navigator.gmx.net/mail", wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(5)
 
@@ -858,8 +800,6 @@ class GmxService:
                         m = pattern.search(link)
                         if m:
                             logger.info(f"[otp] Found verify URL: {m.group(0)[:80]}")
-                            if own_page:
-                                await pw_page.close()
                             return {"status": "success", "otp_url": m.group(0)}
                 logger.debug(f"[otp] Kein Fireworks-Link in Mail, retry")
                 await asyncio.sleep(retry_delay)
@@ -867,12 +807,6 @@ class GmxService:
             except Exception as e:
                 logger.error(f"[otp] attempt {attempt+1} error: {e}")
                 await asyncio.sleep(retry_delay)
-            finally:
-                if own_page and pw_page:
-                    try:
-                        await pw_page.close()
-                    except Exception:
-                        pass
         return {"status": "error", "otp_url": None, "error": f"OTP nicht gefunden nach {max_retries} Versuchen"}
 
     # ── Public Helpers ────────────────────────────────────────────────────

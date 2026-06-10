@@ -22,35 +22,15 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
     3. Open verify URL to confirm account
     4. Returns {status, verify_url, steps_completed}
     
-    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh Chromium.
+    If page provided, uses it (ONE Browser). Requires page — no fallback launch.
     """
     import asyncio
-    import sys
     from playwright.async_api import async_playwright
-    from pathlib import Path as _Path
     
     steps = []
-    own_browser = False
-    own_page = False
+    if page is None:
+        return {"status": "error", "steps_completed": steps, "error": "No page provided"}
     try:
-        _sys_path = sys.path.copy()
-        sys.path.insert(0, str(_Path(__file__).parent))
-        
-        if page is not None:
-            # Use existing page (ONE Browser)
-            pass
-        elif cdp_port:
-            async with async_playwright() as p:
-                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-                own_browser = True
-                page = await browser.new_page()
-                own_page = True
-        else:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
-                own_browser = True
-                page = await browser.new_page()
-                own_page = True
         
         # Step 1: Signup form
         await page.goto("https://app.fireworks.ai/signup")
@@ -146,30 +126,16 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
 async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + CUA onboarding.
     Returns: {status, steps_completed, error}
-    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
+    If page provided, uses it (ONE Browser). Requires page — no fallback, no launch."""
     import asyncio
     import json
     import subprocess
     import re as _re
-    from playwright.async_api import async_playwright
 
     steps = []
-    own_browser = False
-    _p = None
+    if page is None:
+        return {"status": "error", "steps_completed": steps, "error": "No page provided"}
     try:
-        if page is not None:
-            pass
-        elif cdp_port:
-            _p = await async_playwright().start()
-            browser = await _p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-            own_browser = True
-            page = await browser.new_page()
-        else:
-            _p = await async_playwright().start()
-            browser = await _p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
-            own_browser = True
-            page = await browser.new_page()
-
         await page.goto("https://app.fireworks.ai/login")
         await asyncio.sleep(2)
 
@@ -272,15 +238,12 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                             "https://app.fireworks.ai/",
                         ]:
                             try:
-                                fresh = await browser.contexts[0].new_page()
-                                await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
+                                await page.goto(url, timeout=15000, wait_until='domcontentloaded')
                                 await asyncio.sleep(2)
-                                if any(x in fresh.url for x in ['home', 'account', 'settings', 'api-keys']):
+                                if any(x in page.url for x in ['home', 'account', 'settings', 'api-keys']):
                                     redirected = True
-                                    await fresh.close()
-                                    logger.info("CUA Submit — logged in (verified via fresh page)")
+                                    logger.info("CUA Submit — logged in (verified via shared page)")
                                     break
-                                await fresh.close()
                             except Exception:
                                 pass
                         
@@ -316,24 +279,20 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 logger.warning("Page URL check failed — page may be stale")
                 break
 
-        # Force navigate (page may be stale after CUA Submit)
+        # Force navigate on shared page (ONE Browser — no new_page)
         for url in [
             "https://app.fireworks.ai/settings/users/api-keys",
             "https://app.fireworks.ai/",
         ]:
             try:
-                fresh = await browser.contexts[0].new_page()
-                await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
+                await page.goto(url, timeout=15000, wait_until='domcontentloaded')
                 await asyncio.sleep(2)
-                fresh_url = fresh.url
-                if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
+                if any(x in page.url for x in ['home', 'account', 'settings', 'api-keys']):
                     steps.append("login_success")
-                    await fresh.close()
                     return {"status": "success", "steps_completed": steps}
-                logger.warning(f"Fresh page landed on: {fresh_url[:60]}")
-                await fresh.close()
+                logger.warning(f"Shared page landed on: {page.url[:60]}")
             except Exception as e:
-                logger.warning(f"Fresh page navigate failed: {e}")
+                logger.warning(f"Shared page navigate failed: {e}")
 
         return {"status": "error", "steps_completed": steps, "error": f"Login failed: could not reach home/settings"}
 
@@ -411,7 +370,7 @@ async def _fireworks_playwright_onboarding(page) -> None:
             logger.error("Force navigate failed")
 
 
-async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
+async def _generate_and_poll_key(page, key_name: str) -> Dict[str, Any]:
     """Click Generate, poll for key, handle Missing Name modal, retry."""
     import asyncio
     import re as _re
@@ -425,17 +384,17 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
             logger.warning(f"API Key retry {retry+1}/3 — reloading page")
             try:
                 for _ in range(3):
-                    await pg.goto("https://app.fireworks.ai/settings/users/api-keys",
+                    await page.goto("https://app.fireworks.ai/settings/users/api-keys",
                                   timeout=15000, wait_until='domcontentloaded')
                     await asyncio.sleep(4)
-                    if 'login' not in pg.url.lower():
+                    if 'login' not in page.url.lower():
                         break
                     await asyncio.sleep(2)
 
                 # Dismiss cookie banner
                 try:
                     for _ in range(3):
-                        for btn in await pg.locator('button').all():
+                        for btn in await page.locator('button').all():
                             txt = (await btn.text_content() or '').strip()
                             if txt in ('Accept All', 'Reject All'):
                                 await btn.click(force=True); await asyncio.sleep(1)
@@ -446,11 +405,11 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
                     pass
 
                 # Re-open dialog
-                for btn in await pg.locator('button').all():
+                for btn in await page.locator('button').all():
                     if 'Create API Key' in (await btn.text_content() or ''):
                         await btn.click(force=True); await asyncio.sleep(2); break
 
-                menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+                menu = page.locator('[role="menuitem"]:has-text("API Key")').first
                 for _ in range(5):
                     if await menu.count() > 0:
                         break
@@ -462,15 +421,15 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
                 continue
 
         # Ensure name is filled
-        await pg.locator(f'input[name="name"]').first.click()
+        await page.locator(f'input[name="name"]').first.click()
         await asyncio.sleep(0.2)
-        await pg.locator(f'input[name="name"]').first.type(name, delay=40)
+        await page.locator(f'input[name="name"]').first.type(name, delay=40)
         await asyncio.sleep(1)
 
         # Wait for Generate to be enabled (max 10s)
         generate_btn = None
         for _ in range(10):
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 txt = (await btn.text_content() or '').strip()
                 if 'Generate' in txt:
                     generate_btn = btn
@@ -483,8 +442,8 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
             logger.warning(f"Generate button not found (retry {retry})")
             # Log page state for debugging
             try:
-                url = pg.url[:60]
-                btns = [(await b.text_content() or '').strip()[:30] for b in await pg.locator('button').all()]
+                url = page.url[:60]
+                btns = [(await b.text_content() or '').strip()[:30] for b in await page.locator('button').all()]
                 logger.warning(f"Page: {url} | Buttons: {btns[:10]}")
             except: pass
             continue
@@ -495,16 +454,16 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
         # Poll for key (15s)
         for _ in range(15):
             await asyncio.sleep(1)
-            text = await pg.evaluate("() => document.body.innerText")
+            text = await page.evaluate("() => document.body.innerText")
             keys = _re.findall(r'fw_[a-zA-Z0-9]{20,}', text)
             if keys:
                 return {"status": "success", "api_key": keys[0]}
 
         # Check for Missing Name modal
-        body = await pg.evaluate("() => document.body.innerText")
+        body = await page.evaluate("() => document.body.innerText")
         if 'Missing' in body and 'Name' in body:
             logger.warning(f"Missing Name Modal — close + retry ({retry+1}/3)")
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 txt = (await btn.text_content() or '').strip()
                 if txt in ['Close', 'Cancel', 'OK', '×']:
                     await btn.click(force=True)
@@ -520,50 +479,36 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
 
 async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:
     """Create Fireworks API Key via Playwright with auto-retry. Returns {status, api_key, error}
-    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
+    Requires page (ONE Browser) — no fallback, no launch, no new_page.
+    Returns {status, api_key, error}
+    """
     import asyncio
-    from playwright.async_api import async_playwright
 
-    own_browser = False
-    _p = None
+    if page is None:
+        return {"status": "error", "error": "No page provided"}
     try:
-        if page is not None:
-            pass
-        elif cdp_port:
-            _p = await async_playwright().start()
-            browser = await _p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-            own_browser = True
-            page = await browser.new_page()
-        else:
-            _p = await async_playwright().start()
-            browser = await _p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
-            own_browser = True
-            page = await browser.new_page()
-
-        # Use a fresh page for API key gen, or reuse the ONE page
-        pg = page if page is not None else await browser.new_page()
-        await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
+        await page.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
         await asyncio.sleep(2)
 
         # Retry navigate if redirected to login
         for _ in range(3):
-            if 'login' in pg.url.lower():
-                logger.warning(f"Redirected to login — retrying ({pg.url[:60]})")
-                await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
+            if 'login' in page.url.lower():
+                logger.warning(f"Redirected to login — retrying ({page.url[:60]})")
+                await page.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
                 await asyncio.sleep(2)
             else:
                 break
 
-        if 'login' in pg.url.lower():
+        if 'login' in page.url.lower():
             logger.error("Cannot access API keys — still on login page")
             return {"status": "error", "error": "Not logged in"}
 
-        logger.info(f"API Keys page loaded: {pg.url[:80]}")
+        logger.info(f"API Keys page loaded: {page.url[:80]}")
 
         # Dismiss cookie banner before interacting with dialogs
         try:
             for _ in range(3):
-                for btn in await pg.locator('button').all():
+                for btn in await page.locator('button').all():
                     txt = (await btn.text_content() or '').strip()
                     if txt in ('Accept All', 'Reject All'):
                         await btn.click(force=True); await asyncio.sleep(1)
@@ -573,12 +518,12 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
         except Exception:
             pass
 
-        _page_btns = [(await b.text_content() or '').strip()[:40] for b in await pg.locator('button').all()]
+        _page_btns = [(await b.text_content() or '').strip()[:40] for b in await page.locator('button').all()]
         logger.info(f"Page buttons: {[b for b in _page_btns if b][:5]}")
 
         # Open Create API Key dialog
         _found_create = False
-        for btn in await pg.locator('button').all():
+        for btn in await page.locator('button').all():
             if 'Create API Key' in (await btn.text_content() or ''):
                 await btn.click(force=True)
                 await asyncio.sleep(2)
@@ -588,7 +533,7 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
         if not _found_create:
             logger.warning("Create API Key button not found — trying after 5s")
             await asyncio.sleep(5)
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
                     await btn.click(force=True)
                     await asyncio.sleep(2)
@@ -596,23 +541,23 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
                     break
         if not _found_create:
             logger.error("Create API Key button never found — navigating fresh")
-            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await page.goto("https://app.fireworks.ai/settings/users/api-keys")
             await asyncio.sleep(5)
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
                     await btn.click(force=True); await asyncio.sleep(2); break
 
         # Verify menu appeared before clicking menuitem
-        menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+        menu = page.locator('[role="menuitem"]:has-text("API Key")').first
         for _ in range(5):
             if await menu.count() > 0:
                 break
             await asyncio.sleep(1)
         if await menu.count() == 0:
             logger.warning("API Key menuitem not found — navigating to fresh page")
-            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await page.goto("https://app.fireworks.ai/settings/users/api-keys")
             await asyncio.sleep(5)
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
                     await btn.click(force=True); await asyncio.sleep(2); break
             for _ in range(5):
@@ -625,16 +570,16 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
         # Verify dialog actually appeared (should have input + buttons)
         _dialog_ok = False
         for _ in range(5):
-            _inp = pg.locator('input[name="name"]').first
+            _inp = page.locator('input[name="name"]').first
             if await _inp.count() > 0:
                 _dialog_ok = True
                 break
             await asyncio.sleep(1)
         if not _dialog_ok:
             logger.warning("API Key dialog not visible — retrying from fresh page")
-            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await page.goto("https://app.fireworks.ai/settings/users/api-keys")
             await asyncio.sleep(5)
-            for btn in await pg.locator('button').all():
+            for btn in await page.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
                     await btn.click(force=True); await asyncio.sleep(2); break
             for _ in range(5):
@@ -644,7 +589,7 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
             await menu.click(force=True)
             await asyncio.sleep(2)
 
-        return await _generate_and_poll_key(pg, key_name)
+        return await _generate_and_poll_key(page, key_name)
 
     except Exception as e:
         logger.error(f"API Key error: {e}")
@@ -653,33 +598,16 @@ async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] 
 
 async def verify_account(verify_url: str, cdp_port: Optional[int] = None, page=None, browser=None) -> bool:
     """Open Fireworks verify URL to confirm account. Returns True if confirmed.
-    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
+    Uses provided page (ONE Browser) — no fallback, no launch. Returns True if confirmed."""
     import asyncio
-    from playwright.async_api import async_playwright
-    
-    own_browser = False
-    own_page = False
+
+    if page is None:
+        logger.error("verify_account: No page provided")
+        return False
     try:
-        if page is not None:
-            pass
-        elif cdp_port:
-            async with async_playwright() as p:
-                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-                own_browser = True
-                page = await browser.new_page()
-                own_page = True
-        else:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
-                own_browser = True
-                page = await browser.new_page()
-                own_page = True
-        
         await page.goto(verify_url)
         await asyncio.sleep(2)
         logger.info(f"Verify URL opened: {page.url[:80]}")
-        if own_page:
-            await page.close()
         return True
     except Exception as e:
         logger.error(f"Verify error: {e}")
