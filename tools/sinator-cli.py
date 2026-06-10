@@ -2,6 +2,7 @@
 SINator CLI — Generate Fireworks AI API Keys.
 
 Requires Chrome + CUA-Driver + GMX session.
+Docs: sinator-cli.doc.md
 """
 import sys
 import os

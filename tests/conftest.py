@@ -1,6 +1,10 @@
 """
 Shared pytest fixtures for SINator integration tests.
 
+Purpose: Provide session + function scoped fixtures for the test suite.
+Docs: tests/conftest.doc.md
+
+
 Requires:
     - Playwright chromium.launch() (V15.4) — no pre-existing Chrome needed
     - cua-driver daemon running

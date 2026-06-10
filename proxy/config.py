@@ -1,3 +1,8 @@
+"""
+Proxy configuration — environment-driven, persisted to ~/.sin-pool/config.json.
+
+Docs: config.doc.md
+"""
 import os
 import json
 from pathlib import Path
@@ -7,6 +12,12 @@ FIREWORKS_BASE = "https://api.fireworks.ai/inference/v1"
 LEASE_TTL_SECONDS = int(os.getenv("SIN_LEASE_TTL", "1800"))
 LEASE_BACKUP = os.getenv("SIN_LEASE_BACKUP", "false").lower() == "true"
 MAX_RETRIES = int(os.getenv("SIN_MAX_RETRIES", "3"))
+AGENT_ID = os.environ.get("SIN_AGENT_ID", "").strip() or f"proxy-{DEFAULT_PROXY_PORT}"
+
+# Issue #24 — Cloudflare Worker fallback + D1 sync (consumed by pool-router.py
+# and scripts/sync_to_cf.py). Empty by default → fallback disabled.
+CF_WORKER_URL = os.getenv("CF_WORKER_URL", "").rstrip("/")
+CF_SYNC_TOKEN = os.getenv("CF_SYNC_TOKEN", "").strip()
 CACHE_DIR = Path(os.getenv("SIN_CACHE_DIR", str(Path.home() / ".sin-pool")))
 CONFIG_FILE = CACHE_DIR / "config.json"
 TUNNEL_URL_FILE = CACHE_DIR / "tunnel-url.txt"
@@ -23,7 +34,9 @@ def _resolve_pool_api_url() -> str:
             url = f.read_text().strip()
             if url:
                 return f"{url}/api/v1"
-    return "http://localhost:8000/api/v1"
+    # Fireworks backend now runs on 8100; 8000 is the legacy port and is kept
+    # only for older setups that explicitly override SIN_POOL_API_URL.
+    return "http://localhost:8100/api/v1"
 
 
 def load_config() -> dict:
@@ -37,6 +50,9 @@ def load_config() -> dict:
         "lease_ttl_seconds": LEASE_TTL_SECONDS,
         "lease_backup": LEASE_BACKUP,
         "max_retries": MAX_RETRIES,
+        "cf_worker_url": CF_WORKER_URL,
+        "cf_sync_token": CF_SYNC_TOKEN,
+        "agent_id": AGENT_ID,
     }
 
 

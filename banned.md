@@ -436,4 +436,26 @@ await new_pg.goto(iframe_url)
 
 **✅ Erlaubt:** CUA direkt für OS-Level-Klicks (kein LLM-Agent nötig)
 
-*Last Updated: 2026-05-31 (V15.4 — ONE Browser, Playwright frames statt CDP OOPIF)*
+---
+
+## 🛑 BANNED: Subagent Rotation Rules (2026-06-02 V19.14)
+
+| ❌ Verboten | Grund |
+|------------|-------|
+| Subagent killt Chrome (`pkill -9 -f "Google Chrome"`) | Killt laufende Rotation + GMX-Session → `rotate.py` bricht ab → Subagent denkt "Rotation kaputt" obwohl Code sauber ist |
+| Subagent startet Rotation wenn schon eine läuft | Zwei `rotate.py`-Prozesse kämpfen um Port 9222 → beide failen |
+| Subagent folgt blind AGENTS.md Chrome-Start-Command | Das ist NUR für den MAIN-Agent. Subagents MÜSSEN prüfen ob Chrome schon auf 9222 läuft |
+
+**✅ VOR jeder Rotation im Subagent:**
+```bash
+# 1. Prüfe ob Chrome schon auf 9222 läuft
+curl -s http://127.0.0.1:9222/json/version && echo "Chrome OK" || echo "Chrome FEHLT"
+
+# 2. Prüfe ob schon eine Rotation läuft
+ps aux | grep "rotate.py" | grep -v grep && echo "Rotation LÄUFT BEREITS — NICHT starten!" && exit 1
+
+# 3. Nur wenn beides OK → Rotation starten
+python3 tools/rotate.py
+```
+
+*Last Updated: 2026-06-02 (V19.14 — Subagent Rotation Guard)*

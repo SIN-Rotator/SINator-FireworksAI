@@ -1,6 +1,9 @@
 """
 Tests for auto-key-swap feature: POST /api/v1/pool/report + tools/swap_key.py
 
+Purpose: Verify report-key endpoint and swap_key CLI work end-to-end.
+Docs: tests/test_key_swap.doc.md
+
 WICHTIG: Erstellt ein Backup des Pools VOR den Tests und stellt es DANACH wieder her.
 NIEMALS echte Pool-Keys verbrauchen!
 """

@@ -12,7 +12,7 @@ case "${1:-status}" in
         echo "→ Creating SINator LaunchAgents..."
         $0 uninstall 2>/dev/null || true
 
-        # Backend (:8000)
+        # Backend (:8100)
         cat > ~/Library/LaunchAgents/com.sinator.backend.plist << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -105,7 +105,7 @@ EOF
         <key>SIN_CACHE_DIR</key>
         <string>${HOME}/.sin-pool</string>
         <key>SIN_POOL_API_URL</key>
-        <string>http://localhost:8000/api/v1</string>
+        <string>http://localhost:8100/api/v1</string>
         <key>SIN_PROXY_PORT</key>
         <string>${port}</string>
     </dict>
@@ -173,8 +173,8 @@ EOF
         done
         echo ""
         echo "=== Health ==="
-        curl -s --max-time 2 http://localhost:8000/health 2>/dev/null \
-            && echo "  :8000 ✅" || echo "  :8000 ❌"
+        curl -s --max-time 2 http://localhost:8100/health 2>/dev/null \
+            && echo "  :8100 ✅" || echo "  :8100 ❌"
         curl -s --max-time 2 http://localhost:9998/health 2>/dev/null \
             && echo "  :9998 ✅" || echo "  :9998 ❌"
         for port in $(seq 8888 8897); do

@@ -23,7 +23,7 @@
 ║  │ ├── /api/v1/cookies/inject    → Cookies in Browser injecten         │    ║
 ║  │ ├── /api/v1/pool/stats        → API-Key-Pool Status                 │    ║
 ║  │ ├── /api/v1/pool/add          → API-Key zum Pool hinzufügen         │    ║
-║  │ ├── /api/v1/pool/use          → API-Key als verwendet markieren     │    ║
+║  │ ├── /api/v1/pool/use          → API-Key als verwendet markieren (legacy)│║
 ║  │ └── /api/v1/pool/{key_id}     → API-Key aus Pool löschen            │    ║
 ║  └─────────────────────────────────────────────────────────────────────┘    ║
 ║                                                                              ║
@@ -47,7 +47,9 @@
 ║  1. pip install -r requirements.txt                                           ║
 ║  2. playwright install                                                       ║
 ║  3. python start_toolbox.py                                                   ║
-║  4. Swagger UI: http://localhost:8000/docs                                    ║
+║  4. Swagger UI: http://localhost:8100/docs                                    ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+
+Docs: __init__.doc.md
 """

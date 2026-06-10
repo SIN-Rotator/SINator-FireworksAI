@@ -1,5 +1,9 @@
 """
 Unit tests for PoolManager lease/return/expire/report logic.
+
+Purpose: Verify pool manager state machine works correctly in isolation.
+Docs: tests/test_pool_manager.doc.md
+
 Pure logic tests — no network, no real pool data.
 """
 import json

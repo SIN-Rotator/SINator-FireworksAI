@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Batch generate remaining keys via direct rotate.py calls."""
+"""Batch generate remaining keys via direct rotate.py calls.
+Docs: batch_rotate.doc.md"""
 import asyncio, json, time, sys, subprocess
 from pathlib import Path
 
@@ -12,12 +13,19 @@ log_lines = []
 def log(msg):
     line = f"[{time.strftime('%H:%M:%S')}] {msg}"
     log_lines.append(line)
-    print(line, flush=True)
-    LOG_FILE.write_text("\n".join(log_lines))
+    # stdout may be non-blocking under nohup/redirect — guard against Errno 35
+    try:
+        print(line, flush=True)
+    except BlockingIOError:
+        pass
+    try:
+        LOG_FILE.write_text("\n".join(log_lines))
+    except BlockingIOError:
+        pass
 
 async def count_available():
     import http.client
-    conn = http.client.HTTPConnection("localhost", 8000, timeout=5)
+    conn = http.client.HTTPConnection("localhost", 8100, timeout=5)
     conn.request("GET", "/api/v1/pool/stats")
     resp = conn.getresponse()
     data = json.loads(resp.read())
@@ -32,21 +40,21 @@ async def rotate_one():
         "--gmx-email", cfg.gmx_email,
         "--gmx-password", cfg.gmx_password,
         "--password", cfg.fireworks_password,
-        "--cdp-port", "9222",
+        "--debug",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         cwd=str(ROTATE_SCRIPT.parent.parent),
     )
-    output = []
+    # Drain all output in one shot — prevents pipe-buffer deadlock on long runs
+    stdout_bytes, _ = await proc.communicate()
+    output = stdout_bytes.decode("utf-8", errors="replace").splitlines() if stdout_bytes else []
+
     gmx_alias = None
     api_key = None
-    async for line_bytes in proc.stdout:
-        line = line_bytes.decode("utf-8", errors="replace").rstrip()
-        output.append(line)
+    for line in output:
         if "ROTATION COMPLETE" in line or "API Key:" in line or "Alias:" in line:
             log(line)
-    await proc.wait()
-    
+
     success = any("ROTATION COMPLETE" in l for l in output) and any("API Key:" in l for l in output)
     return {"status": "success" if success else "failed", "output": output}
 
@@ -68,8 +76,9 @@ async def main():
                 log(f"✅ #{successes}/{TARGET} complete")
             else:
                 failures += 1
-                last_err = [l for l in result["output"] if "failed" in l.lower() or "error" in l.lower()]
-                log(f"❌ #{successes + 1} FAILED: {last_err[-1] if last_err else 'unknown'}")
+                log(f"❌ #{successes + 1} FAILED — FULL OUTPUT:")
+                for l in result["output"]:
+                    log(f"  | {l}")
                 if failures >= 3:
                     log("⚠️  3 consecutive failures — STOPPING. Check Chrome/GMX session.")
                     break

@@ -1,4 +1,7 @@
-"""Stores SINator runtime configuration (GMX + Fireworks credentials)."""
+"""Stores SINator runtime configuration (GMX + Fireworks credentials).
+
+Docs: config_manager.doc.md
+"""
 import json, logging, os
 from pathlib import Path
 from typing import Optional
@@ -9,9 +12,10 @@ CONFIG_FILE = DATA_DIR / "config.json"
 
 class Config:
     def __init__(self):
-        self.gmx_email: str = "delqhi@gmx.de"
-        self.gmx_password: str = "ZOE.jerry2024"
-        self.fireworks_password: str = "ZOE.jerry2024!"
+        # Get from environment variables (or use placeholder defaults)
+        self.gmx_email: str = os.environ.get("GMX_EMAIL", "")
+        self.gmx_password: str = os.environ.get("GMX_PASSWORD", "")
+        self.fireworks_password: str = os.environ.get("FIREWORKS_PASSWORD", "")
         self._load()
 
     def _load(self):

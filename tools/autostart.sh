@@ -70,7 +70,7 @@ EOF
 </plist>
 EOF
 
-        # 3. Backend (FastAPI :8000)
+        # 3. Backend (FastAPI :8100)
         cat > "$LA/com.sinator.backend.plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -164,7 +164,7 @@ EOF
         <key>SIN_CACHE_DIR</key>
         <string>${HOME}/.sin-pool</string>
         <key>SIN_POOL_API_URL</key>
-        <string>http://localhost:8000/api/v1</string>
+        <string>http://localhost:8100/api/v1</string>
         <key>SIN_PROXY_PORT</key>
         <string>${port}</string>
     </dict>
@@ -242,8 +242,8 @@ EOF
             echo "║  🌐 Chrome CDP:  not reachable ❌"
         fi
 
-        if curl -s http://localhost:8000/docs &>/dev/null; then
-            echo "║  🌐 Backend:     http://localhost:8000 ✅"
+        if curl -s http://localhost:8100/docs &>/dev/null; then
+            echo "║  🌐 Backend:     http://localhost:8100 ✅"
         else
             echo "║  🌐 Backend:     not reachable ❌"
         fi

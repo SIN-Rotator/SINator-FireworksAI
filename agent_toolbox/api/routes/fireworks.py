@@ -1,5 +1,7 @@
 """
 SINATOR — Fireworks Routes V8 (Playwright+CUA, 2026-05-22)
+
+Docs: fireworks.doc.md
 """
 import time
 import logging

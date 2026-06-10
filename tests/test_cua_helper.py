@@ -1,4 +1,8 @@
-"""Tests for cua_helper module — dynamic CUA window detection."""
+"""Tests for cua_helper module — dynamic CUA window detection.
+
+Purpose: Verify CUA window detection works on macOS with cua-driver.
+Docs: tests/test_cua_helper.doc.md
+"""
 
 import sys
 from pathlib import Path

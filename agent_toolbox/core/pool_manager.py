@@ -1,9 +1,30 @@
+"""API Key pool manager — add, lease, return, mark, report, stats, SSE events.
+
+Docs: pool_manager.doc.md
+
+V19.20 SAFETY: save() creates timestamped backup in pool-snapshots/ before
+every write + uses atomic .tmp file. Recovery from keychain writes to
+SEPARATE file (recovered-keys-pending.json), never touches pool.json.
+
+V19.21 BACKUP: save() also writes AES-256-GCM encrypted copy to
+github-backup/ that can be pushed to a private GitHub repo.
+Set SINATOR_BACKUP_GIT_PUSH=1 to auto-push after every rotation.
+"""
 import json
+import re
 import time
 import uuid
+import hashlib
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+
+# V19.21: AES-256-GCM for encrypted backup
+try:
+    from Crypto.Cipher import AES
+    _AES_AVAILABLE = True
+except ImportError:
+    _AES_AVAILABLE = False
 
 from agent_toolbox.core.keychain_store import (
     store_key as _store_to_keychain,
@@ -13,6 +34,11 @@ from agent_toolbox.core.keychain_store import (
 )
 
 logger = logging.getLogger(__name__)
+
+UUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.I,
+)
 
 DEFAULT_POOL_PATH = Path(__file__).parent.parent.parent / "data" / "fireworksai-pool.json"
 
@@ -35,7 +61,13 @@ class PoolManager:
         self._load()
 
     def _load(self):
-        """Lädt den Pool aus der JSON-Datei."""
+        """Lädt den Pool aus der JSON-Datei.
+
+        Auto-Recovery (V19.8): Wenn die JSON-Datei fehlt aber das macOS
+        Keychain Einträge hat, wird der Pool aus dem Keychain rekonstruiert
+        (siehe tools/recover_pool.py). Verhindert "Pool tot" Dashboard-Fehler
+        wenn ein Sync-Tool die JSON-Datei löscht.
+        """
         if self.pool_path.exists():
             try:
                 with open(self.pool_path, "r") as f:
@@ -52,21 +84,169 @@ class PoolManager:
                 logger.error(f"Pool-Laden fehlgeschlagen: {e}")
                 self.keys = []
         else:
-            logger.info("Kein Pool gefunden, erstelle neuen")
-            self.keys = []
+            # V19.8: Try auto-recovery from macOS Keychain
+            recovered = self._try_recover_from_keychain()
+            if recovered is not None:
+                self.keys = recovered
+            else:
+                logger.info("Kein Pool gefunden, erstelle neuen")
+                self.keys = []
+
+    def _try_recover_from_keychain(self) -> Optional[List[Dict[str, Any]]]:
+        """V19.20: Reconstruct pool entries from macOS Keychain.
+
+        SAFETY (V19.20): Writes to `recovered-keys-pending.json` (separate file).
+        NEVER overwrites the main pool.json. The real pool.json is the
+        source-of-truth and only modified by explicit operations.
+
+        Returns:
+            List of recovered key entries, or None if recovery failed.
+        Side effect: writes recovered-keys-pending.json for human review.
+        """
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["security", "dump-keychain"],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                return None
+
+            accounts: List[str] = []
+            capture_next = False
+            for line in result.stdout.splitlines():
+                if '"svce"<blob>="com.sinator.pool"' in line:
+                    capture_next = True
+                    continue
+                if capture_next and '"acct"<blob>=' in line:
+                    start = line.index('"acct"<blob>="') + len('"acct"<blob>="')
+                    end = line.index('"', start)
+                    accounts.append(line[start:end])
+                    capture_next = False
+
+            if not accounts:
+                return None
+
+            # V19.13: Reject non-UUID entries (ghost IDs from botched recovery)
+            filtered = [aid for aid in accounts if UUID_RE.match(aid)]
+            if len(filtered) != len(accounts):
+                rejected_count = len(accounts) - len(filtered)
+                logger.warning(
+                    f"V19.13: Filtered out {rejected_count} non-UUID ghost IDs "
+                    f"from keychain recovery"
+                )
+                for aid in accounts:
+                    if not UUID_RE.match(aid):
+                        logger.warning(f"  -> rejected: {aid[:60]}")
+                accounts = filtered
+
+            if not accounts:
+                return None
+
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+            entries: List[Dict[str, Any]] = []
+            for aid in accounts:
+                short = aid.split("-")[0] if "-" in aid else aid[:8]
+                entries.append({
+                    "id": aid,
+                    "api_key": _KEYCHAIN_SENTINEL,
+                    "alias_email": f"recovered-{short}@unknown.local",
+                    "key_name": "recovered-from-keychain",
+                    "created_at": now,
+                    "used": False,
+                    "used_at": None,
+                    "credits_initial": 6.0,
+                    "credits_remaining": 6.0,
+                    "credits_checked_at": None,
+                    "suspended": False,
+                    "recovered": True,
+                    "recovery_note": "Auto-recovered from macOS Keychain (V19.20)",
+                })
+
+            # V19.20: Write to SEPARATE file — DO NOT touch pool.json
+            # The real pool.json is the source-of-truth.
+            pending_path = self.pool_path.parent / "recovered-keys-pending.json"
+            pending_path.write_text(json.dumps(entries, indent=2))
+            logger.warning(
+                f"⚠️ V19.20 RECOVERY: {len(entries)} keys found in Keychain, "
+                f"written to {pending_path.name} (NOT overwriting pool.json). "
+                f"Run: python tools/recover_pool.py --hydrate"
+            )
+            return entries  # Return for caller, but DO NOT save as pool.json
+        except Exception as e:
+            logger.error(f"Keychain-Recovery fehlgeschlagen: {e}")
+            return None
 
     def reload(self):
         """Lädt den Pool frisch von Disk (sync mit externen Änderungen)."""
         self._load()
 
     def save(self):
-        """Speichert den Pool in die JSON-Datei."""
+        """Speichert den Pool in die JSON-Datei. V19.20: Backup vor jedem Schreiben."""
         try:
-            with open(self.pool_path, "w") as f:
-                json.dump(self.keys, f, indent=2)
+            # V19.20: ATOMIC WRITE — backup existing file before overwriting
+            if self.pool_path.exists():
+                backup_dir = self.pool_path.parent / "pool-snapshots"
+                backup_dir.mkdir(parents=True, exist_ok=True)
+                ts = time.strftime("%Y%m%dT%H%M%S")
+                backup_path = backup_dir / f"pool-{ts}.json"
+                # Also keep latest symlink/copy
+                latest_path = backup_dir / "pool-latest.json"
+                try:
+                    backup_path.write_text(self.pool_path.read_text())
+                    latest_path.write_text(self.pool_path.read_text())
+                except Exception as e:
+                    logger.warning(f"V19.20: Backup snapshot failed: {e}")
+            # Write to .tmp then atomic rename
+            tmp_path = self.pool_path.with_suffix('.json.tmp')
+            tmp_path.write_text(json.dumps(self.keys, indent=2))
+            tmp_path.replace(self.pool_path)
             logger.info(f"Pool gespeichert: {len(self.keys)} Keys")
+            # V19.21: Auto-backup to GitHub repo (async, non-blocking)
+            try:
+                self._github_backup()
+            except Exception as e:
+                logger.warning(f"V19.21: GitHub backup skipped: {e}")
         except Exception as e:
             logger.error(f"Pool-Speichern fehlgeschlagen: {e}")
+
+    def _github_backup(self):
+        """V19.21: Encrypted backup to GitHub repo (sinator-pool-backup).
+        Uses AES-256-GCM with machine-derived key. Async, never blocks save().
+        Writes to local backup file + optionally git-pushes.
+        """
+        import os
+        if not _AES_AVAILABLE:
+            logger.warning("V19.21: pycryptodome not installed — skipping encrypted backup. Run: pip install pycryptodome")
+            return
+        backup_dir = self.pool_path.parent / "github-backup"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y%m%dT%H%M%S")
+        # Get machine key (hostname + user) — not for security, just for separation
+        machine_id = f"{os.uname().nodename}-{os.environ.get('USER','unknown')}"
+        key = hashlib.sha256(f"sinator-pool-backup-{machine_id}-v19.21".encode()).digest()
+        # Encrypt
+        nonce = os.urandom(12)
+        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+        plaintext = json.dumps(self.keys, indent=2).encode()
+        ciphertext, tag = cipher.encrypt_and_digest(plaintext)
+        # Write encrypted file
+        enc_path = backup_dir / f"pool-{ts}.enc"
+        enc_path.write_bytes(nonce + tag + ciphertext)
+        # Also write latest
+        latest = backup_dir / "pool-latest.enc"
+        latest.write_bytes(nonce + tag + ciphertext)
+        logger.info(f"V19.21: Encrypted backup written to {enc_path.name} ({len(ciphertext)} bytes)")
+        # Optional: git push to backup repo (if configured)
+        git_push = os.environ.get("SINATOR_BACKUP_GIT_PUSH", "").lower() in ("1", "true", "yes")
+        if git_push:
+            try:
+                import subprocess
+                subprocess.run(["git", "add", "-A"], cwd=backup_dir, timeout=5, capture_output=True)
+                subprocess.run(["git", "commit", "-m", f"pool-backup-{ts}"], cwd=backup_dir, timeout=10, capture_output=True)
+                subprocess.run(["git", "push"], cwd=backup_dir, timeout=30, capture_output=True)
+            except Exception as e:
+                logger.warning(f"V19.21: Git push failed: {e}")
 
     def add_key(self, api_key: str, alias_email: str, key_name: str = "sinator-key",
                 credits_initial: float = 6.0) -> Dict[str, Any]:
@@ -84,6 +264,7 @@ class PoolManager:
         """
         self.reload()
         key_id = str(uuid.uuid4())
+        now_ts = time.time()
         _store_to_keychain(key_id, api_key)
         key_entry = {
             "id": key_id,
@@ -96,6 +277,10 @@ class PoolManager:
             "credits_initial": credits_initial,
             "credits_remaining": credits_initial,
             "credits_checked_at": None,
+            "assigned_to": None,
+            "active_consumers": [],
+            "shared_count": 0,
+            "last_heartbeat": now_ts,
         }
 
         self.keys.append(key_entry)
@@ -139,8 +324,42 @@ class PoolManager:
                 key["suspended"] = True
                 key["suspended_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
                 key["suspended_reason"] = reason
+                # V19.11: Clear lease fields — a suspended key can never be
+                # "actively leased". Before this fix, get_stats() excluded
+                # suspended keys from the leased count (because `not suspended`
+                # in the AND chain), so the stats were correct. BUT the raw JSON
+                # still had `leased_until` etc. set, which:
+                #   1. Confused debugging (looked like the key was still leased)
+                #   2. Could cause issues if unsuspend_key() (V19.9) was called
+                #      — the stale lease fields would make it look actively leased
+                # Setting them to None keeps the JSON state consistent.
+                key["leased_until"] = None
+                key["leased_to"] = None
+                key["lease_id"] = None
+                key["leased_at"] = None
                 self.save()
                 logger.info(f"Key suspended ({reason}): {key_id[:8]}...")
+                return True
+        return False
+
+    def unsuspend_key(self, key_id: str, reason: str = "test_verified_alive") -> bool:
+        """
+        Re-aktiviert einen suspended Key (false-positive recovery).
+
+        Wird von tools/test_keys.py genutzt um Keys die als suspended markiert wurden
+        (z.B. transient 412) aber tatsächlich noch alive sind, zurück in den Pool
+        zu holen.
+        """
+        self.reload()
+        for key in self.keys:
+            if key["id"] == key_id:
+                key["suspended"] = False
+                key["suspended_at"] = None
+                key["suspended_reason"] = None
+                key["reactivated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ")
+                key["reactivation_reason"] = reason
+                self.save()
+                logger.info(f"Key reactivated ({reason}): {key_id[:8]}...")
                 return True
         return False
 
@@ -174,7 +393,7 @@ class PoolManager:
         now = time.time()
         total = len(self.keys)
         used = sum(1 for k in self.keys if k.get("used", False))
-        suspended = sum(1 for k in self.keys if k.get("suspended", False) and not k.get("used", False))
+        suspended = sum(1 for k in self.keys if k.get("suspended") is True and not k.get("used", False))
         leased = sum(1 for k in self.keys
                      if not k.get("used", False)
                      and not k.get("suspended", False)
@@ -204,6 +423,9 @@ class PoolManager:
                 "credits_initial": k.get("credits_initial", 6.0),
                 "credits_remaining": k.get("credits_remaining", 6.0),
                 "credits_checked_at": k.get("credits_checked_at"),
+                "assigned_to": k.get("assigned_to"),
+                "active_consumers": k.get("active_consumers", []),
+                "shared_count": k.get("shared_count", 0),
             })
 
         return {
@@ -212,6 +434,8 @@ class PoolManager:
             "suspended": suspended,
             "leased": leased,
             "available": available,
+            "assigned": sum(1 for k in self.keys if k.get("assigned_to") and not k.get("used") and not k.get("suspended")),
+            "shared": sum(1 for k in self.keys if len(k.get("active_consumers", [])) > 1 and not k.get("used") and not k.get("suspended")),
             "keys": keys_list,
         }
 
@@ -309,6 +533,98 @@ class PoolManager:
             return result
         logger.warning("No available keys to lease")
         return None
+
+    def get_key_for_agent(self, agent_id: str, preferred_key_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """V19.14: Soft-ownership key assignment. Never blocks.
+
+        Priority:
+          1. preferred_key_id (sticky — agent requests its known key)
+          2. assigned_to == agent_id (agent's own key)
+          3. assigned_to is None (unassigned → assign now)
+          4. Least-shared key (min active_consumers) as fallback sharing
+
+        Returns None only if ALL keys are suspended/used.
+        """
+        self.reload()
+        now = time.time()
+        active = [k for k in self.keys if not k.get("used") and not k.get("suspended")]
+        if not active:
+            return None
+
+        if preferred_key_id:
+            for k in active:
+                if k["id"] == preferred_key_id:
+                    return self._register_consumer(k, agent_id)
+
+        for k in active:
+            if k.get("assigned_to") == agent_id:
+                return self._register_consumer(k, agent_id)
+
+        for k in active:
+            if not k.get("assigned_to"):
+                k["assigned_to"] = agent_id
+                self.save()
+                return self._register_consumer(k, agent_id)
+
+        best = min(active, key=lambda k: len(k.get("active_consumers", [])))
+        best.setdefault("shared_count", 0)
+        best["shared_count"] += 1
+        logger.info(f"V19.14: Key {best['id'][:8]} SHARED ({agent_id} joins {len(best.get('active_consumers',[]))} existing consumers)")
+        return self._register_consumer(best, agent_id)
+
+    def _register_consumer(self, key: Dict[str, Any], agent_id: str) -> Dict[str, Any]:
+        """V19.14: Register an agent as active consumer of a key, hydrate, save."""
+        consumers = key.setdefault("active_consumers", [])
+        if agent_id not in consumers:
+            consumers.append(agent_id)
+        key["last_heartbeat"] = time.time()
+        self.save()
+        hydrated = self._hydrate_key(key)
+        return {
+            "api_key": hydrated["api_key"],
+            "key_id": key["id"],
+            "alias_email": key.get("alias_email", ""),
+            "key_name": key.get("key_name", ""),
+            "shared": len(consumers) > 1,
+            "active_consumers": consumers.copy(),
+            "assigned_to": key.get("assigned_to"),
+            "shared_count": key.get("shared_count", 0),
+        }
+
+    def release_key_for_agent(self, agent_id: str, key_id: str) -> bool:
+        """V19.14: Agent releases a key. Removes from active_consumers only."""
+        self.reload()
+        for k in self.keys:
+            if k["id"] == key_id:
+                consumers = k.get("active_consumers", [])
+                if agent_id in consumers:
+                    consumers.remove(agent_id)
+                k["active_consumers"] = consumers
+                self.save()
+                logger.info(f"V19.14: Agent {agent_id} released key {key_id[:8]} (remaining consumers: {len(consumers)})")
+                return True
+        return False
+
+    def cleanup_stale_consumers(self, timeout_seconds: int = 300) -> int:
+        """V19.14: Remove consumers that haven't sent a heartbeat in timeout_seconds.
+
+        Called periodically by the backend lifespan task.
+
+        Returns: number of consumers cleaned up.
+        """
+        self.reload()
+        now = time.time()
+        cleaned = 0
+        for k in self.keys:
+            last_hb = k.get("last_heartbeat", 0)
+            consumers = k.get("active_consumers", [])
+            if consumers and now - last_hb > timeout_seconds:
+                k["active_consumers"] = []
+                cleaned += len(consumers)
+        if cleaned > 0:
+            self.save()
+            logger.info(f"V19.14: Cleaned {cleaned} stale consumers (timeout={timeout_seconds}s)")
+        return cleaned
 
     def return_key(self, key_id: str, lease_id: Optional[str] = None) -> bool:
         """

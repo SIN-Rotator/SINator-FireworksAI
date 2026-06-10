@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""
-Test: OTP extraction via GMX MailCheck Extension + CDP OOPIF
+"""Test: OTP via GMX MailCheck Extension + CDP OOPIF attachment.
+
 Restored from commit 7ce418a (2026-05-21) — the working approach.
 
-Flow:
-1. Open chrome-extension://camnampocfohlcgbajligmemmabnljcm/pages/mail-panel.html
-2. Find Fireworks email via data-email-id
-3. Click email → GMX tab opens with email content
-4. Find mailbody-ui.de OOPIF via CDP Target.getTargets
-5. Attach OOPIF → extract verify URL
+Docs: test_otp_mailcheck.doc.md
 """
 import asyncio
 import sys

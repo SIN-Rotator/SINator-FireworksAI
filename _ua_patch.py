@@ -6,6 +6,8 @@
 Der Router (localhost:9998) failtovert automatisch bei 429/412/5xx
 zu den 10 lokalen Proxys. SDK-Retry würde nur denselben Endpoint
 wiederholen → sinnlos. Router-Retry → nächster Pool.
+
+Docs: _ua_patch.doc.md
 """
 import openai
 import functools

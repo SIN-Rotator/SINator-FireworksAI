@@ -1,3 +1,7 @@
+"""GMX + Fireworks credentials config CRUD routes.
+
+Docs: config.doc.md
+"""
 from fastapi import APIRouter
 from pydantic import BaseModel
 from agent_toolbox.core.config_manager import get_config

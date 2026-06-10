@@ -8,6 +8,8 @@ logs/
 data/
 *.json
 !config.example.json
+# Pool contains 255+ Fireworks API keys - DO NOT TRACK
+data/fireworksai-pool.json
 
 # Chrome profiles (huge, temporary)
 /tmp/sinator-chrome-*/

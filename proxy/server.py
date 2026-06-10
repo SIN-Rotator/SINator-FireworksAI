@@ -11,6 +11,8 @@ Features:
 Usage:
   python -m proxy.server
   SIN_PROXY_PORT=8888 python -m proxy.server
+
+Docs: server.doc.md
 """
 import os
 import sys
@@ -19,7 +21,7 @@ import logging
 import time
 import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import aiohttp
 from aiohttp import web
@@ -36,6 +38,11 @@ except ImportError:
     from config import load_config, FIREWORKS_BASE
     from pool_client import PoolClient
     from key_cache import KeyCache
+
+try:
+    from proxy.config import AGENT_ID
+except ImportError:
+    from config import AGENT_ID
 
 logging.basicConfig(
     level=logging.INFO,
@@ -115,9 +122,34 @@ class PoolProxy:
         self.fireworks_base = cfg.get("fireworks_base", FIREWORKS_BASE)
         self.max_retries = cfg.get("max_retries", 3)
         self.pool_client = PoolClient(cfg.get("pool_api_url"))
-        self.cache = KeyCache()
         self.fw_session: Optional[aiohttp.ClientSession] = None
-        self.proxy_id = f"proxy-{int(time.time())}"
+        # V19.10: Unique proxy ID — port + random suffix.
+        # Before: f"proxy-{int(time.time())}" — all 10 proxies in start-multi.sh
+        # started within the same second, so they ALL got the same ID.
+        # This caused 52+20 leases to pile up under one leased_to and
+        # made the pool unusable (only 12 available of 256 total).
+        import random as _random
+        self.proxy_id = f"proxy-{self.port}-{_random.randint(1000, 9999)}"
+        self.agent_id = getattr(load_config(), 'agent_id', AGENT_ID)  # V19.14
+        try:
+            from proxy.key_cache import AgentKeyCache
+        except ImportError:
+            from key_cache import AgentKeyCache
+        self.cache = AgentKeyCache(agent_id=self.agent_id)
+        # V19.14 Phase 2: Per-session AgentKeyCaches, keyed by x-agent-id header
+        self._session_caches: Dict[str, Any] = {}
+        self._session_caches[self.agent_id] = self.cache  # default proxy cache
+
+    def _get_session_cache(self, agent_id: str):
+        """V19.14 Phase 2: Get or create AgentKeyCache for a session agent_id."""
+        if agent_id not in self._session_caches:
+            try:
+                from proxy.key_cache import AgentKeyCache
+            except ImportError:
+                from key_cache import AgentKeyCache
+            self._session_caches[agent_id] = AgentKeyCache(agent_id=agent_id)
+            logger.info(f"V19.14: New session cache for {agent_id} (total sessions: {len(self._session_caches)})")
+        return self._session_caches[agent_id]
 
     def create_app(self) -> web.Application:
         app = web.Application()
@@ -143,42 +175,46 @@ class PoolProxy:
         logger.info(f"  Pool API: {self.pool_client.pool_api_url}")
 
     async def _on_shutdown(self, app):
-        if self.cache.primary:
-            await self.pool_client.return_key(
-                self.cache.primary.get("key_id", ""),
-                self.cache.primary.get("lease_id"),
-            )
-            logger.info("Returned primary key on shutdown")
-        if self.cache.backup:
-            await self.pool_client.return_key(
-                self.cache.backup.get("key_id", ""),
-                self.cache.backup.get("lease_id"),
-            )
-            logger.info("Returned backup key on shutdown")
+        """V19.14: Release ALL session keys on shutdown."""
+        for agent_id, cache in list(self._session_caches.items()):
+            if cache.primary:
+                await self.pool_client.release_agent_key(
+                    agent_id,
+                    cache.primary.get("key_id", ""),
+                )
+                logger.info(f"Released session key for {agent_id}")
         await self.pool_client.close()
         if self.fw_session:
             await self.fw_session.close()
 
-    async def _ensure_key(self) -> Optional[dict]:
-        primary = self.cache.get_primary()
-        if primary:
-            return primary
-        if not NO_BACKUP:
-            promoted = self.cache.promote_backup()
-            if promoted:
-                asyncio.create_task(self._fetch_backup())
-                return promoted
-        lease_result = await self.pool_client.lease(leased_to=self.proxy_id)
-        if not lease_result:
-            return None
-        key_info = self._lease_to_key_info(lease_result)
-        self.cache.set_primary(key_info)
-        if not NO_BACKUP:
-            if lease_result.get("backup"):
-                self.cache.set_backup(self._lease_to_key_info(lease_result["backup"]))
-            else:
-                asyncio.create_task(self._fetch_backup())
-        return key_info
+    async def _ensure_key(self, agent_id: str = None):
+        """V19.14: Soft-ownership — never blocks, never retries.
+        
+        Uses per-session AgentKeyCache if x-agent-id header is present.
+        Falls back to proxy's default agent_id.
+        """
+        if agent_id is None:
+            agent_id = self.agent_id
+        
+        # Get the right cache for this session
+        cache = self._get_session_cache(agent_id)
+        
+        # 1. Cache hit
+        key = cache.get_primary()
+        if key:
+            return key
+        
+        # 2. Get from backend (no retry loop!)
+        result = await self.pool_client.get_agent_key(
+            agent_id=agent_id,
+            preferred_key_id=cache.preferred_key_id,
+        )
+        
+        if result and result.get("api_key"):
+            cache.set_primary(result)
+            return result
+        
+        return None
 
     @staticmethod
     def _lease_to_key_info(lease: dict) -> dict:
@@ -192,12 +228,8 @@ class PoolProxy:
         }
 
     async def _fetch_backup(self):
-        try:
-            lease_result = await self.pool_client.lease(leased_to=f"{self.proxy_id}-backup")
-            if lease_result:
-                self.cache.set_backup(self._lease_to_key_info(lease_result))
-        except Exception as e:
-            logger.warning(f"Backup lease failed: {e}")
+        """V19.14: No backup keys needed — sharing is the fallback."""
+        pass
 
     async def _swap_key(self, reason: str) -> Optional[dict]:
         old = self.cache.primary
@@ -210,9 +242,9 @@ class PoolProxy:
             )
             self.cache.clear_primary()
             # Use the replacement key returned by report() (already leased atomically)
-            if report_result and report_result.get("new_key"):
+            if report_result and report_result.get("new_api_key"):
                 key_info = {
-                    "api_key": report_result["new_key"],
+                    "api_key": report_result["new_api_key"],
                     "key_id": report_result.get("new_key_id", ""),
                     "lease_id": report_result.get("lease_id", ""),
                     "expires_at": report_result.get("expires_at", 0),
@@ -249,7 +281,7 @@ class PoolProxy:
         """Verify key via lightweight chat request — more accurate than /models."""
         try:
             body = {
-                "model": "accounts/fireworks/models/llama-v3p1-8b-instruct",
+                "model": "accounts/fireworks/models/deepseek-v4-flash",
                 "messages": [{"role": "user", "content": "hi"}],
                 "max_tokens": 1,
                 "stream": False,
@@ -353,22 +385,24 @@ class PoolProxy:
         ]
         return web.json_response({"object": "list", "data": data})
 
-    async def _ensure_key_with_retry(self, max_attempts: int = 300, delay: float = 1.0):
-        """Retry _ensure_key() with 1s intervals instead of returning 503 to client."""
+    async def _ensure_key_with_retry(self, agent_id: str = None, max_attempts: int = 5, delay: float = 2.0) -> Optional[Dict[str, Any]]:
+        """V19.14: Short retry for transient empty-pool resets (max 5 attempts, 2s each).
+        
+        Down from 300 attempts (5min) in V19.12. Soft-ownership means keys
+        are never permanently blocked by leases.
+        """
         for attempt in range(max_attempts):
-            key_info = await self._ensure_key()
+            key_info = await self._ensure_key(agent_id=agent_id)
             if key_info:
-                if attempt > 0:
-                    logger.info(f"Key acquired after {attempt+1}s wait")
                 return key_info
             if attempt < max_attempts - 1:
-                logger.info(f"No key available, retry {attempt+1}/{max_attempts} in {delay}s")
                 await asyncio.sleep(delay)
-        logger.error("No key available after max retries")
         return None
 
     async def _do_proxy(self, request: web.Request, fw_url: str) -> web.Response:
-        key_info = await self._ensure_key_with_retry()
+        # V19.14 Phase 2: Per-session key assignment via x-agent-id header
+        session_agent_id = request.headers.get("x-agent-id", self.agent_id)
+        key_info = await self._ensure_key_with_retry(agent_id=session_agent_id)
         if not key_info:
             return web.json_response(
                 {"error": "no_api_key", "message": "No API key available in pool"},
@@ -400,14 +434,25 @@ class PoolProxy:
                         if status in MAYBE_DEAD_CODES:
                             # Prüfe Response-Body auf echte Dead-Keywords
                             is_confirmed_dead = any(kw in error_text for kw in PERMANENT_ERROR_KEYWORDS)
-                            # Verifiziere zusätzlich via /models
+                            if is_confirmed_dead:
+                                logger.info(f"Confirmed dead via error body: {status} ({reason}) — matched keyword in response, swapping immediately")
+                                new_key = await self._swap_key(reason)
+                                if new_key and attempt < self.max_retries - 1:
+                                    headers["Authorization"] = f"Bearer {new_key['api_key']}"
+                                    return web.Response(
+                                        body=b'{"error":"key_swapped","message":"Pool key rotated, please retry","retry_after":1}',
+                                        status=503,
+                                        content_type="application/json",
+                                        headers={"Retry-After": "1"},
+                                    )
+                                return web.Response(body=error_body_bytes, status=status,
+                                                    content_type=fw_resp.headers.get("Content-Type", "application/json"))
+                            # Body-Keywords matchten nicht — zusätzlich via /models verifizieren
                             models_dead = await self._verify_key_dead(key_info['api_key'])
-                            if not is_confirmed_dead and not models_dead:
+                            if not models_dead:
                                 logger.warning(f"Key got {status} but error body + /models don't confirm dead — retrying same key")
                                 await asyncio.sleep(2)
                                 continue
-                            if is_confirmed_dead:
-                                logger.info(f"Confirmed dead via error body: {status} ({reason}) — matched keyword in response")
                         logger.warning(f"Dead key: {status} ({reason}), swapping (attempt {attempt+1})...")
                         new_key = await self._swap_key(reason)
                         if new_key and attempt < self.max_retries - 1:
@@ -589,21 +634,22 @@ class PoolProxy:
 def main():
     import urllib.request
     backend_wait = int(os.environ.get("SIN_BACKEND_WAIT", "5"))
+    backend_url = os.environ.get("SIN_BACKEND_HEALTH_URL", "http://localhost:8100/health")
     for i in range(backend_wait):
         try:
-            urllib.request.urlopen("http://localhost:8000/health", timeout=2)
-            logger.info(f"✅ Backend ready (waited {i}s)")
+            urllib.request.urlopen(backend_url, timeout=2)
+            logger.info(f"✅ Backend ready (waited {i}s) at {backend_url}")
             break
         except Exception:
             if i == 0:
-                logger.info(f"⏳ Waiting for backend on :8000 (max {backend_wait*sleep}s)...")
+                logger.info(f"⏳ Waiting for backend at {backend_url} (max {backend_wait}s)...")
             time.sleep(1)
     else:
-        logger.warning("⚠️ Backend not ready — proxy will start anyway")
+        logger.warning(f"⚠️ Backend not ready at {backend_url} — proxy will start anyway")
 
     proxy = PoolProxy()
     app = proxy.create_app()
-    web.run_app(app, host="0.0.0.0", port=proxy.port, print=logger.info)
+    web.run_app(app, host="127.0.0.1", port=proxy.port, print=logger.info)
 
 
 if __name__ == "__main__":

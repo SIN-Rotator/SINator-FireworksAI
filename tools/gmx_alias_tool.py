@@ -19,13 +19,14 @@
 ║  python tools/gmx_alias_tool.py delete           → Alias löschen             ║
 ║                                                                              ║
 ║  API ALTERNATIVE:                                                            ║
-║  curl -X POST http://localhost:8000/gmx/alias/rotate                         ║
-║  curl -X POST http://localhost:8000/gmx/alias/create?alias_name=<name>        ║
-║  curl -X POST http://localhost:8000/gmx/session/check                         ║
+║  curl -X POST http://localhost:8100/gmx/alias/rotate                         ║
+║  curl -X POST http://localhost:8100/gmx/alias/create?alias_name=<name>        ║
+║  curl -X POST http://localhost:8100/gmx/session/check                         ║
 ║                                                                              ║
 ║  WICHTIG: Browser muss laufen! POST /browser/start zuerst.                   ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+Docs: gmx_alias_tool.doc.md
 """
 import sys
 import asyncio
@@ -202,9 +203,9 @@ Commands:
   delete      Alias löschen (mit Bestätigung)
 
 API Alternative:
-  curl -X POST http://localhost:8000/gmx/alias/rotate
-  curl -X POST http://localhost:8000/gmx/alias/create?alias_name=<name>
-  curl -X POST http://localhost:8000/gmx/session/check
+  curl -X POST http://localhost:8100/gmx/alias/rotate
+  curl -X POST http://localhost:8100/gmx/alias/create?alias_name=<name>
+  curl -X POST http://localhost:8100/gmx/session/check
 
 ⚠️  READ-ONLY VERIFIED — ÄNDERN VERBOTEN!
         """

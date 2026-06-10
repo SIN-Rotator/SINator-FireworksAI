@@ -1,3 +1,7 @@
+"""Full account rotation orchestrator — spawns tools/rotate.py as subprocess.
+
+Docs: rotation.doc.md
+"""
 import time
 import logging
 import asyncio
@@ -39,11 +43,12 @@ async def full_rotation(request: RotationRequest):
 
     from agent_toolbox.core.config_manager import get_config
     cfg = get_config()
+    fireworks_pw = request.fireworks_password or cfg.fireworks_password
     cmd = [
         "python3", str(ROTATE_SCRIPT),
         "--gmx-email", cfg.gmx_email,
         "--gmx-password", cfg.gmx_password,
-        "--password", cfg.fireworks_password,
+        "--password", fireworks_pw,
         "--cdp-port", "9222",
     ]
     if request.new_alias_name:

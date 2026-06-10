@@ -7,7 +7,7 @@
 #   ./start_tunnel.sh --status     # show tunnel URL
 
 TUNNEL_LOG="/tmp/sinator-tunnel.log"
-BACKEND_PORT=8000
+BACKEND_PORT=8100
 SERVICE_NAME="com.sinator.tunnel"
 
 start_tunnel() {

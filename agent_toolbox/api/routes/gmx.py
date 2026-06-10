@@ -20,10 +20,10 @@
 ║  Playwright's page interface crashed bei GMX Navigator SPA mit:              ║
 ║    ValueError: list.remove(x): x not in list                                 ║
 ║  Lösung: Alle GMX-Operationen verwenden raw CDP websocket.                   ║
-║  Der BrowserManager stellt den CDP-Port bereit; GmxService öffnet            ║
-║  eine temporäre CDP-Verbindung für jede Operation.                             ║
+║  V15.4+: chromium.launch() — CDP-Port 9222 fix, kein BrowserManager nötig.  ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+Docs: gmx.doc.md
 """
 import time
 import logging

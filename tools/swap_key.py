@@ -9,6 +9,8 @@ KEIN Session-Neustart nötig — OpenCode liest auth.json bei jedem API-Call.
 Usage:
     python tools/swap_key.py              # Auto-detect bad key from auth.json
     python tools/swap_key.py fw_xxx       # Specific key to report
+
+Docs: swap_key.doc.md
 """
 import json
 import sys
@@ -16,7 +18,7 @@ import urllib.request
 from pathlib import Path
 
 AUTH_FILE = Path.home() / ".local/share/opencode/auth.json"
-SINATOR_API = "http://localhost:8000/api/v1"
+SINATOR_API = "http://localhost:8100/api/v1"
 MODEL = "accounts/fireworks/models/deepseek-v4-pro"
 
 def api(path, data=None):

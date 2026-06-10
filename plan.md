@@ -140,4 +140,14 @@ Docs sind V15.4, Code ist V14. Migration: `connect_over_cdp` → `chromium.launc
 
 ---
 
+## NACHTRAG V15.5 (2026-05-31) — OTP-Extraktion repariert
+
+- **Struktur-Bug:** `generate_alias_name`, `initialize_architecture`, `navigate_inbox`,
+  `read_otp_axtree_and_frames` standen auf Modul-Ebene statt in `GmxService` → `AttributeError`.
+  Zurück in die Klasse eingerückt (per AST verifiziert).
+- **Frame-aware OTP:** `read_otp_via_playwright` scannt jetzt alle Frames; Confirm-URL-Erkennung
+  + kontext-validierter 6-stelliger Code statt `[A-Z0-9]{6}`.
+
+---
+
 *Start: sofort. Jede Phase → Test → Commit → Push.*

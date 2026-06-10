@@ -60,11 +60,12 @@ python3 -m playwright install chromium
 
 ---
 
-## 4. Chrome starten (mit CDP)
+## 4. Chrome starten (für manuelle Operationen)
 
+**⚠️ `rotate.py` nutzt ab v0.37 isolierten Chrome mit temp-Profil — kein manuelles Starten nötig.**
+
+Für manuelle GMX-Operationen (nicht `rotate.py`):
 ```bash
-pkill -9 -f "Google Chrome" 2>/dev/null; sleep 2
-
 nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
   --user-data-dir="/Users/simoneschulze/Library/Application Support/Google Chrome" \
   --profile-directory="Profile 73" \
@@ -79,19 +80,21 @@ curl -s http://127.0.0.1:9222/json/version | python3 -c "import sys,json; d=json
 # ❌ "Connection refused" → Chrome nicht gestartet
 ```
 
+**🚫 NIEMALS `pkill -9 -f "Google Chrome"` — killt ALLE Chrome-Prozesse inklusive User-Chrome.**
+
 ---
 
-## 5. Backend starten (`:8000`)
+## 5. Backend starten (`:8100`)
 
 ```bash
 python3 agent_toolbox/start_toolbox.py
-# → Uvicorn auf http://0.0.0.0:8000
+# → Uvicorn auf http://0.0.0.0:8100
 ```
 
 **In einem zweiten Terminal — Verifikation:**
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8100/health
 # ✅ {"server":"ok","pool":{"total":218,...}}
 # ❌ "Connection refused" → Backend läuft nicht
 ```
@@ -109,7 +112,7 @@ python3 tools/rotate.py
 
 ```bash
 # Pool-Status prüfen:
-curl http://localhost:8000/api/v1/pool/stats
+curl http://localhost:8100/api/v1/pool/stats
 # ✅ {"status":"success","total":219,"available":95,...}
 ```
 
@@ -120,7 +123,7 @@ curl http://localhost:8000/api/v1/pool/stats
 ```bash
 cd ~/dev/SINator-dashboard
 ./start.sh
-# → Startet Fireworks (:8000) + HeyPiggy (:8002) + Dashboard (:3000)
+# → Startet Fireworks (:8100) + HeyPiggy (:8002) + Dashboard (:3000)
 ```
 
 ---
@@ -149,11 +152,11 @@ import urllib.request, json
 ok, fail = [], []
 
 try:
-    r = urllib.request.urlopen('http://localhost:8000/health', timeout=5)
+    r = urllib.request.urlopen('http://localhost:8100/health', timeout=5)
     data = json.loads(r.read())
-    ok.append(f'Backend :8000 — {data.get(\"status\") or data.get(\"server\",\"?\")}')
+    ok.append(f'Backend :8100 — {data.get(\"status\") or data.get(\"server\",\"?\")}')
 except Exception as e:
-    fail.append(f'Backend :8000 — {e}')
+    fail.append(f'Backend :8100 — {e}')
 
 try:
     r = urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=5)
@@ -162,7 +165,7 @@ except Exception as e:
     fail.append(f'Chrome CDP :9222 — {e}')
 
 try:
-    r = urllib.request.urlopen('http://localhost:8000/api/v1/pool/stats', timeout=5)
+    r = urllib.request.urlopen('http://localhost:8100/api/v1/pool/stats', timeout=5)
     data = json.loads(r.read())
     ok.append(f'Pool — {data.get(\"available\", \"?\")} Keys verfügbar')
 except Exception as e:
@@ -174,7 +177,7 @@ for m in fail: print(f'  ❌ {m}')
 "
 
 # ✅ Alles OK
-#   ✅ Backend :8000 — ok
+#   ✅ Backend :8100 — ok
 #   ✅ Chrome CDP :9222 — ok
 #   ✅ Pool — 94 Keys verfügbar
 ```
@@ -185,7 +188,7 @@ for m in fail: print(f'  ❌ {m}')
 
 | Problem | Ursache | Lösung |
 |---------|---------|--------|
-| `Connection refused` auf `:8000` | Backend läuft nicht | `tail -20 /tmp/sinator-backend.log` |
+| `Connection refused` auf `:8100` | Backend läuft nicht | `tail -20 /tmp/sinator-backend.log` |
 | `Connection refused` auf `:9222` | Chrome ohne CDP | Schritt 4 wiederholen |
 | GMX Session tot | Cookie abgelaufen | Session Recovery Protocol ausführen (siehe AGENTS.md) |
 | `409 Conflict` bei Alias | Alias existiert | `rotate.py` löscht vorher — automatisch |
@@ -196,4 +199,4 @@ for m in fail: print(f'  ❌ {m}')
 
 ---
 
-*Stand: 2026-05-30 | FastAPI | Playwright-native | Chrome Profile 73 (simoneschulze)*
+*Stand: 2026-06-02 | FastAPI | Playwright-native | Chrome Profile 73 (simoneschulze)*

@@ -1,22 +1,11 @@
 """
-╔══════════════════════════════════════════════════════════════════════════════╗
-║              SINATOR AGENT-TOOLBOX — FastAPI App (V8, 2026-05-22)           ║
-╠══════════════════════════════════════════════════════════════════════════════╣
-║                                                                              ║
-║  ZWECK:                                                                      ║
-║  Startet die FastAPI-App mit Uvicorn und registriert alle Routen.            ║
-║  Pool: 30 API Keys — ~209s/Rotation                                         ║
-║                                                                              ║
-║  USAGE:                                                                       ║
-║  python start_toolbox.py                                                     ║
-║  uvicorn start_toolbox:app --reload --host 0.0.0.0 --port 8000              ║
-║                                                                              ║
-║  DOCS:                                                                        ║
-║  Swagger UI: http://localhost:8000/docs                                      ║
-║  ReDoc:      http://localhost:8000/redoc                                     ║
-║  OpenAPI:    http://localhost:8000/openapi.json                              ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+SINator Agent Toolbox — FastAPI App entry point.
+
+Purpose: Starts the FastAPI app via Uvicorn and registers all API routes
+(Pool, GMX, Fireworks, Rotation, Config) + the dashboard SPA. Also runs the
+V19.10 background lease-cleanup loop (60s interval) to prevent ghost leases.
+
+Docs: start_toolbox.doc.md
 """
 import os
 import sys
@@ -57,7 +46,7 @@ async def lifespan(app: FastAPI):
     """Lifecycle-Handler für Startup und Shutdown."""
     logger.info("🚀 SINator Agent Toolbox startet...")
     logger.info(f"📂 Projekt-Root: {project_root}")
-    logger.info("📖 Swagger UI: http://localhost:8000/docs")
+    logger.info("📖 Swagger UI: http://localhost:8100/docs")
 
     try:
         import httpx
@@ -70,7 +59,57 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.warning("⚠️ GMX Alias API NICHT erreichbar auf Port 8001 — ./start.sh in gmx-alias-tool/ starten!")
 
+    # ── V19.10 Background Lease Cleanup ─────────────────────────────────────
+    # Safety net for the V19.11 proxy return-old-key flow: if a proxy dies
+    # before returning its key (SIGKILL, OOM, etc.), the lease sits in the pool
+    # until expire_leases() runs. Without this loop, that only happens when
+    # someone calls /pool/lease or /pool/stats — not on its own.
+    LEASE_CLEANUP_INTERVAL = 60  # 1 minute — short enough to free keys quickly,
+                                  # long enough to not hammer the JSON file
+    import asyncio as _asyncio
+    from agent_toolbox.core.pool_manager import get_pool_manager
+
+    async def _expire_leases_loop():
+        """Periodically expire stale leases from crashed proxies."""
+        while True:
+            try:
+                await _asyncio.sleep(LEASE_CLEANUP_INTERVAL)
+                pool_mgr = get_pool_manager()
+                expired = pool_mgr.expire_leases()
+                # Only log when work was done — avoids log spam every minute
+                if expired > 0:
+                    logger.info(f"🧹 V19.10 Lease-Cleanup: {expired} stale lease(s) expired")
+            except Exception as e:
+                # Never let the cleanup loop die — log and continue
+                logger.warning(f"⚠️ Lease-Cleanup failed: {e}")
+
+    cleanup_task = _asyncio.create_task(_expire_leases_loop())
+    logger.info(f"🧹 V19.10 Lease-Cleanup loop started ({LEASE_CLEANUP_INTERVAL}s interval)")
+
+    # ── V19.14 Stale Consumer Cleanup ────────────────────────────────────────
+    CONSUMER_CLEANUP_INTERVAL = 120  # 2 minutes — agents that died without releasing
+    CONSUMER_TIMEOUT = 300           # 5 minutes — stale threshold
+
+    async def _cleanup_stale_consumers_loop():
+        """V19.14: Remove consumers that haven't heartbeated in 5 minutes."""
+        while True:
+            try:
+                await _asyncio.sleep(CONSUMER_CLEANUP_INTERVAL)
+                pool_mgr = get_pool_manager()
+                cleaned = pool_mgr.cleanup_stale_consumers(timeout_seconds=CONSUMER_TIMEOUT)
+                if cleaned > 0:
+                    logger.info(f"🧹 V19.14 Consumer-Cleanup: {cleaned} stale consumer(s) removed")
+            except Exception as e:
+                logger.warning(f"⚠️ Consumer-Cleanup failed: {e}")
+
+    consumer_cleanup_task = _asyncio.create_task(_cleanup_stale_consumers_loop())
+    logger.info(f"🧹 V19.14 Consumer-Cleanup loop started ({CONSUMER_CLEANUP_INTERVAL}s interval)")
+
     yield
+
+    # Graceful shutdown — cancel background tasks
+    cleanup_task.cancel()
+    consumer_cleanup_task.cancel()
     logger.info("🛑 SINator Agent Toolbox fährt herunter...")
 
 # FastAPI App erstellen
@@ -87,7 +126,7 @@ app = FastAPI(
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://tauri.localhost", "tauri://localhost", "http://localhost:3000", "http://localhost:8000"],
+    allow_origins=["https://tauri.localhost", "tauri://localhost", "http://localhost:3000", "http://localhost:8100"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

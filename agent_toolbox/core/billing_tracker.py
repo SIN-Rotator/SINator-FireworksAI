@@ -7,6 +7,8 @@ https://app.fireworks.ai/account/billing
 Wird verwendet von:
   - /pool/report  → Guthaben vor Markierung checken
   - /pool/health  → Periodische Prüfung aller aktiven Keys
+
+Docs: billing_tracker.doc.md
 """
 import re as _re
 import json as _json

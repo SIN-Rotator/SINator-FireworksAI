@@ -12,6 +12,8 @@ Strategy:
 Migration:
   - One-shot migration from plaintext JSON → Keychain
   - After migration, api_key field in JSON contains sentinel or is absent
+
+Docs: keychain_store.doc.md
 """
 import json
 import logging

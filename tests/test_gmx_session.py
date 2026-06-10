@@ -1,4 +1,8 @@
-"""Tests for GMX session — E-Mail click → SID verification."""
+"""Tests for GMX session — E-Mail click → SID verification.
+
+Purpose: Verify GMX SPA hash routing establishes a valid session cookie.
+Docs: tests/test_gmx_session.doc.md
+"""
 
 import sys
 from pathlib import Path
