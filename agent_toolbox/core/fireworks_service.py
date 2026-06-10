@@ -10,14 +10,7 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
-# Flags an allen 3 Launch-Stellen (fireworks, gmx, billing) einbauen, sonst Crash beim nächsten Codepfad.
-_CHROMIUM_GPU_FLAGS = [
-    "--disable-gpu",
-    "--disable-gpu-compositing",
-    "--disable-software-rasterizer",
-    "--use-angle=swiftshader",
-]
+from agent_toolbox.core.chrome_flags import CHROMIUM_GPU_FLAGS as _CHROMIUM_GPU_FLAGS
 
 
 async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:

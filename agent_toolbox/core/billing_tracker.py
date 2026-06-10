@@ -17,13 +17,7 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
-# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
-_CHROMIUM_GPU_FLAGS = [
-    "--disable-gpu",
-    "--disable-gpu-compositing",
-    "--disable-software-rasterizer",
-    "--use-angle=swiftshader",
-]
+
 
 
 async def check_key_credits_via_cdp(api_key: str) -> dict:

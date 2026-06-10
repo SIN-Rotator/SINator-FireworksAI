@@ -48,13 +48,7 @@ from agent_toolbox.api.schemas import (
 
 logger = logging.getLogger(__name__)
 
-# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
-_CHROMIUM_GPU_FLAGS = [
-    "--disable-gpu",
-    "--disable-gpu-compositing",
-    "--disable-software-rasterizer",
-    "--use-angle=swiftshader",
-]
+
 router = APIRouter(prefix="/gmx", tags=["GMX Services"])
 
 GMX_ALIAS_API_URL = "http://localhost:8001"

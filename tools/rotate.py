@@ -28,13 +28,7 @@ logger = logging.getLogger("rotate")
 # Ephemeral range (49152-65535), extrem unwahrscheinlich belegt
 SINATOR_ROTATION_CDP_PORT = 59230
 
-# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
-_CHROMIUM_GPU_FLAGS = [
-    "--disable-gpu",
-    "--disable-gpu-compositing",
-    "--disable-software-rasterizer",
-    "--use-angle=swiftshader",
-]
+from chrome_flags import CHROMIUM_GPU_FLAGS as _CHROMIUM_GPU_FLAGS
 
 
 async def main():
@@ -62,14 +56,25 @@ async def main():
 
     # ═══ ONE Browser Startup ═══
     from playwright.async_api import async_playwright
-    p = await async_playwright().start()
-    logger.info(f"=== Launching Chromium (CDP port {cdp_port}) ===")
-    browser = await p.chromium.launch(
-        headless=False,
-        args=[f'--remote-debugging-port={cdp_port}'] + _CHROMIUM_GPU_FLAGS
-    )
-    page = await browser.new_page()
-    logger.info(f"✅ Chromium launched — ONE Browser for entire rotation")
+    p = None
+    browser = None
+    page = None
+    try:
+        p = await async_playwright().start()
+        logger.info(f"=== Launching Chromium (CDP port {cdp_port}) ===")
+        browser = await p.chromium.launch(
+            headless=False,
+            args=[f'--remote-debugging-port={cdp_port}'] + _CHROMIUM_GPU_FLAGS
+        )
+        page = await browser.new_page()
+        logger.info(f"✅ Chromium launched — ONE Browser for entire rotation")
+    except Exception as e:
+        logger.error(f"❌ Browser launch failed: {e}")
+        if browser is not None:
+            await browser.close()
+        if p is not None:
+            await p.stop()
+        return
 
     alias = None
 
@@ -158,8 +163,23 @@ async def main():
     finally:
         elapsed = time.time() - t0
         logger.info("=== Shutdown ===")
-        await browser.close()
-        await p.stop()
+        # macOS: GPU-Prozess kurz idle stellen vor hartem Schließen
+        try:
+            if page is not None and not page.is_closed():
+                await page.goto("about:blank")
+                await asyncio.sleep(0.5)
+        except Exception:
+            pass
+        try:
+            if browser is not None:
+                await browser.close()
+        except Exception as e:
+            logger.warning(f"browser.close() failed: {e}")
+        try:
+            if p is not None:
+                await p.stop()
+        except Exception as e:
+            logger.warning(f"playwright.stop() failed: {e}")
         logger.info(f"\n🎉 ROTATION COMPLETE — {elapsed:.1f}s")
         if alias:
             logger.info(f"   Alias:   {alias}")
