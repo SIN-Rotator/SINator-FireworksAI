@@ -418,53 +418,128 @@ class GmxService:
         return None
 
     async def _delete_alias(self, page: Page, alias_email: str) -> bool:
-        """Delete an alias by hovering over its row and clicking delete."""
+        """Delete an alias by hovering over its row and clicking the hidden delete icon.
+
+        Wicket GMX UI: das Delete-Icon (a.table-hover_icon[title*="löschen"]) ist
+        erst nach Hover über die Row sichtbar (display:none → sichtbar via :hover CSS).
+        Playwright-Native `page.mouse.move()` triggert :hover zuverlässig, CDP
+        `Input.dispatchMouseEvent` NICHT.
+
+        Portiert aus v19.3-gmx-delete-fixed (siehe tag v19.3-gmx-delete-fixed-working
+        im SINator-Fireworks-Rotator-v2 Repo).
+        """
         logger.info(f"[_delete_alias] Deleting {alias_email}")
         try:
             frame = await self._get_all_email_frame(page)
             if not frame:
                 logger.warning("allEmailAddresses iframe not found for delete")
                 return False
-            
-            # Find the row containing the alias email
-            row = frame.locator(f'text={alias_email}').first
-            if not await row.is_visible(timeout=3000):
-                logger.warning(f"Alias row not visible: {alias_email}")
+
+            # 1) Spezifischste Row finden — GMX nutzt <div class="table_body-row table_row">
+            row_data = await frame.evaluate(f"""() => {{
+                var candidates = document.querySelectorAll('tr, li, [class*="row"], [class*="Row"]');
+                var best = null;
+                var bestArea = Infinity;
+                for (var i=0; i<candidates.length; i++) {{
+                    var el = candidates[i];
+                    if (!(el.textContent || '').includes('{alias_email}')) continue;
+                    var r = el.getBoundingClientRect();
+                    if (r.width < 50 || r.height < 5) continue;
+                    var area = r.width * r.height;
+                    if (area < bestArea) {{
+                        bestArea = area;
+                        best = el;
+                    }}
+                }}
+                if (best) {{
+                    var r = best.getBoundingClientRect();
+                    return {{
+                        cx: Math.round(r.x + r.width/2),
+                        cy: Math.round(r.y + r.height/2)
+                    }};
+                }}
+                return null;
+            }}""")
+            if not row_data:
+                logger.warning(f"Alias row not found: {alias_email}")
                 return False
 
-            # Hover to reveal delete button
-            await row.hover()
-            await asyncio.sleep(1)
+            # 2) Hover via Playwright native mouse — triggert Wicket :hover CSS korrekt.
+            #    Erst (0,0) → Target für sauberen Hover-Reset, dann 3x retry.
+            delete_pos = None
+            for _ in range(3):
+                await page.mouse.move(0, 0)
+                await asyncio.sleep(0.3)
+                await page.mouse.move(row_data['cx'], row_data['cy'])
+                await asyncio.sleep(0.8)
+                delete_pos = await frame.evaluate("""() => {
+                    for (const el of document.querySelectorAll('a.table-hover_icon[title*="lösch"], a.table-hover_icon[title*="Löschen"]')) {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 5 && r.height > 5) {
+                            return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2),
+                                    title: el.getAttribute('title') || ''};
+                        }
+                    }
+                    return null;
+                }""")
+                if delete_pos:
+                    break
+            if not delete_pos:
+                logger.warning("Delete icon not found via .table-hover_icon selector — retrying with broader search")
+                delete_pos = await frame.evaluate("""() => {
+                    for (const el of document.querySelectorAll('a')) {
+                        const t = (el.getAttribute('title') || '').toLowerCase();
+                        const a = (el.getAttribute('aria-label') || '').toLowerCase();
+                        if (t.includes('lösch') || a.includes('lösch')) {
+                            const r = el.getBoundingClientRect();
+                            if (r.width > 5 && r.height > 5) {
+                                return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2),
+                                        title: el.getAttribute('title') || ''};
+                            }
+                        }
+                    }
+                    return null;
+                }""")
+                if not delete_pos:
+                    logger.warning("Delete icon not found globally either")
+                    return False
 
-            # Look for delete button (title or aria-label containing "lösch")
-            delete_btn = frame.locator('[title*="lösch" i], [aria-label*="lösch" i]').first
-            if not await delete_btn.is_visible(timeout=2000):
-                # Try any button near the alias
-                delete_btn = frame.locator('button').filter(has=frame.locator('svg, i, img')).first
+            logger.info(f"Delete '{delete_pos.get('title', '')}' at ({delete_pos['x']}, {delete_pos['y']})")
 
-            if await delete_btn.is_visible(timeout=2000):
-                logger.info("Clicking delete button")
-                await delete_btn.click(force=True)
-                await asyncio.sleep(3)
+            # 3) Klicken via Playwright native mouse
+            await page.mouse.move(delete_pos['x'], delete_pos['y'])
+            await asyncio.sleep(0.2)
+            await page.mouse.click(delete_pos['x'], delete_pos['y'])
+            await asyncio.sleep(3)
 
-                # Confirm dialog
-                try:
-                    ok_btn = frame.locator('button:has-text("OK")').first
-                    if await ok_btn.is_visible(timeout=2000):
-                        await ok_btn.click()
-                        await asyncio.sleep(2)
-                except:
-                    pass
+            # 4) Confirm-Dialog (OK)
+            ok_pos = await frame.evaluate("""() => {
+                for (const el of document.querySelectorAll('button, a, span')) {
+                    if (el.textContent && el.textContent.trim() === 'OK') {
+                        const r = el.getBoundingClientRect();
+                        if (r.width > 5 && r.height > 5) {
+                            return {x: Math.round(r.x + r.width/2), y: Math.round(r.y + r.height/2)};
+                        }
+                    }
+                }
+                return null;
+            }""")
+            if ok_pos:
+                logger.info(f"OK confirm at ({ok_pos['x']}, {ok_pos['y']})")
+                await page.mouse.move(ok_pos['x'], ok_pos['y'])
+                await asyncio.sleep(0.2)
+                await page.mouse.click(ok_pos['x'], ok_pos['y'])
+                await asyncio.sleep(2)
 
-                # Verify deletion
-                for _ in range(10):
-                    text = await frame.evaluate("() => document.body.innerText")
-                    if alias_email not in text:
-                        logger.info("Alias deleted successfully")
-                        return True
-                    await asyncio.sleep(1)
+            # 5) Verifikation
+            for _ in range(10):
+                text = await frame.evaluate("() => document.body.innerText")
+                if alias_email not in text:
+                    logger.info("Alias deleted successfully")
+                    return True
+                await asyncio.sleep(1)
 
-            logger.warning("Delete button not found")
+            logger.warning("Alias still present after delete attempt")
             return False
         except Exception as e:
             logger.error(f"Error deleting alias: {e}")
