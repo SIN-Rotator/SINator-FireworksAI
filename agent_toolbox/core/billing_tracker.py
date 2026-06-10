@@ -97,8 +97,9 @@ async def check_key_credits_via_playwright(api_key: str) -> dict:
     """
     pw = None
     try:
-        from agent_toolbox.core.browser_session import connect_cdp
-        pw, browser = await connect_cdp()
+        from playwright.async_api import async_playwright
+        pw = await async_playwright().start()
+        browser = await pw.chromium.connect_over_cdp("http://localhost:9222")
 
         ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
         page = await ctx.new_page()
