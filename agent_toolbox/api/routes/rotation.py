@@ -5,7 +5,6 @@ Docs: rotation.doc.md
 import time
 import logging
 import asyncio
-import subprocess
 import re
 from pathlib import Path
 
@@ -25,21 +24,12 @@ async def full_rotation(request: RotationRequest):
     Rotation via chromium.launch() (V15.4 ONE Browser).
     Dashboard bleibt offen, Rotation läuft im gleichen Chromium.
     """
-    # Neues Chrome-Fenster öffnen (gleiches Profil — nebeneinander sichtbar)
+    # macOS HDMI/Display-Fix: Kein AppleScript-set-bounds mehr.
+    # Die festen Pixelkoordinaten und make-new-window haben auf externen
+    # HDMI-Monitoren beim Rotations-Start den WindowServer-Reset ausgelöst
+    # und die Display-Verbindung zum Absturz gebracht.
+    # Fenstergröße wird über --window-size beim chromium.launch() gesetzt.
     t0 = time.time()
-    try:
-        subprocess.run([
-            "osascript", "-e",
-            'tell application "Google Chrome"\n'
-            '    set bounds of window 1 to {0, 25, 960, 900}\n'
-            '    make new window\n'
-            '    set bounds of window 1 to {960, 25, 1920, 900}\n'
-            '    activate\n'
-            'end tell'
-        ], capture_output=True, timeout=5)
-        await asyncio.sleep(2)
-    except Exception as e:
-        logger.warning(f"AppleScript window: {e}")
 
     from agent_toolbox.core.config_manager import get_config
     cfg = get_config()
