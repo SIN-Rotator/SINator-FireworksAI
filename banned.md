@@ -458,4 +458,51 @@ ps aux | grep "rotate.py" | grep -v grep && echo "Rotation LÄUFT BEREITS — NI
 python3 tools/rotate.py
 ```
 
-*Last Updated: 2026-06-02 (V19.14 — Subagent Rotation Guard)*
+*Last Updated: 2026-06-10 (V20.0 — GMX delete + consent fixes, V20.0-fireworks-working)*
+
+---
+
+## 🚫 BANNED: Wicket GMX Hover-Reveal Anti-Patterns (2026-06-10) — V20.0
+
+| ❌ Verboten | Grund | ✅ Richtig |
+|------------|-------|-----------|
+| CDP `Input.dispatchMouseEvent` für Hover/Click auf GMX Wicket UI | Wicket `:hover` CSS-Event wird NICHT von CDP getriggert → Delete-Icon bleibt hidden | `page.mouse.move(0,0) → page.mouse.move(cx,cy)` Pattern |
+| Playwright `row.hover()` als einziger Hover | Veraltet/unzuverlässig für GMX Wicket | `page.mouse.move()` mit (0,0)→Target Reset + 3x retry |
+| Selector `tr, li, .row, [class*="row"]` erste Match | GMX nutzt `<div class="table_body-row table_row">` — erste Match ist oft ein Parent-Container mit viel größerer BBox | Kleinste BBox (= innerstes Element) mit dem Alias-Text |
+| `tr` und `li` als Selector | GMX hat KEIN `<tr>` oder `<li>` in der allEmailAddresses-View | `[class*="row"]` ist die richtige Klasse |
+| `delete_btn.is_visible()` auf hidden Icon | Element ist `display:none` bis Hover — `is_visible()` returns False obwohl Element existiert | Erst hovern, dann mit `getBoundingClientRect().width > 5` prüfen |
+
+**✅ Korrekte _delete_alias Implementierung (V20.0 + V19.3 portiert):**
+```python
+# 1. Spezifischste Row via kleinste BBox
+row_data = await frame.evaluate("""() => {
+    var candidates = document.querySelectorAll('tr, li, [class*="row"], [class*="Row"]');
+    var best = null, bestArea = Infinity;
+    for (const el of candidates) {
+        if (!el.textContent.includes(aliasEmail)) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 50 || r.height < 5) continue;
+        const area = r.width * r.height;
+        if (area < bestArea) { bestArea = area; best = el; }
+    }
+    return best ? {cx: ..., cy: ...} : null;
+}""")
+
+# 2. Hover mit (0,0) Reset + 3x retry
+for _ in range(3):
+    await page.mouse.move(0, 0)
+    await asyncio.sleep(0.3)
+    await page.mouse.move(row_data['cx'], row_data['cy'])
+    await asyncio.sleep(0.8)
+    delete_pos = await frame.evaluate("""() => {
+        for (const el of document.querySelectorAll('a.table-hover_icon[title*="lösch"]')) {
+            if (el.getBoundingClientRect().width > 5) return {x: ..., y: ...};
+        }
+        return null;
+    }""")
+    if delete_pos: break
+
+# 3. Klicken via Playwright native mouse
+await page.mouse.move(delete_pos['x'], delete_pos['y'])
+await page.mouse.click(delete_pos['x'], delete_pos['y'])
+```
