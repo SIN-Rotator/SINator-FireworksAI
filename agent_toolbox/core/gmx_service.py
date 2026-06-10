@@ -86,7 +86,7 @@ class GmxService:
                 logger.info("Cookie consent page detected, accepting")
                 try:
                     # Click "Alle akzeptieren" or "Zustimmen" or similar
-                    for selector in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")', 
+                    for selector in ['button:has-text("Alle akzeptieren")', 'button:has-text("Zustimmen")',
                                     'button:has-text("Akzeptieren")', 'button:has-text("OK")',
                                     'button[data-testid="uc-accept-all-button"]']:
                         btn = page.locator(selector).first
@@ -97,6 +97,15 @@ class GmxService:
                             break
                 except Exception as e:
                     logger.warning(f"Consent handling failed: {e}")
+                url = page.url
+                logger.info(f"After consent: {url[:80]}")
+                # After consent, we're on consent-management page — navigate to real www.gmx.net
+                if "consent" in url:
+                    logger.info("Navigating to www.gmx.net after consent")
+                    await page.goto("https://www.gmx.net/", wait_until="domcontentloaded")
+                    await asyncio.sleep(3)
+                    url = page.url
+                    logger.info(f"After consent redirect: {url[:80]}")
                 url = page.url
                 logger.info(f"After consent: {url[:80]}")
             
