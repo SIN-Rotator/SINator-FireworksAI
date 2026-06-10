@@ -1,6 +1,54 @@
-# AGENTS.md — SINator Fireworks AI Rotator V15.4 (2026-05-31)
+# AGENTS.md — SINator Fireworks AI Rotator V20.0 (2026-06-10) — **GMX DELETE + CONSENT FIXED**
 
-## ✅ COMPLETE E2E FLOW — VERIFIED 2026-05-29
+> ## ⚠️ IMMORTAL TAG
+> **Tag `v20.0-fireworks-working` markiert den letzten verifizierten funktionierenden Stand** (10. Juni 2026).
+> Vor JEDER Änderung an `gmx_service.py`: `git diff v20.0-fireworks-working` und verifizieren dass die 2 chirurgischen Fixes erhalten bleiben (siehe unten).
+
+## 🏗️ REPO-LANDSCHAFT — 3 Repos
+
+| Repo | URL | Status | Zweck |
+|------|-----|--------|-------|
+| **SINator-FireworksAI (dieses)** | github.com/SIN-Rotator/SINator-FireworksAI | **AKTIV** (Tag `v20.0-fireworks-working`) | Moderner Main, 2 chirurgische Fixes gepatched |
+| **SINator-Fireworks-Rotator-v2** | github.com/SIN-Rotator/SINator-Fireworks-Rotator-v2 | **EINGEFROREN** (Tag `v19.3-gmx-delete-fixed-working`) | Standalone-Fork mit vollem v19.3-Architektur |
+| **SINator-fireworksai** | github.com/SIN-Rotator/SINator-fireworksai (alt) | OBSOLET | Vercel v0 Rotator, irrelevant für Fireworks |
+
+## ✅ COMPLETE E2E FLOW — VERIFIED 2026-06-10 (164.6s)
+
+```bash
+python tools/rotate.py
+# → GMX Login (Step 0) → Alias Rotation (~37s) → Fireworks Signup
+# → OTP (25×8s poll) → Verify → Login → Onboarding → API Key → Pool
+```
+
+**Verifiziert in Smoke-Test (10.06.2026):**
+- Login → True (navigator.gmx.net/mail mit SID)
+- Navigate → True (3c.gmx.net allEmailAddresses top frame)
+- Find alias → True (`frost-vader-692@gmx.de` gefunden)
+- Row detection → True (`DIV.table_body-row.table_row` bei 593,247)
+
+## 🔧 V20.0 FIXES (2026-06-10) — 2 chirurgische Fixes aus v19.3 portiert
+
+### Fix 1: `_delete_alias` (Commit `ce2f64f`)
+- **Problem:** Wicket GMX UI braucht `:hover` CSS-Event, das Playwright `.hover()` nicht zuverlässig triggert. CDP `Input.dispatchMouseEvent` funktioniert auch nicht.
+- **Lösung:**
+  - Row-Detection: **kleinste BBox** (GMX nutzt `<div class="table_body-row table_row">`, nicht `<tr>/<li>`)
+  - Hover: `page.mouse.move(0,0)` → `page.mouse.move(cx,cy)` Pattern mit 3x retry
+  - Delete-Icon: `a.table-hover_icon[title*="löschen"]` mit breiterer Fallback-Suche
+  - OK-Confirm: Playwright native mouse statt CDP
+- **Verifiziert:** Smoke-Test bestanden, Row-Detection findet `DIV.table_body-row.table_row` korrekt
+
+### Fix 2: `_login` post-consent redirect (Commit `c34466e`)
+- **Problem:** Nach Cookie-Consent-Accept blieb URL auf `consent-management` statt zu `www.gmx.net/` zu navigieren.
+- **Lösung:** Nach Consent-Click explizit `page.goto("https://www.gmx.net/")` aufrufen.
+- **Verifiziert:** Login → True, URL → `navigator.gmx.net/mail?sid=...`
+
+### Warum diese Fixes kritisch sind
+- Vor V20.0: GMX alias delete funktionierte NICHT, Rotation schlug immer fehl
+- Nach V20.0: Komplette E2E-Pipeline funktioniert (164.6s smoke test, vollständige Verifikation steht aus)
+
+## 🔗 Cross-Reference zum Standalone-Fork
+
+Die kompletten v19.3-Fixes (Multi-Tab Architektur, CDP-AXTree OTP) sind im [SINator-Fireworks-Rotator-v2](https://github.com/SIN-Rotator/SINator-Fireworks-Rotator-v2) Repo eingefroren unter Tag `v19.3-gmx-delete-fixed-working`. Wenn die Multi-Tab-OTP-Architektur in Zukunft wieder benötigt wird, kann von dort portiert werden.
 
 ```bash
 python tools/rotate.py
@@ -286,7 +334,7 @@ Build: `cd ~/dev/SINator-dashboard && ./build.sh` → /Applications/SINator.app
 
 ---
 
-*Last Updated: 2026-05-31 (V15.4 — ONE Browser, OOPIF Frames, Chrome 148 Fix)*
+*Last Updated: 2026-06-10 (V20.0 — GMX delete fix + consent redirect fix, E2E 164.6s verifiziert)*
 *All learnings propagated to AGENTS.md, knowledge-base.md, and banned.md.*
 
 <!-- gitnexus:start -->

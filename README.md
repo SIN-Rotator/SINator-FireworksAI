@@ -5,11 +5,17 @@
 Automated GMX alias rotation → Fireworks AI account registration → API key pool.
 OpenAI-compatible proxy with automatic key rotation on rate-limits and silent key swap.
 
-**Backend:** :8000 | **Pool:** 235 Keys | **Proxy:** 10 Instances (:8888-:8897) | **Router:** :9998
+**Backend:** :8000 | **Pool:** ~245 Keys | **Proxy:** 10 Instances (:8888-:8897) | **Router:** :9998
 
 **Dashboard:** [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) |
 **Config:** [OpenSIN-Code](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config) |
 **Hermes:** [SIN-Hermes-Bundles](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle)
+
+> **V20.0 Update (10.06.2026):** 2 chirurgische Fixes aus v19.3-gmx-delete-fixed portiert (siehe `AGENTS.md`):
+> - `_delete_alias`: kleinste-BBox Row + Playwright native mouse hover
+> - `_login`: post-consent redirect zu www.gmx.net
+>
+> **Tag `v20.0-fireworks-working`** markiert den verifizierten funktionierenden Stand.
 
 ## Quick Start
 
