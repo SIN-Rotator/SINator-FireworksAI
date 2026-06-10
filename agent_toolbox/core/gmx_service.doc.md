@@ -15,9 +15,9 @@ Playwright-native GMX Service für Alias-Rotation und OTP-Extraktion im SINator 
 | **Multi-Tab** | `initialize_architecture()` | Creates `work_tab` + `inbox_tab` in same browser context |
 | **Multi-Tab** | `navigate_inbox()` | Keeps inbox_tab pinned at GMX Posteingang |
 | **Connection** | `_pw_connect()` | Playwright-Page aus CDP, SID-Tab-Priorisierung |
-| **Login** | `_login()` | GMX Login via Form (email+password) |
+| **Login** | `_login()` | GMX Login via Form (email+password) + post-consent redirect (V20.0 FIX) |
 | **Navigation** | `_navigate_to_all_email_addresses()` | Zum E-Mail-Adressen-Settings-Bereich |
-| **Alias Delete** | `_delete_alias()` | Löscht existierenden Alias via Hover-Menu (V19.3 FIX) |
+| **Alias Delete** | `_delete_alias()` | Löscht existierenden Alias via Playwright native mouse + kleinste-BBox row (V19.3 FIX, V20.0 portiert) |
 | **Alias Create** | `_create_alias()` | Erstellt neuen Alias via Playwright iframe |
 | **Rotation** | `rotate_alias()` | Kombiniert delete + create + verify |
 | **Legacy OTP** | `read_otp_cdp_axtree()` | CDP-basierte OTP-Suche (deprecated) |
@@ -27,6 +27,20 @@ Playwright-native GMX Service für Alias-Rotation und OTP-Extraktion im SINator 
 | **Helpers** | `open_email_addresses()` | Navigiert zu E-Mail Settings |
 | **Legacy** | `_inject_cookies()` | Cookie-Injection via CDP (deprecated, nicht mehr verwendet) |
 | **Singleton** | `get_gmx_service()` | Module-level Singleton |
+
+## V20.0 Fixes (10.06.2026)
+
+### `_delete_alias` — V19.3 Port (Commit ce2f64f)
+**Vorher:** Playwright `row.hover()` triggert Wicket `:hover` nicht zuverlässig → Delete-Icon wird nicht gefunden.
+**Jetzt:** 
+- Row-Detection: kleinste BBox (GMX nutzt `<div class="table_body-row table_row">`, nicht `<tr>/<li>`)
+- Hover: `page.mouse.move(0,0)` → `page.mouse.move(cx,cy)` Pattern mit 3x retry
+- Delete-Icon: `a.table-hover_icon[title*="löschen"]` mit Fallback-Suche
+- Klick + OK-Confirm: Playwright native mouse (kein CDP)
+
+### `_login` — Post-Consent Redirect (Commit c34466e)
+**Vorher:** Nach Cookie-Consent-Accept blieb URL auf `consent-management`.
+**Jetzt:** Expliziter `page.goto("https://www.gmx.net/")` nach Consent-Klick.
 
 ## ⚠️ V19.3 — `_delete_alias` Selektor repariert (IMMORTAL TAG: `v19.3-gmx-delete-fixed`)
 
