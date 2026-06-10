@@ -328,6 +328,7 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
                 fresh_url = fresh.url
                 if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
                     steps.append("login_success")
+                    await fresh.close()
                     return {"status": "success", "steps_completed": steps}
                 logger.warning(f"Fresh page landed on: {fresh_url[:60]}")
                 await fresh.close()
