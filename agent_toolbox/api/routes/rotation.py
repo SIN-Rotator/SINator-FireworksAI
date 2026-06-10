@@ -72,7 +72,7 @@ async def full_rotation(request: RotationRequest):
                 gmx_alias = m.group(1)
                 api_key_name = gmx_alias.split("@")[0].split("-")[0]
 
-            m = re.search(r'✅ API Key:\s*(fw_\w+)', line)
+            m = re.search(r'✅ API Key:\s*(fw_[A-Za-z0-9_]{20,})', line)
             if m:
                 api_key = m.group(1)
 
@@ -97,7 +97,12 @@ async def full_rotation(request: RotationRequest):
         else:
             steps_failed.append("fireworks_login_failed")
 
-        final_status = "success" if api_key else ("partial" if gmx_alias else "failed")
+        if api_key and not steps_failed:
+            final_status = "success"
+        elif api_key or gmx_alias:
+            final_status = "partial"
+        else:
+            final_status = "failed"
 
         return RotationResponse(
             status=final_status,
