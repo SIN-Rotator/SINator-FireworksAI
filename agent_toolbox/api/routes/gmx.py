@@ -47,6 +47,14 @@ from agent_toolbox.api.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
+_CHROMIUM_GPU_FLAGS = [
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-software-rasterizer",
+    "--use-angle=swiftshader",
+]
 router = APIRouter(prefix="/gmx", tags=["GMX Services"])
 
 GMX_ALIAS_API_URL = "http://localhost:8001"
@@ -199,19 +207,22 @@ async def ensure_gmx_session(
         if result.get("status") == "success":
             logger.info("Session active — no login needed")
         else:
-            logger.info("Session inactive — attempting login")
+            logger.info("Session inactive — attempting login via shared BrowserSession")
             import asyncio
-            from playwright.async_api import async_playwright
-            p = await async_playwright().start()
-            browser = await p.chromium.launch(headless=False)
-            page = await browser.new_page()
-            from agent_toolbox.core.gmx_service import GmxService
-            svc = GmxService()
-            await svc._login(page, email=email, password=password)
-            await asyncio.sleep(3)
-            result = await svc.check_session(cdp_port=cdp_port)
-            await browser.close()
-            await p.stop()
+            from agent_toolbox.core.browser_session import connect_cdp
+            pw, browser = await connect_cdp()
+            try:
+                ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+                page = await ctx.new_page()
+                from agent_toolbox.core.gmx_service import GmxService
+                svc = GmxService()
+                await svc._login(page, email=email, password=password)
+                await asyncio.sleep(3)
+                result = await svc.check_session(cdp_port=cdp_port)
+                await page.close()
+            finally:
+                # Nur CDP trennen, Browser bleibt offen
+                await pw.stop()
         
         return GmxSessionCheckResponse(
             status=result["status"],

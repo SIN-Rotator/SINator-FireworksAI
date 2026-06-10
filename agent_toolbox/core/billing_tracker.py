@@ -15,6 +15,14 @@ import logging
 
 _logger = logging.getLogger(__name__)
 
+# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
+_CHROMIUM_GPU_FLAGS = [
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-software-rasterizer",
+    "--use-angle=swiftshader",
+]
+
 
 async def check_key_credits_via_cdp(api_key: str) -> dict:
     """
@@ -81,42 +89,45 @@ async def check_key_credits_via_cdp(api_key: str) -> dict:
 
 async def check_key_credits_via_playwright(api_key: str) -> dict:
     """
-    Playwright-basierte Guthaben-Prüfung.
-    Nutzt chromium.launch() (V15.4).
+    Guthaben-Prüfung via CDP am laufenden Bot-Chrome (KEIN eigener launch()).
 
-    Returns:
-        {"credits_remaining": float, ...} oder {"credits_remaining": None, "error": "..."}
+    Verbindet sich mit der zentralen BrowserSession — teilt Cookies/Session.
     """
+    pw = None
     try:
-        from playwright.async_api import async_playwright
+        from agent_toolbox.core.browser_session import connect_cdp
+        pw, browser = await connect_cdp()
 
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
-            context = await browser.new_context()
-            page = await context.new_page()
+        ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = await ctx.new_page()
 
-            await page.goto("https://app.fireworks.ai/account/billing",
-                           wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(5000)
+        await page.goto("https://app.fireworks.ai/account/billing",
+                       wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(5000)
 
-            body_text = await page.evaluate("document.body.innerText")
+        body_text = await page.evaluate("document.body.innerText")
 
-            patterns = [
-                r'\$(\d+\.?\d*)\s*(?:credits?|remaining|balance|guthaben)',
-                r'(?:credits?|remaining|balance|guthaben)\s*\$?(\d+\.?\d*)',
-                r'\$(\d+\.?\d*)\s*/\s*\$6',
-            ]
-            for pat in patterns:
-                m = _re.search(pat, body_text, _re.IGNORECASE)
-                if m:
-                    credits = float(m.group(1))
-                    _logger.info(f"Credits via Playwright: ${credits:.2f}")
-                    await page.close()
-                    return {"credits_remaining": credits, "currency": "$", "error": None}
+        patterns = [
+            r'\$(\d+\.?\d*)\s*(?:credits?|remaining|balance|guthaben)',
+            r'(?:credits?|remaining|balance|guthaben)\s*\$?(\d+\.?\d*)',
+            r'\$(\d+\.?\d*)\s*/\s*\$6',
+        ]
+        for pat in patterns:
+            m = _re.search(pat, body_text, _re.IGNORECASE)
+            if m:
+                credits = float(m.group(1))
+                _logger.info(f"Credits via Playwright/CDP: ${credits:.2f}")
+                await page.close()
+                return {"credits_remaining": credits, "currency": "$", "error": None}
 
-            await page.close()
-            return {"credits_remaining": None, "error": "Credits not found in page"}
+        await page.close()
+        return {"credits_remaining": None, "error": "Credits not found in page"}
 
     except Exception as e:
-        _logger.error(f"Playwright billing check failed: {e}")
+        _logger.error(f"Playwright/CDP billing check failed: {e}")
         return {"credits_remaining": None, "error": str(e)}
+    finally:
+        # Nur CDP-Verbindung trennen — BrowserSession bleibt offen
+        if pw:
+            try: await pw.stop()
+            except: pass

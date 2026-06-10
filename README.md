@@ -56,6 +56,16 @@ Der Router (:9998) verteilt auf 10 Proxys (:8888-:8897), jeder mit eigenem API-K
 
 ## Setup
 
+```bash
+# Dependencies installieren
+pip install -e .                    # Produktion
+pip install -e ".[dev]"             # mit Test-Deps
+playwright install chromium
+
+# Oder via requirements.txt
+pip install -r requirements.txt && playwright install chromium
+```
+
 1. **GMX-Zugangsdaten** über `/setup` im Dashboard konfigurieren
 2. Oder direkt `data/config.json`:
 ```json
@@ -142,4 +152,4 @@ Alias-Rotation → Signup → OTP → API Key → Pool
 
 ---
 
-*Stand: 2026-05-31 | 235 Keys | 10 Proxys + Pool-Router | V15.4 ONE-Browser | Proxy 1s Key-Retry*
+*Stand: 2026-06-10 | pyproject.toml mit [dev]-Extras | V15.4 ONE-Browser | Proxy 1s Key-Retry*

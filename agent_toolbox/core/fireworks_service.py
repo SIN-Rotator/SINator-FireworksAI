@@ -10,18 +10,26 @@ from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# macOS HDMI/GPU fix: verhindert GPU-Prozess-Reset, der den externen Monitor abstürzen lässt.
+# Flags an allen 3 Launch-Stellen (fireworks, gmx, billing) einbauen, sonst Crash beim nächsten Codepfad.
+_CHROMIUM_GPU_FLAGS = [
+    "--disable-gpu",
+    "--disable-gpu-compositing",
+    "--disable-software-rasterizer",
+    "--use-angle=swiftshader",
+]
 
-async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = None) -> Dict[str, Any]:
+
+async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:
     """Create new Fireworks account via signup form + OTP verification.
     
     Flow:
     1. /signup → fill email → Next → fill 2x password → Create Account
-    2. Poll GMX for verification email (via MailCheck extension)
+    2. Poll GMX for verification email (Playwright-native, Shadow-DOM + Multi-Frame Scan)
     3. Open verify URL to confirm account
     4. Returns {status, verify_url, steps_completed}
     
-    If cdp_port provided, connects to existing Chromium (ONE Browser V8).
-    Otherwise launches fresh Chromium (standalone mode).
+    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh Chromium.
     """
     import asyncio
     import sys
@@ -29,112 +37,123 @@ async def signup_fireworks(email: str, password: str, cdp_port: Optional[int] = 
     from pathlib import Path as _Path
     
     steps = []
+    own_browser = False
+    own_page = False
     try:
         _sys_path = sys.path.copy()
         sys.path.insert(0, str(_Path(__file__).parent))
         
-        async with async_playwright() as p:
-            if cdp_port:
+        if page is not None:
+            # Use existing page (ONE Browser)
+            pass
+        elif cdp_port:
+            async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-            else:
-                browser = await p.chromium.launch(headless=False)
-            page = await browser.new_page()
-            
-            # Step 1: Signup form
-            await page.goto("https://app.fireworks.ai/signup")
+                own_browser = True
+                page = await browser.new_page()
+                own_page = True
+        else:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
+                own_browser = True
+                page = await browser.new_page()
+                own_page = True
+        
+        # Step 1: Signup form
+        await page.goto("https://app.fireworks.ai/signup")
+        await asyncio.sleep(2)
+        
+        # Cookie
+        try:
+            await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000)
             await asyncio.sleep(2)
-            
-            # Cookie
-            try:
-                await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000)
-                await asyncio.sleep(2)
-            except: pass
-            
-            # Fill email
-            email_inp = page.locator('input[name="email"]').first
-            if await email_inp.count() == 0:
-                email_inp = page.locator('input[type="email"]').first
-            await email_inp.fill(email)
-            steps.append("email_filled")
+        except: pass
+        
+        # Fill email
+        email_inp = page.locator('input[name="email"]').first
+        if await email_inp.count() == 0:
+            email_inp = page.locator('input[type="email"]').first
+        await email_inp.fill(email)
+        steps.append("email_filled")
+        await asyncio.sleep(1)
+        
+        # Next
+        for btn in await page.locator('button[type="submit"]').all():
+            if 'Next' in (await btn.text_content() or ''):
+                await btn.click(force=True); await asyncio.sleep(2)
+                break
+        steps.append("next_clicked")
+        
+        # Fill BOTH passwords
+        pws = await page.locator('input[type="password"]').all()
+        if len(pws) >= 2:
+            for pw in pws[:2]:
+                await pw.click(); await asyncio.sleep(0.2)
+                await pw.fill("")
+                await pw.type(password, delay=40)
+                await asyncio.sleep(0.3)
+            steps.append("passwords_filled")
             await asyncio.sleep(1)
             
-            # Next
+            # Create Account
             for btn in await page.locator('button[type="submit"]').all():
-                if 'Next' in (await btn.text_content() or ''):
-                    await btn.click(force=True); await asyncio.sleep(2)
+                if 'Create Account' in (await btn.text_content() or ''):
+                    await btn.click(force=True)
+                    logger.info("Create Account clicked")
                     break
-            steps.append("next_clicked")
-            
-            # Fill BOTH passwords
-            pws = await page.locator('input[type="password"]').all()
-            if len(pws) >= 2:
-                for pw in pws[:2]:
-                    await pw.click(); await asyncio.sleep(0.2)
-                    await pw.fill("")
-                    await pw.type(password, delay=40)
-                    await asyncio.sleep(0.3)
-                steps.append("passwords_filled")
+            # Verify page advanced (wait for redirect away from /signup)
+            for _ in range(10):
                 await asyncio.sleep(1)
-                
-                # Create Account
-                for btn in await page.locator('button[type="submit"]').all():
-                    if 'Create Account' in (await btn.text_content() or ''):
-                        await btn.click(force=True)
-                        logger.info("Create Account clicked")
-                        break
-                # Verify page advanced (wait for redirect away from /signup)
-                for _ in range(10):
-                    await asyncio.sleep(1)
-                    if '/signup' not in page.url or 'verify' in page.url:
-                        logger.info(f"Page advanced to: {page.url[:60]}")
-                        break
-                steps.append("create_clicked")
-            
-            # Step 2: Poll for OTP email via read_otp (CDP-based, proven)
-            logger.info("Waiting for Fireworks verification email...")
-            verify_url = None
-            from agent_toolbox.core.gmx_service import GmxService
-            svc = GmxService()
-            
-            for attempt in range(15):
-                await asyncio.sleep(4)
-                otp_result = await svc.read_otp(sender_filter="fireworks", max_retries=1, retry_delay=3)
-                if otp_result.get("status") == "success":
-                    verify_url = otp_result.get("url") or otp_result.get("otp_url")
-                    if verify_url:
-                        logger.info(f"✅ OTP found (attempt {attempt+1})")
-                        break
-                logger.info(f"OTP poll {attempt+1}/15...")
-            
-            if not verify_url:
-                steps.append("otp_not_found")
-                return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 18 attempts"}
-            
-            steps.append("otp_found")
-            
-            # Step 3: Verify account
-            verified = await verify_account(verify_url)
-            if verified:
-                steps.append("account_verified")
-                logger.info("✅ Account verified")
-            else:
-                steps.append("verify_failed")
-            
-            return {
-                "status": "success",
-                "verify_url": verify_url,
-                "steps_completed": steps,
-            }
+                if '/signup' not in page.url or 'verify' in page.url:
+                    logger.info(f"Page advanced to: {page.url[:60]}")
+                    break
+            steps.append("create_clicked")
+        
+        # Step 2: Poll for OTP email via Playwright-native read_otp_via_playwright
+        logger.info("Waiting for Fireworks verification email (Playwright-native)...")
+        verify_url = None
+        from agent_toolbox.core.gmx_service import GmxService
+        svc = GmxService()
+        
+        for attempt in range(15):
+            await asyncio.sleep(4)
+            otp_result = await svc.read_otp_via_playwright(browser, sender_filter="fireworks", existing_page=page)
+            if otp_result.get("status") == "success":
+                verify_url = otp_result.get("otp_url")
+                if verify_url:
+                    logger.info(f"✅ OTP found (attempt {attempt+1})")
+                    break
+            logger.info(f"OTP poll {attempt+1}/15...")
+        
+        if not verify_url:
+            steps.append("otp_not_found")
+            return {"status": "partial", "steps_completed": steps, "error": "OTP email not found after 18 attempts"}
+        
+        steps.append("otp_found")
+        
+        # Step 3: Verify account — use ONE page/browser when available
+        verified = await verify_account(verify_url, cdp_port=cdp_port, page=page, browser=browser)
+        if verified:
+            steps.append("account_verified")
+            logger.info("✅ Account verified")
+        else:
+            steps.append("verify_failed")
+        
+        return {
+            "status": "success",
+            "verify_url": verify_url,
+            "steps_completed": steps,
+        }
             
     except Exception as e:
         logger.error(f"Signup error: {e}")
         return {"status": "error", "steps_completed": steps, "error": str(e)}
 
 
-async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = None) -> Dict[str, Any]:
+async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:
     """Login to Fireworks via Playwright + CUA onboarding.
     Returns: {status, steps_completed, error}
-    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
+    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
     import asyncio
     import json
     import subprocess
@@ -142,186 +161,187 @@ async def login_fireworks(email: str, password: str, cdp_port: Optional[int] = N
     from playwright.async_api import async_playwright
 
     steps = []
+    own_browser = False
+    _p = None
     try:
-        async with async_playwright() as p:
-            if cdp_port:
-                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-            else:
-                browser = await p.chromium.launch(headless=False)
+        if page is not None:
+            pass
+        elif cdp_port:
+            _p = await async_playwright().start()
+            browser = await _p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            own_browser = True
+            page = await browser.new_page()
+        else:
+            _p = await async_playwright().start()
+            browser = await _p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
+            own_browser = True
             page = await browser.new_page()
 
-            await page.goto("https://app.fireworks.ai/login")
-            await asyncio.sleep(2)
+        await page.goto("https://app.fireworks.ai/login")
+        await asyncio.sleep(2)
 
-            # Cookie accept
+        # Cookie accept
+        try:
+            await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000)
+            await asyncio.sleep(1)
+        except: pass
+
+        # Email Login — retry wrapper for stale frame / navigation
+        for attempt in range(3):
             try:
-                await page.locator('button:has-text("Accept All")').first.click(force=True, timeout=5000)
-                await asyncio.sleep(1)
-            except: pass
-
-            # Email Login — retry wrapper for stale frame / navigation
-            for attempt in range(3):
-                try:
-                    em = page.locator('a:has-text("Email Login")').first
-                    if await em.count() > 0:
-                        await em.click()
-                    else:
-                        # Try direct /login with email param
-                        await page.goto("https://app.fireworks.ai/login?useEmail=true")
-                    await asyncio.sleep(2)
-                    if await page.locator('input[name="email"]').first.count() > 0:
-                        break
-                    logger.warning(f"Login form not visible (attempt {attempt+1})")
-                except Exception as e:
-                    logger.warning(f"Login click failed (attempt {attempt+1}): {e}")
-                    await asyncio.sleep(2)
-            steps.append("login_page")
-
-            # Fill credentials
-            await page.locator('input[name="email"]').first.fill(email)
-            await page.locator('input[name="password"]').first.fill(password)
-            steps.append("credentials_filled")
-
-            # Submit
-            for btn in await page.locator('button[type="submit"]').all():
-                if 'Next' in (await btn.text_content() or ''):
-                    await btn.click()
-                    await asyncio.sleep(2)
-                    break
-            steps.append("form_submitted")
-
-            # Onboarding via CUA with Playwright fallback
-            if 'onboarding' in page.url:
-                logger.info("Onboarding via CUA + Playwright")
-                from cua_helper import find_cua_window
-                cua = find_cua_window(title_keywords=["fireworks"])
-                if cua:
-                    pid, wid = cua
-                    
-                    def _cua_click(el):
-                        subprocess.run(["cua-driver", "call", "click"],
-                            capture_output=True, text=True, timeout=10,
-                            input=json.dumps({"pid": pid, "window_id": wid, "element_index": el}))
-                    
-                    def _cua_type(text):
-                        subprocess.run(["cua-driver", "call", "type_text"],
-                            capture_output=True, text=True, timeout=5,
-                            input=json.dumps({"pid": pid, "text": text}))
-                    
-                    def _cua_scan():
-                        from cua_helper import cua_get_window_state
-                        return cua_get_window_state(pid, wid)
-                    
-                    def _find_element(text, el_type="AXButton"):
-                        for line in _cua_scan().split('\n'):
-                            s = line.strip()
-                            if text in s and el_type in s:
-                                m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
-                                if m: return int(m.group(1))
-                        return None
-                    
-                    # Fill names via CUA
-                    for name, target in [("Super", "First"), ("Cheetah", "Last")]:
-                        el = _find_element(target, "AXTextField")
-                        if el:
-                            _cua_click(el); await asyncio.sleep(0.3)
-                            _cua_type(name); await asyncio.sleep(0.3)
-                    
-                    # Terms checkbox
-                    el = _find_element("agree", "AXCheckBox")
-                    if el: _cua_click(el); await asyncio.sleep(0.3)
-                    
-                    # Continue
-                    el = _find_element("Continue")
-                    if el: _cua_click(el); await asyncio.sleep(2)
-
-                    # Use-cases
-                    for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
-                        el = _find_element(uc_text, "AXCheckBox")
-                        if el:
-                            _cua_click(el); await asyncio.sleep(0.2)
-                    
-                    # Submit — try CUA first
-                    el = _find_element("Submit")
-                    if el:
-                        _cua_click(el)
-                        for attempt in range(8):
-                            await asyncio.sleep(2)
-                            if any(x in page.url for x in ['home', 'account', 'settings']):
-                                logger.info(f"Redirect detected (attempt {attempt+1})")
-                                break
-                        else:
-                            # CUA Submit clicked but no redirect yet — check with fresh page
-                            logger.warning("CUA Submit — kein Redirect, force navigate check")
-                            redirected = False
-                            for url in [
-                                "https://app.fireworks.ai/settings/users/api-keys",
-                                "https://app.fireworks.ai/",
-                            ]:
-                                try:
-                                    fresh = await browser.contexts[0].new_page()
-                                    await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
-                                    await asyncio.sleep(2)
-                                    if any(x in fresh.url for x in ['home', 'account', 'settings', 'api-keys']):
-                                        redirected = True
-                                        await fresh.close()
-                                        logger.info("CUA Submit — logged in (verified via fresh page)")
-                                        break
-                                    await fresh.close()
-                                except Exception:
-                                    pass
-                            
-                            if not redirected:
-                                logger.warning("CUA Submit — force navigate failed, Playwright-Fallback")
-                                try:
-                                    await _fireworks_playwright_onboarding(page)
-                                except Exception as e:
-                                    logger.warning(f"Playwright-Fallback failed: {e}")
-                    else:
-                        logger.warning("CUA Submit nicht gefunden — Playwright-Fallback")
-                        try:
-                            await _fireworks_playwright_onboarding(page)
-                        except Exception as e:
-                            logger.warning(f"Playwright-Fallback failed: {e}")
+                em = page.locator('a:has-text("Email Login")').first
+                if await em.count() > 0:
+                    await em.click()
                 else:
-                    logger.warning("CUA window not found — Playwright-Fallback")
+                    await page.goto("https://app.fireworks.ai/login?useEmail=true")
+                await asyncio.sleep(2)
+                if await page.locator('input[name="email"]').first.count() > 0:
+                    break
+                logger.warning(f"Login form not visible (attempt {attempt+1})")
+            except Exception as e:
+                logger.warning(f"Login click failed (attempt {attempt+1}): {e}")
+                await asyncio.sleep(2)
+        steps.append("login_page")
+
+        # Fill credentials
+        await page.locator('input[name="email"]').first.fill(email)
+        await page.locator('input[name="password"]').first.fill(password)
+        steps.append("credentials_filled")
+
+        # Submit
+        for btn in await page.locator('button[type="submit"]').all():
+            if 'Next' in (await btn.text_content() or ''):
+                await btn.click()
+                await asyncio.sleep(2)
+                break
+        steps.append("form_submitted")
+
+        # Onboarding via CUA with Playwright fallback
+        if 'onboarding' in page.url:
+            logger.info("Onboarding via CUA + Playwright")
+            from cua_helper import find_cua_window
+            cua = find_cua_window(title_keywords=["fireworks"])
+            if cua:
+                pid, wid = cua
+                
+                def _cua_click(el):
+                    subprocess.run(["cua-driver", "call", "click"],
+                        capture_output=True, text=True, timeout=10,
+                        input=json.dumps({"pid": pid, "window_id": wid, "element_index": el}))
+                
+                def _cua_type(text):
+                    subprocess.run(["cua-driver", "call", "type_text"],
+                        capture_output=True, text=True, timeout=5,
+                        input=json.dumps({"pid": pid, "text": text}))
+                
+                def _cua_scan():
+                    from cua_helper import cua_get_window_state
+                    return cua_get_window_state(pid, wid)
+                
+                def _find_element(text, el_type="AXButton"):
+                    for line in _cua_scan().split('\n'):
+                        s = line.strip()
+                        if text in s and el_type in s:
+                            m = _re.search(r'\]?\s*-\s*\[(\d+)\]', s)
+                            if m: return int(m.group(1))
+                    return None
+                
+                for name, target in [("Super", "First"), ("Cheetah", "Last")]:
+                    el = _find_element(target, "AXTextField")
+                    if el:
+                        _cua_click(el); await asyncio.sleep(0.3)
+                        _cua_type(name); await asyncio.sleep(0.3)
+                
+                el = _find_element("agree", "AXCheckBox")
+                if el: _cua_click(el); await asyncio.sleep(0.3)
+                
+                el = _find_element("Continue")
+                if el: _cua_click(el); await asyncio.sleep(2)
+
+                for uc_text in ["Prototype", "Flexible", "Conversational", "Search"]:
+                    el = _find_element(uc_text, "AXCheckBox")
+                    if el:
+                        _cua_click(el); await asyncio.sleep(0.2)
+                
+                el = _find_element("Submit")
+                if el:
+                    _cua_click(el)
+                    for attempt in range(8):
+                        await asyncio.sleep(2)
+                        if any(x in page.url for x in ['home', 'account', 'settings']):
+                            logger.info(f"Redirect detected (attempt {attempt+1})")
+                            break
+                    else:
+                        logger.warning("CUA Submit — kein Redirect, force navigate check")
+                        redirected = False
+                        for url in [
+                            "https://app.fireworks.ai/settings/users/api-keys",
+                            "https://app.fireworks.ai/",
+                        ]:
+                            try:
+                                fresh = await browser.contexts[0].new_page()
+                                await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
+                                await asyncio.sleep(2)
+                                if any(x in fresh.url for x in ['home', 'account', 'settings', 'api-keys']):
+                                    redirected = True
+                                    await fresh.close()
+                                    logger.info("CUA Submit — logged in (verified via fresh page)")
+                                    break
+                                await fresh.close()
+                            except Exception:
+                                pass
+                        
+                        if not redirected:
+                            logger.warning("CUA Submit — force navigate failed, Playwright-Fallback")
+                            try:
+                                await _fireworks_playwright_onboarding(page)
+                            except Exception as e:
+                                logger.warning(f"Playwright-Fallback failed: {e}")
+                else:
+                    logger.warning("CUA Submit nicht gefunden — Playwright-Fallback")
                     try:
                         await _fireworks_playwright_onboarding(page)
                     except Exception as e:
                         logger.warning(f"Playwright-Fallback failed: {e}")
-                steps.append("onboarding_complete")
-
-            # Wait for redirect after onboarding (poll up to 15s)
-            for attempt in range(8):
-                await asyncio.sleep(2)
+            else:
+                logger.warning("CUA window not found — Playwright-Fallback")
                 try:
-                    if any(x in page.url for x in ['home', 'account', 'settings']):
-                        logger.info(f"Redirect detected ({page.url[:60]})")
-                        steps.append("login_success")
-                        return {"status": "success", "steps_completed": steps}
-                except Exception:
-                    logger.warning("Page URL check failed — page may be stale")
-                    break
-
-            # Force navigate (page may be stale after CUA Submit)
-            for url in [
-                "https://app.fireworks.ai/settings/users/api-keys",
-                "https://app.fireworks.ai/",
-            ]:
-                try:
-                    fresh = await browser.contexts[0].new_page()
-                    await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
-                    await asyncio.sleep(2)
-                    fresh_url = fresh.url
-                    if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
-                        steps.append("login_success")
-                        return {"status": "success", "steps_completed": steps}
-                    logger.warning(f"Fresh page landed on: {fresh_url[:60]}")
-                    await fresh.close()
+                    await _fireworks_playwright_onboarding(page)
                 except Exception as e:
-                    logger.warning(f"Fresh page navigate failed: {e}")
+                    logger.warning(f"Playwright-Fallback failed: {e}")
+            steps.append("onboarding_complete")
 
-            return {"status": "error", "steps_completed": steps, "error": f"Login failed: could not reach home/settings"}
+        # Wait for redirect after onboarding (poll up to 15s)
+        for attempt in range(8):
+            await asyncio.sleep(2)
+            try:
+                if any(x in page.url for x in ['home', 'account', 'settings']):
+                    logger.info(f"Redirect detected ({page.url[:60]})")
+                    steps.append("login_success")
+                    return {"status": "success", "steps_completed": steps}
+            except Exception:
+                logger.warning("Page URL check failed — page may be stale")
+                break
+
+        # Force navigate (page may be stale after CUA Submit)
+        for url in [
+            "https://app.fireworks.ai/settings/users/api-keys",
+            "https://app.fireworks.ai/",
+        ]:
+            try:
+                fresh = await browser.contexts[0].new_page()
+                await fresh.goto(url, timeout=15000, wait_until='domcontentloaded')
+                await asyncio.sleep(2)
+                fresh_url = fresh.url
+                if any(x in fresh_url for x in ['home', 'account', 'settings', 'api-keys']):
+                    steps.append("login_success")
+                    return {"status": "success", "steps_completed": steps}
+                logger.warning(f"Fresh page landed on: {fresh_url[:60]}")
+                await fresh.close()
+            except Exception as e:
+                logger.warning(f"Fresh page navigate failed: {e}")
+
+        return {"status": "error", "steps_completed": steps, "error": f"Login failed: could not reach home/settings"}
 
     except Exception as e:
         logger.error(f"Fireworks login error: {e}")
@@ -504,148 +524,169 @@ async def _generate_and_poll_key(pg, key_name: str) -> Dict[str, Any]:
     return {"status": "error", "error": "API Key not found after retry"}
 
 
-async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] = None) -> Dict[str, Any]:
+async def create_api_key(key_name: str = "sinator-key", cdp_port: Optional[int] = None, page=None, browser=None) -> Dict[str, Any]:
     """Create Fireworks API Key via Playwright with auto-retry. Returns {status, api_key, error}
-    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
+    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
     import asyncio
     from playwright.async_api import async_playwright
 
+    own_browser = False
+    _p = None
     try:
-        async with async_playwright() as p:
-            if cdp_port:
-                browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+        if page is not None:
+            pass
+        elif cdp_port:
+            _p = await async_playwright().start()
+            browser = await _p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
+            own_browser = True
+            page = await browser.new_page()
+        else:
+            _p = await async_playwright().start()
+            browser = await _p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
+            own_browser = True
+            page = await browser.new_page()
+
+        # Use a fresh page for API key gen, or reuse the ONE page
+        pg = page if page is not None else await browser.new_page()
+        await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
+        await asyncio.sleep(2)
+
+        # Retry navigate if redirected to login
+        for _ in range(3):
+            if 'login' in pg.url.lower():
+                logger.warning(f"Redirected to login — retrying ({pg.url[:60]})")
+                await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
+                await asyncio.sleep(2)
             else:
-                browser = await p.chromium.launch(headless=False)
+                break
 
-            # Always use a fresh page to avoid stale frame issues
-            pg = await browser.new_page()
-            await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
-            await asyncio.sleep(2)
+        if 'login' in pg.url.lower():
+            logger.error("Cannot access API keys — still on login page")
+            return {"status": "error", "error": "Not logged in"}
 
-            # Retry navigate if redirected to login
+        logger.info(f"API Keys page loaded: {pg.url[:80]}")
+
+        # Dismiss cookie banner before interacting with dialogs
+        try:
             for _ in range(3):
-                if 'login' in pg.url.lower():
-                    logger.warning(f"Redirected to login — retrying ({pg.url[:60]})")
-                    await pg.goto("https://app.fireworks.ai/settings/users/api-keys", wait_until='domcontentloaded')
-                    await asyncio.sleep(2)
+                for btn in await pg.locator('button').all():
+                    txt = (await btn.text_content() or '').strip()
+                    if txt in ('Accept All', 'Reject All'):
+                        await btn.click(force=True); await asyncio.sleep(1)
+                        break
                 else:
                     break
+        except Exception:
+            pass
 
-            if 'login' in pg.url.lower():
-                logger.error("Cannot access API keys — still on login page")
-                return {"status": "error", "error": "Not logged in"}
+        _page_btns = [(await b.text_content() or '').strip()[:40] for b in await pg.locator('button').all()]
+        logger.info(f"Page buttons: {[b for b in _page_btns if b][:5]}")
 
-            logger.info(f"API Keys page loaded: {pg.url[:80]}")
-
-            # Dismiss cookie banner before interacting with dialogs
-            try:
-                for _ in range(3):
-                    for btn in await pg.locator('button').all():
-                        txt = (await btn.text_content() or '').strip()
-                        if txt in ('Accept All', 'Reject All'):
-                            await btn.click(force=True); await asyncio.sleep(1)
-                            break
-                    else:
-                        break
-            except Exception:
-                pass
-
-            _page_btns = [(await b.text_content() or '').strip()[:40] for b in await pg.locator('button').all()]
-            logger.info(f"Page buttons: {[b for b in _page_btns if b][:5]}")
-
-            # Open Create API Key dialog
-            _found_create = False
+        # Open Create API Key dialog
+        _found_create = False
+        for btn in await pg.locator('button').all():
+            if 'Create API Key' in (await btn.text_content() or ''):
+                await btn.click(force=True)
+                await asyncio.sleep(2)
+                logger.info("Create API Key clicked")
+                _found_create = True
+                break
+        if not _found_create:
+            logger.warning("Create API Key button not found — trying after 5s")
+            await asyncio.sleep(5)
             for btn in await pg.locator('button').all():
                 if 'Create API Key' in (await btn.text_content() or ''):
                     await btn.click(force=True)
                     await asyncio.sleep(2)
-                    logger.info("Create API Key clicked")
                     _found_create = True
                     break
-            if not _found_create:
-                logger.warning("Create API Key button not found — trying after 5s")
-                await asyncio.sleep(5)
-                for btn in await pg.locator('button').all():
-                    if 'Create API Key' in (await btn.text_content() or ''):
-                        await btn.click(force=True)
-                        await asyncio.sleep(2)
-                        _found_create = True
-                        break
-            if not _found_create:
-                logger.error("Create API Key button never found — navigating fresh")
-                await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
-                await asyncio.sleep(5)
-                for btn in await pg.locator('button').all():
-                    if 'Create API Key' in (await btn.text_content() or ''):
-                        await btn.click(force=True); await asyncio.sleep(2); break
+        if not _found_create:
+            logger.error("Create API Key button never found — navigating fresh")
+            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await asyncio.sleep(5)
+            for btn in await pg.locator('button').all():
+                if 'Create API Key' in (await btn.text_content() or ''):
+                    await btn.click(force=True); await asyncio.sleep(2); break
 
-            # Verify menu appeared before clicking menuitem
-            menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+        # Verify menu appeared before clicking menuitem
+        menu = pg.locator('[role="menuitem"]:has-text("API Key")').first
+        for _ in range(5):
+            if await menu.count() > 0:
+                break
+            await asyncio.sleep(1)
+        if await menu.count() == 0:
+            logger.warning("API Key menuitem not found — navigating to fresh page")
+            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await asyncio.sleep(5)
+            for btn in await pg.locator('button').all():
+                if 'Create API Key' in (await btn.text_content() or ''):
+                    await btn.click(force=True); await asyncio.sleep(2); break
             for _ in range(5):
                 if await menu.count() > 0:
                     break
                 await asyncio.sleep(1)
-            if await menu.count() == 0:
-                logger.warning("API Key menuitem not found — navigating to fresh page")
-                await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
-                await asyncio.sleep(5)
-                for btn in await pg.locator('button').all():
-                    if 'Create API Key' in (await btn.text_content() or ''):
-                        await btn.click(force=True); await asyncio.sleep(2); break
-                for _ in range(5):
-                    if await menu.count() > 0:
-                        break
-                    await asyncio.sleep(1)
+        await menu.click(force=True)
+        await asyncio.sleep(2)
+
+        # Verify dialog actually appeared (should have input + buttons)
+        _dialog_ok = False
+        for _ in range(5):
+            _inp = pg.locator('input[name="name"]').first
+            if await _inp.count() > 0:
+                _dialog_ok = True
+                break
+            await asyncio.sleep(1)
+        if not _dialog_ok:
+            logger.warning("API Key dialog not visible — retrying from fresh page")
+            await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
+            await asyncio.sleep(5)
+            for btn in await pg.locator('button').all():
+                if 'Create API Key' in (await btn.text_content() or ''):
+                    await btn.click(force=True); await asyncio.sleep(2); break
+            for _ in range(5):
+                if await menu.count() > 0:
+                    break
+                await asyncio.sleep(1)
             await menu.click(force=True)
             await asyncio.sleep(2)
 
-            # Verify dialog actually appeared (should have input + buttons)
-            _dialog_ok = False
-            for _ in range(5):
-                _inp = pg.locator('input[name="name"]').first
-                if await _inp.count() > 0:
-                    _dialog_ok = True
-                    break
-                await asyncio.sleep(1)
-            if not _dialog_ok:
-                logger.warning("API Key dialog not visible — retrying from fresh page")
-                await pg.goto("https://app.fireworks.ai/settings/users/api-keys")
-                await asyncio.sleep(5)
-                for btn in await pg.locator('button').all():
-                    if 'Create API Key' in (await btn.text_content() or ''):
-                        await btn.click(force=True); await asyncio.sleep(2); break
-                for _ in range(5):
-                    if await menu.count() > 0:
-                        break
-                    await asyncio.sleep(1)
-                await menu.click(force=True)
-                await asyncio.sleep(2)
-
-            return await _generate_and_poll_key(pg, key_name)
+        return await _generate_and_poll_key(pg, key_name)
 
     except Exception as e:
         logger.error(f"API Key error: {e}")
         return {"status": "error", "error": str(e)}
 
 
-async def verify_account(verify_url: str, cdp_port: Optional[int] = None) -> bool:
+async def verify_account(verify_url: str, cdp_port: Optional[int] = None, page=None, browser=None) -> bool:
     """Open Fireworks verify URL to confirm account. Returns True if confirmed.
-    If cdp_port provided, connects to existing Chromium (ONE Browser V8)."""
+    If page provided, uses it (ONE Browser). Otherwise uses cdp_port or launches fresh."""
     import asyncio
     from playwright.async_api import async_playwright
     
+    own_browser = False
+    own_page = False
     try:
-        async with async_playwright() as p:
-            if cdp_port:
+        if page is not None:
+            pass
+        elif cdp_port:
+            async with async_playwright() as p:
                 browser = await p.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-            else:
-                browser = await p.chromium.launch(headless=False)
-            page = await browser.new_page()
-            await page.goto(verify_url)
-            await asyncio.sleep(2)
-            logger.info(f"Verify URL opened: {page.url[:80]}")
+                own_browser = True
+                page = await browser.new_page()
+                own_page = True
+        else:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=False, args=_CHROMIUM_GPU_FLAGS)
+                own_browser = True
+                page = await browser.new_page()
+                own_page = True
+        
+        await page.goto(verify_url)
+        await asyncio.sleep(2)
+        logger.info(f"Verify URL opened: {page.url[:80]}")
+        if own_page:
             await page.close()
-            return True
+        return True
     except Exception as e:
         logger.error(f"Verify error: {e}")
         return False

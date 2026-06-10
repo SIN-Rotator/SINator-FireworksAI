@@ -60,7 +60,7 @@ python tools/rotate.py
 - `_login()` — Playwright form fill
 - `_delete_alias()` — Playwright iframe interaction
 - `_create_alias()` — Playwright iframe interaction
-- `read_otp()` — CDP-basiert (MailCheck Extension + OOPIF), unverändert — bewährt
+- `read_otp_via_playwright()` — **Playwright-native** (Shadow-DOM + Multi-Frame Scan), **KEIN CDP, KEINE MailCheck Extension, KEIN User-Chrome!** Nutzt Bot-Chrome (Port 59230), der bereits bei GMX eingeloggt ist.
 
 ---
 
