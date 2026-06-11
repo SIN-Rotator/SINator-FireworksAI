@@ -400,3 +400,132 @@ Simone MCP bietet zusätzliche Code-Analyse-Tools via MCP:
 - `sin_simone_mcp_find_references` vor Refactoring
 - `sin_simone_mcp_project_overview` für schnellen Codebase-Überblick
 - `sin_simone_mcp_structural_edit` für sichere, strukturierte Edits
+
+---
+
+## ⚠️ ABSOLUTE REGEL: NUR AUF MAIN ARBEITEN. NIEMALS BRANCHES.
+
+**OpenSIN-Code Mandat (PRIORITY -10.0):** Branches sind verboten. Alle Commits gehen direkt auf `main`. Wenn ein Branch entdeckt wird: SOFORT zu main mergen ODER löschen (falls fehlerhaft).
+
+Warum:
+- Agenten suchen nicht in Branches — sie schauen nur auf main
+- Resultat: Agenten finden Commits nicht, Builds failen, Zeit verschwendet
+- Lösung: IMMER auf main arbeiten, IMMER direkt pushen
+
+## Immortal Commit Protocol
+
+**Jeder Commit muss diese 4 Schritte durchlaufen:**
+
+### 1. Conventional Commit Message
+
+```
+<type>: <kurzbeschreibung> (max 72 Zeichen)
+
+Warum wurde das gemacht? (Welches Problem, welche Architektur-Entscheidung)
+Was wurde geändert? (Bullet-Points der konkreten Änderungen)
+```
+
+**Types:** `fix:`, `feat:`, `refactor:`, `docs:`, `chore:`, `perf:`, `test:`
+
+### 2. IMMER auf main arbeiten
+
+```bash
+# 1. Sicherstellen dass wir auf main sind
+git checkout main
+git pull origin main
+
+# 2. NIEMALS git checkout -b <branch> — verboten!
+
+# 3. Falls versehentlich auf Branch — SOFORT zurück:
+git checkout main
+git merge --squash <branch>  # oder --ff-only
+git push origin main
+git branch -D <branch>
+git push origin --delete <branch>
+```
+
+### 3. Annotated Tag (optional, für Releases)
+
+```bash
+git tag -a <tag-name> -m "<beschreibung>"
+git push origin <tag-name>
+```
+
+**Tag-Naming:** `v<major>.<minor>.<patch>` (z.B. `v0.4.6`)
+
+### 4. Push — DIREKT zu main
+
+```bash
+# IMMER main, niemals ein Branch-Name
+git push origin main
+# oder bei amend:
+git push origin main --force-with-lease
+```
+
+---
+
+## Warum das unzerstörbar macht (auf main)
+
+| Angriff | Schutz |
+|---------|--------|
+| `git checkout -- .` | Nur uncommitted → Commit ist immun |
+| `git reset --hard` | Commit auf main + Tag → reset betrifft nur working tree |
+| Branch löschen | N/A — wir arbeiten nicht auf Branches |
+| Tag löschen | Commit bleibt auf GitHub (force-push protected) |
+| GitHub löschen | Jeder der Tag pulled hat, kann neu pushen |
+| Local Festplatte kaputt | Commit auf GitHub (3 Kopien) |
+
+## Branches-Discovery Protokoll (bei jedem Clone)
+
+Beim ersten Klonen / beim Session-Start:
+
+```bash
+# 1. Auf main sein
+git checkout main
+git pull origin main
+
+# 2. Alle anderen Branches listen
+branches=$(git branch -r | grep -v "HEAD\|main\|master" | sed 's|origin/||' | tr -d ' ')
+
+# 3. Für jeden Branch: versuche ff-merge in main
+for branch in $branches; do
+  echo "Found branch: $branch — merging into main..."
+  git merge --ff-only "origin/$branch" 2>&1
+  if [ $? -ne 0 ]; then
+    # Squash-merge stattdessen
+    git merge --squash "origin/$branch" 2>&1
+    git commit -m "merge: $branch squashed into main" --no-verify
+  fi
+  # Branch löschen (lokal + remote)
+  git branch -D "$branch" 2>/dev/null
+  git push origin --delete "$branch" 2>/dev/null
+done
+
+# 4. Push main
+git push origin main
+```
+
+## Transitive Coverage Check
+
+Vor dem Push: Prüfe ob `git branch --show-current` main zeigt.
+
+```bash
+BRANCH=$(git branch --show-current 2>/dev/null || echo "")
+if [ "$BRANCH" != "main" ] && [ "$BRANCH" != "master" ]; then
+  echo "❌ FALSCHER BRANCH: $BRANCH — SOFORT auf main wechseln!"
+  echo "   git checkout main"
+  echo "   git merge --squash $BRANCH"
+  echo "   git push origin main"
+  echo "   git branch -D $BRANCH"
+  echo "   git push origin --delete $BRANCH"
+  exit 1
+fi
+echo "✅ Branch: $BRANCH (korrekt)"
+```
+
+## Verbotene Befehle (nie ausführen)
+
+- `git checkout -b <branch>` — NIEMALS
+- `git switch -c <branch>` — NIEMALS
+- `git push origin <branch-name>` (außer main/master) — NIEMALS
+- `gh pr create` ohne sofortigen Merge — discouraged, lieber direkt push zu main
