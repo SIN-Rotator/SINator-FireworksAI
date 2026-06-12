@@ -78,7 +78,7 @@ Rotation (tools/rotate.py)
 # NUR Rotation starten (Playwright-Chrome auf FESTEM PORT 59230)
 cd /Users/jeremy/dev/SIN-Rotator-SINator-FireworksAI
 python3 tools/rotate.py \
-  --gmx-email delqhi@gmx.de \
+  --gmx-email nemotronv3@gmx.de \
   --gmx-password ZOE.jerry2024 \
   --password ZOE.jerry2024!
 
@@ -94,7 +94,7 @@ python3 tools/rotate.py \
 ```json
 // data/config.json
 {
-  "gmx_email": "delqhi@gmx.de",
+  "gmx_email": "nemotronv3@gmx.de",
   "gmx_password": "ZOE.jerry2024",
   "fireworks_password": "ZOE.jerry2024!"
 }
