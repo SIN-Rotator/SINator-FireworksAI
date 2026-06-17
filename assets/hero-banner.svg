@@ -1,0 +1,168 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="280" viewBox="0 0 1200 280" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="280" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A0E14"/>
+      <stop offset="0.3" stop-color="#0D1520"/>
+      <stop offset="0.7" stop-color="#101926"/>
+      <stop offset="1" stop-color="#0A0E14"/>
+    </linearGradient>
+    <linearGradient id="titleGrad" x1="180" y1="0" x2="500" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4F4F5"/>
+      <stop offset="0.5" stop-color="#E4E4E7"/>
+      <stop offset="1" stop-color="#A1A1AA"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="300" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7B3FE4"/>
+      <stop offset="1" stop-color="#00D9FF"/>
+    </linearGradient>
+    <linearGradient id="lineGrad" x1="0" y1="0" x2="1200" y2="0">
+      <stop stop-color="#7B3FE4" stop-opacity="0"/>
+      <stop offset="0.2" stop-color="#7B3FE4" stop-opacity="0.4"/>
+      <stop offset="0.5" stop-color="#00D9FF" stop-opacity="0.5"/>
+      <stop offset="0.8" stop-color="#7B3FE4" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#7B3FE4" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="logoGlow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="numGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <radialGradient id="logoAura" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#7B3FE4" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#7B3FE4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="metricGlow" cx="0.5" cy="0.5" r="0.6">
+      <stop stop-color="#00D9FF" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#00D9FF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="20" cy="20" r="1" fill="#1A2332"/>
+      <line x1="20" y1="0" x2="20" y2="40" stroke="#1A2332" stroke-width="0.5"/>
+      <line x1="0" y1="20" x2="40" y2="20" stroke="#1A2332" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+
+  <rect width="1200" height="280" fill="url(#bg)" rx="12"/>
+  <rect width="1200" height="280" fill="url(#grid)" rx="12" opacity="0.4"/>
+  <rect x="50" y="0" width="1100" height="2" fill="url(#lineGrad)"/>
+  <rect x="50" y="278" width="1100" height="2" fill="url(#lineGrad)"/>
+
+  <!-- HUD corners -->
+  <path d="M12 12 L12 40 M12 12 L40 12" stroke="#7B3FE4" stroke-width="2" opacity="0.5"/>
+  <path d="M1188 12 L1188 40 M1188 12 L1160 12" stroke="#00D9FF" stroke-width="2" opacity="0.5"/>
+  <path d="M12 268 L12 240 M12 268 L40 268" stroke="#00D9FF" stroke-width="2" opacity="0.5"/>
+  <path d="M1188 268 L1188 240 M1188 268 L1160 268" stroke="#7B3FE4" stroke-width="2" opacity="0.5"/>
+
+  <!-- Logo -->
+  <circle cx="70" cy="55" r="50" fill="url(#logoAura)"/>
+  <image href="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" x="40" y="25" width="60" height="60" filter="url(#logoGlow)"/>
+
+  <!-- Title: SINator -->
+  <text x="120" y="50" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="38" font-weight="600" fill="url(#titleGrad)" letter-spacing="-0.5">SINator</text>
+
+  <!-- Subtitle -->
+  <text x="120" y="74" font-family="ui-sans-serif, system-ui, sans-serif" font-size="16" font-weight="400" fill="#71717A" letter-spacing="0.5">Fireworks AI Key Pool</text>
+
+  <!-- Accent underline -->
+  <rect x="121" y="82" width="200" height="2" fill="url(#accent)" rx="1" opacity="0.5"/>
+
+  <!-- Tagline -->
+  <text x="120" y="108" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="500" fill="#00D9FF" letter-spacing="0.5">Never hit a rate limit again</text>
+
+  <!-- 3 Metric cards -->
+  <!-- Card 1: 484 Keys -->
+  <rect x="120" y="140" width="120" height="60" rx="8" fill="#0F1923" stroke="#1E2D3D" stroke-width="1"/>
+  <rect x="120" y="140" width="120" height="2" rx="1" fill="url(#accent)" opacity="0.4"/>
+  <text x="180" y="170" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="700" fill="#00D9FF" filter="url(#numGlow)">484</text>
+  <text x="180" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="500" fill="#71717A" letter-spacing="1">API KEYS</text>
+
+  <!-- Card 2: 10 Proxies -->
+  <rect x="255" y="140" width="120" height="60" rx="8" fill="#0F1923" stroke="#1E2D3D" stroke-width="1"/>
+  <rect x="255" y="140" width="120" height="2" rx="1" fill="url(#accent)" opacity="0.4"/>
+  <text x="315" y="170" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="700" fill="#A855F7" filter="url(#numGlow)">10</text>
+  <text x="315" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="500" fill="#71717A" letter-spacing="1">PROXIES</text>
+
+  <!-- Card 3: 12 Models -->
+  <rect x="390" y="140" width="120" height="60" rx="8" fill="#0F1923" stroke="#1E2D3D" stroke-width="1"/>
+  <rect x="390" y="140" width="120" height="2" rx="1" fill="url(#accent)" opacity="0.4"/>
+  <text x="450" y="170" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="28" font-weight="700" fill="#00D9FF" filter="url(#numGlow)">12</text>
+  <text x="450" y="190" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="500" fill="#71717A" letter-spacing="1">MODELS</text>
+
+  <!-- Quick start hint -->
+  <text x="120" y="235" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="12" font-weight="400" fill="#3F3F46">$ pip install -r requirements.txt &amp;&amp; python start.py</text>
+
+  <!-- Right side: Mini architecture flow -->
+  <!-- Section divider -->
+  <rect x="560" y="30" width="1" height="220" fill="#7B3FE4" opacity="0.15"/>
+  <text x="580" y="50" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#52525B" letter-spacing="2">ARCHITECTURE</text>
+
+  <!-- Flow nodes -->
+  <!-- Clients -->
+  <rect x="580" y="65" width="80" height="28" rx="6" fill="#0F1923" stroke="#00D9FF" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="620" y="83" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#00D9FF">Clients</text>
+
+  <!-- Arrow down -->
+  <path d="M620 96 L620 108 M616 104 L620 108 L624 104" stroke="#3F3F46" stroke-width="1.5" fill="none"/>
+
+  <!-- Router -->
+  <rect x="580" y="115" width="80" height="28" rx="6" fill="#0F1923" stroke="#A855F7" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="620" y="133" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#A855F7">Router</text>
+
+  <!-- Arrow down -->
+  <path d="M620 146 L620 158 M616 154 L620 158 L624 154" stroke="#3F3F46" stroke-width="1.5" fill="none"/>
+
+  <!-- 10 Proxies (compact) -->
+  <rect x="580" y="165" width="80" height="28" rx="6" fill="#0F1923" stroke="#00D9FF" stroke-width="1" stroke-opacity="0.4"/>
+  <text x="620" y="183" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#00D9FF">10 Proxies</text>
+
+  <!-- Arrow down -->
+  <path d="M620 196 L620 208 M616 204 L620 208 L624 204" stroke="#3F3F46" stroke-width="1.5" fill="none"/>
+
+  <!-- Backend -->
+  <rect x="580" y="215" width="80" height="28" rx="6" fill="#0F1923" stroke="#A855F7" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="620" y="233" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#A855F7">Backend</text>
+
+  <!-- Horizontal arrow to Fireworks -->
+  <path d="M665 229 L700 229 M696 225 L700 229 L696 233" stroke="#3F3F46" stroke-width="1.5" fill="none"/>
+
+  <!-- Fireworks -->
+  <rect x="705" y="215" width="90" height="28" rx="6" fill="#0F1923" stroke="#00D9FF" stroke-width="1.5" stroke-opacity="0.6"/>
+  <text x="750" y="233" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="700" fill="#00D9FF">Fireworks AI</text>
+
+  <!-- Right side: hex grid decoration (same as footer) -->
+  <polygon points="960,60 970,55 980,60 980,70 970,75 960,70" fill="#7B3FE4" opacity="0.12" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.3"/>
+  <polygon points="990,60 1000,55 1010,60 1010,70 1000,75 990,70" fill="#00D9FF" opacity="0.12" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <polygon points="1020,60 1030,55 1040,60 1040,70 1030,75 1020,70" fill="#4F46E5" opacity="0.08" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.2"/>
+  <polygon points="975,85 985,80 995,85 995,95 985,100 975,90" fill="#00D9FF" opacity="0.16" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.4"/>
+  <polygon points="1005,85 1015,80 1025,85 1025,95 1015,100 1005,90" fill="#7B3FE4" opacity="0.12" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.3"/>
+  <polygon points="960,110 970,105 980,110 980,120 970,125 960,120" fill="#4F46E5" opacity="0.10" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.25"/>
+  <polygon points="990,110 1000,105 1010,110 1010,120 1000,125 990,120" fill="#7B3FE4" opacity="0.14" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.4"/>
+  <polygon points="1020,110 1030,105 1040,110 1040,120 1030,125 1020,120" fill="#00D9FF" opacity="0.12" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <polygon points="975,135 985,130 995,135 995,145 985,150 975,145" fill="#00D9FF" opacity="0.20" stroke="#00D9FF" stroke-width="0.8" stroke-opacity="0.5"/>
+  <polygon points="1005,135 1015,130 1025,135 1025,145 1015,150 1005,145" fill="#7B3FE4" opacity="0.16" stroke="#7B3FE4" stroke-width="0.8" stroke-opacity="0.4"/>
+
+  <!-- Pulse ring -->
+  <circle cx="985" cy="140" r="12" fill="none" stroke="#00D9FF" stroke-width="1" opacity="0.25">
+    <animate attributeName="r" values="12;22;12" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Even more hexes further right -->
+  <polygon points="1080,60 1090,55 1100,60 1100,70 1090,75 1080,70" fill="#4F46E5" opacity="0.08" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.2"/>
+  <polygon points="1110,60 1120,55 1130,60 1130,70 1120,75 1110,70" fill="#7B3FE4" opacity="0.10" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.25"/>
+  <polygon points="1095,85 1105,80 1115,85 1115,95 1105,100 1095,95" fill="#00D9FF" opacity="0.10" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.25"/>
+  <polygon points="1080,110 1090,105 1100,110 1100,120 1090,125 1080,120" fill="#7B3FE4" opacity="0.10" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.25"/>
+  <polygon points="1110,110 1120,105 1130,110 1130,120 1120,125 1110,120" fill="#00D9FF" opacity="0.10" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.25"/>
+
+  <!-- Vertical accent line before hex grid -->
+  <rect x="925" y="30" width="1" height="220" fill="#7B3FE4" opacity="0.12"/>
+
+  <!-- Scanning line -->
+  <rect x="0" y="0" width="1200" height="1" fill="#00D9FF" opacity="0.2">
+    <animate attributeName="y" values="0;280;0" dur="10s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0;0.3;0" dur="10s" repeatCount="indefinite"/>
+  </rect>
+</svg>
