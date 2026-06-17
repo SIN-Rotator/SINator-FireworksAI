@@ -145,16 +145,16 @@
     <text x="780" y="277" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="600" fill="#00A8D8">10 Proxies</text>
   </g>
 
-  <!-- Connection: 10 Proxies → Fireworks AI (L-shape with rounded corner, arrow UP) -->
-  <path d="M 853 272 L 895 272 Q 905 272 905 262 L 905 112" stroke="#00A8D8" stroke-width="2" stroke-dasharray="4 3" stroke-opacity="0.4" fill="none">
+  <!-- Connection: 10 Proxies → Fireworks AI (rounded elbow, arrow points right) -->
+  <path d="M 853 272 L 870 272 A 30 30 0 0 1 900 242 L 900 112" stroke="#00A8D8" stroke-width="3" stroke-dasharray="4 3" stroke-opacity="0.6" fill="none" stroke-linecap="round">
     <animate attributeName="stroke-dashoffset" from="0" to="-7" dur="0.5s" repeatCount="indefinite"/>
   </path>
-  <polygon points="902,115 905,109 908,115" fill="#00A8D8" opacity="0.7">
+  <polygon points="900,109 905,112 900,115" fill="#00A8D8" opacity="0.9">
     <animate attributeName="opacity" values="0.4;1;0.4" dur="4s" begin="2.5s" repeatCount="indefinite"/>
   </polygon>
   <circle cx="853" cy="272" r="3" fill="#00A8D8" filter="url(#glowL)" opacity="0">
-    <animate attributeName="cx" values="853;895;905;905" dur="1.2s" begin="2.5s" repeatCount="indefinite" keyTimes="0;0.3;0.4;1"/>
-    <animate attributeName="cy" values="272;272;262;112" dur="1.2s" begin="2.5s" repeatCount="indefinite" keyTimes="0;0.3;0.4;1"/>
+    <animate attributeName="cx" values="853;870;900;900" dur="1.2s" begin="2.5s" repeatCount="indefinite" keyTimes="0;0.3;0.45;1"/>
+    <animate attributeName="cy" values="272;272;242;112" dur="1.2s" begin="2.5s" repeatCount="indefinite" keyTimes="0;0.3;0.45;1"/>
     <animate attributeName="opacity" values="0;1;1;0" dur="1.2s" begin="2.5s" repeatCount="indefinite" keyTimes="0;0.1;0.8;1"/>
   </circle>
 
