@@ -201,10 +201,56 @@ Do NOT use `reasoning_effort` — it causes `ProviderInitError`.
 | Playwright "Executable doesn't exist" | Run `python3 -m playwright install chromium` |
 | 0 available keys | Run key generation (see above) |
 | Cloudflare Error 1033 | Tunnel down → restart `com.cloudflared.sinator` |
-| GMX login fails | Check `data/config.json` — GMX account may be banned |
+| GMX login fails (Playwright Chromium) | GMX blocks "Chrome for Testing" fingerprint → use real Chrome via CDP |
+| GMX login fails (real Chrome CDP) | Check consent iframe fix (see below) |
+| `prompt=none` blocks password field | DO NOT navigate to `prompt=login` — SPA shows password after Weiter, just wait |
+| GMX consent page blocks login | Consent button is in cross-origin iframe (`dl.gmx.net/permission/...`) — must click in iframe, not main frame |
 | v3 rotate.py EPIPE | Use v2 repo's rotate.py instead |
 | 403 RestrictedModelsError | Model not available on free tier — use a different model |
 | Pool backend not responding | `launchctl load ~/Library/LaunchAgents/com.sinator.backend.plist` |
+| Keys in v2 pool not showing in dashboard | Sync v2→v3: compare `data/fireworksai-pool.json` by `id`/`alias_email`, copy missing entries |
+
+## GMX Login Fix (2026-06-17)
+
+### Problem 1: Consent Page
+GMX redirects to `consent-management` page. The "Akzeptieren und weiter" button is in a **cross-origin iframe** (`dl.gmx.net/permission/...`), NOT in the main frame. Must iterate `page.frames` and click within the iframe.
+
+### Problem 2: `prompt=none` in URL
+After clicking Login on homepage, GMX uses `auth.gmx.net/login?prompt=none`. The old code tried to replace `prompt=none` with `prompt=login` via JS `replaceState` or `page.goto()` — **both break the SPA session state**.
+
+**Fix:** Do NOT touch the URL. After filling email and clicking Weiter, the SPA dynamically shows the password field (wait ~4s). Just fill password and click Login.
+
+### Problem 3: Playwright Chromium blocked
+GMX blocks "Chrome for Testing" (Playwright's bundled Chromium) by redirecting `auth.gmx.net/login` → `hilfe.gmx.net`. Use real Chrome via CDP instead:
+
+```bash
+# Start separate Chrome instance (does NOT kill user's Chrome)
+nohup "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --user-data-dir=/tmp/sinator-chrome-profile \
+  --remote-debugging-port=9222 \
+  --no-first-run --no-default-browser-check \
+  > /tmp/sinator-chrome.log 2>&1 &
+
+# Run rotation with CDP
+cd ~/dev/SINator-Fireworks-Rotator-v2
+python3 tools/rotate.py --cdp-port 9222 --debug
+```
+
+### v2→v3 Pool Sync
+New keys are saved to v2's `data/fireworksai-pool.json` but the dashboard reads v3's file. Sync missing entries:
+
+```python
+import json
+from pathlib import Path
+v2 = Path.home()/"dev/SINator-Fireworks-Rotator-v2/data/fireworksai-pool.json"
+v3 = Path.home()/"dev/SIN-Rotator-SINator-FireworksAI/data/fireworksai-pool.json"
+v2_keys = json.load(open(v2)); v3_keys = json.load(open(v3))
+v3_ids = {k.get("id","") for k in v3_keys if isinstance(k,dict)}
+for k in v2_keys:
+    if isinstance(k,dict) and k.get("id","") not in v3_ids:
+        v3_keys.append(k)
+json.dump(v3_keys, open(v3,'w'), indent=2)
+```
 
 ## Verification
 
