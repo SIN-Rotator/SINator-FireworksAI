@@ -1,0 +1,41 @@
+# SINator — Fireworks AI Key Pool
+
+> Automated GMX alias rotation, Fireworks AI account registration, and API key pool with OpenAI-compatible proxy.
+
+## Documentation
+
+- [README](https://github.com/SIN-Rotator/SINator-FireworksAI/blob/main/README.md) - Quick start, features, architecture
+- [Architecture](https://github.com/SIN-Rotator/SINator-FireworksAI/blob/main/docs/) - Detailed design docs
+- [Cloudflare Fallback](https://github.com/SIN-Rotator/SINator-FireworksAI/blob/main/cloudflare/README.md) - Worker + D1 setup
+- [Troubleshooting](https://github.com/SIN-Rotator/SINator-FireworksAI/blob/main/docs/troubleshooting.md) - Known issues and fixes
+- [Pool Router](https://github.com/SIN-Rotator/SINator-FireworksAI/blob/main/docs/router.md) - Router configuration
+
+## Key Information
+
+- License: MIT
+- Language: Python 3.12+
+- Framework: FastAPI + Playwright CDP
+- Protocol: OpenAI-compatible API
+- Pool: 484 keys, 10 proxies, auto-failover
+- Repo: https://github.com/SIN-Rotator/SINator-FireworksAI
+
+## Architecture
+
+- Backend: FastAPI on :8100 (PoolManager + Keychain)
+- Router: Python on :9998 (10-proxy auto-failover)
+- Proxies: aiohttp on :8888-:8897 (silent key swap)
+- Automation: Playwright CDP (GMX + Fireworks signup)
+- Fallback: Cloudflare Worker + D1 (Mac offline scenario)
+
+## Endpoints
+
+- Pool Stats: GET /api/v1/pool/stats
+- Pool Keys: GET /api/v1/pool/keys
+- Inference: POST /inference/v1/chat/completions (OpenAI-compatible)
+- Backend Docs: http://localhost:8100/docs (Swagger)
+
+## Companion Repos
+
+- Dashboard: https://github.com/SIN-Rotator/SINator-dashboard
+- OpenCode Config: https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config
+- Hermes Bundle: https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle
