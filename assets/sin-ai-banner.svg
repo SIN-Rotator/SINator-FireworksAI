@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="200" viewBox="0 0 1200 200" fill="none">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="200" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0A0E14"/>
+      <stop offset="0.3" stop-color="#0D1520"/>
+      <stop offset="0.7" stop-color="#101926"/>
+      <stop offset="1" stop-color="#0A0E14"/>
+    </linearGradient>
+
+    <!-- Radial glow behind bolt -->
+    <radialGradient id="boltGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop stop-color="#00D9FF" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#00D9FF" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Text gradient -->
+    <linearGradient id="textGrad" x1="200" y1="0" x2="600" y2="0" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A855F7"/>
+      <stop offset="0.3" stop-color="#7B3FE4"/>
+      <stop offset="0.7" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#00D9FF"/>
+    </linearGradient>
+
+    <!-- Bolt gradient -->
+    <linearGradient id="boltGrad" x1="0" y1="0" x2="0" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00E5FF"/>
+      <stop offset="0.5" stop-color="#00B8D4"/>
+      <stop offset="1" stop-color="#7B3FE4"/>
+    </linearGradient>
+
+    <!-- Glow lines -->
+    <linearGradient id="lineGrad" x1="0" y1="0" x2="1200" y2="0">
+      <stop stop-color="#7B3FE4" stop-opacity="0"/>
+      <stop offset="0.2" stop-color="#7B3FE4" stop-opacity="0.5"/>
+      <stop offset="0.5" stop-color="#00D9FF" stop-opacity="0.6"/>
+      <stop offset="0.8" stop-color="#7B3FE4" stop-opacity="0.5"/>
+      <stop offset="1" stop-color="#7B3FE4" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Neon glow filter for bolt -->
+    <filter id="neonGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur1"/>
+      <feGaussianBlur stdDeviation="6" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Text glow filter -->
+    <filter id="textGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="1.5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <!-- Circuit pattern -->
+    <pattern id="circuit" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <circle cx="20" cy="20" r="1" fill="#1A2332"/>
+      <line x1="20" y1="0" x2="20" y2="40" stroke="#1A2332" stroke-width="0.5"/>
+      <line x1="0" y1="20" x2="40" y2="20" stroke="#1A2332" stroke-width="0.5"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="200" fill="url(#bg)" rx="12"/>
+
+  <!-- Circuit pattern overlay (subtle) -->
+  <rect width="1200" height="200" fill="url(#circuit)" rx="12" opacity="0.5"/>
+
+  <!-- Glow lines top/bottom -->
+  <rect x="50" y="0" width="1100" height="2" fill="url(#lineGrad)"/>
+  <rect x="50" y="198" width="1100" height="2" fill="url(#lineGrad)"/>
+
+  <!-- Corner accents (HUD style) -->
+  <path d="M12 12 L12 40 M12 12 L40 12" stroke="#7B3FE4" stroke-width="2" opacity="0.6"/>
+  <path d="M1188 12 L1188 40 M1188 12 L1160 12" stroke="#00D9FF" stroke-width="2" opacity="0.6"/>
+  <path d="M12 188 L12 160 M12 188 L40 188" stroke="#00D9FF" stroke-width="2" opacity="0.6"/>
+  <path d="M1188 188 L1188 160 M1188 188 L1160 188" stroke="#7B3FE4" stroke-width="2" opacity="0.6"/>
+
+  <!-- Radial glow behind bolt -->
+  <circle cx="165" cy="100" r="80" fill="url(#boltGlow)"/>
+
+  <!-- Lightning bolt with neon glow -->
+  <g filter="url(#neonGlow)">
+    <path d="M185 55 L158 105 L178 105 L145 155 L180 110 L160 110 Z" fill="url(#boltGrad)"/>
+  </g>
+
+  <!-- SIN AI text with glow -->
+  <g filter="url(#textGlow)">
+    <text x="215" y="88" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Helvetica, sans-serif" font-size="44" font-weight="800" fill="url(#textGrad)" letter-spacing="3">SIN AI</text>
+  </g>
+
+  <!-- Underline accent -->
+  <rect x="215" y="96" width="180" height="2" fill="url(#textGrad)" opacity="0.4" rx="1"/>
+
+  <!-- Tagline -->
+  <text x="215" y="120" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="15" font-weight="400" fill="#6B7280" letter-spacing="1">Enterprise AI Agents die autonom arbeiten</text>
+
+  <!-- Links with separators -->
+  <text x="215" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="600" fill="#00D9FF" letter-spacing="1.5">sin.ai</text>
+  <text x="270" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="400" fill="#374151">·</text>
+  <text x="285" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="600" fill="#00D9FF" letter-spacing="1.5">Dashboard</text>
+  <text x="370" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="400" fill="#374151">·</text>
+  <text x="385" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="600" fill="#00D9FF" letter-spacing="1.5">Agents</text>
+  <text x="445" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="400" fill="#374151">·</text>
+  <text x="460" y="148" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, sans-serif" font-size="13" font-weight="600" fill="#00D9FF" letter-spacing="1.5">GitHub/SIN-Rotator</text>
+
+  <!-- Right side: hexagonal tech grid -->
+  <!-- Row 1 -->
+  <polygon points="1050,55 1060,50 1070,55 1070,65 1060,70 1050,65" fill="#7B3FE4" opacity="0.15" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.4"/>
+  <polygon points="1080,55 1090,50 1100,55 1100,65 1090,70 1080,65" fill="#00D9FF" opacity="0.15" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.4"/>
+  <polygon points="1110,55 1120,50 1130,55 1130,65 1120,70 1110,65" fill="#4F46E5" opacity="0.1" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.3"/>
+  <!-- Row 2 -->
+  <polygon points="1065,80 1075,75 1085,80 1085,90 1075,95 1065,90" fill="#00D9FF" opacity="0.2" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.5"/>
+  <polygon points="1095,80 1105,75 1115,80 1115,90 1105,95 1095,90" fill="#7B3FE4" opacity="0.15" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.4"/>
+  <!-- Row 3 -->
+  <polygon points="1050,105 1060,100 1070,105 1070,115 1060,120 1050,115" fill="#4F46E5" opacity="0.12" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.3"/>
+  <polygon points="1080,105 1090,100 1100,105 1100,115 1090,120 1080,115" fill="#7B3FE4" opacity="0.18" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.5"/>
+  <polygon points="1110,105 1120,100 1130,105 1130,115 1120,120 1110,115" fill="#00D9FF" opacity="0.15" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.4"/>
+  <!-- Row 4 (center glow) -->
+  <polygon points="1065,130 1075,125 1085,130 1085,140 1075,145 1065,140" fill="#00D9FF" opacity="0.25" stroke="#00D9FF" stroke-width="0.8" stroke-opacity="0.6"/>
+  <polygon points="1095,130 1105,125 1115,130 1115,140 1105,145 1095,140" fill="#7B3FE4" opacity="0.2" stroke="#7B3FE4" stroke-width="0.8" stroke-opacity="0.5"/>
+
+  <!-- Animated pulse rings around center hex -->
+  <circle cx="1075" cy="135" r="12" fill="none" stroke="#00D9FF" stroke-width="1" opacity="0.3">
+    <animate attributeName="r" values="12;22;12" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.4;0;0.4" dur="3s" repeatCount="indefinite"/>
+  </circle>
+
+  <!-- Circuit trace lines connecting hexes to bolt -->
+  <path d="M1020 100 L1000 100 L1000 80 L980 80" stroke="#7B3FE4" stroke-width="1" opacity="0.2" fill="none"/>
+  <path d="M1020 135 L990 135 L990 155 L970 155" stroke="#00D9FF" stroke-width="1" opacity="0.15" fill="none"/>
+
+  <!-- Vertical accent line -->
+  <rect x="1015" y="45" width="1" height="120" fill="#7B3FE4" opacity="0.2"/>
+
+  <!-- Animated scanning line -->
+  <rect x="0" y="0" width="1200" height="1" fill="#00D9FF" opacity="0.3">
+    <animate attributeName="y" values="0;200;0" dur="8s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0;0.4;0" dur="8s" repeatCount="indefinite"/>
+  </rect>
+</svg>
