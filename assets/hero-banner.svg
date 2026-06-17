@@ -30,6 +30,9 @@
       <feGaussianBlur stdDeviation="6" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#00D9FF" flood-opacity="0.08"/>
+    </filter>
     <radialGradient id="aura" cx="0.5" cy="0.5" r="0.5">
       <stop stop-color="#00D9FF" stop-opacity="0.08"/>
       <stop offset="1" stop-color="#00D9FF" stop-opacity="0"/>
@@ -39,10 +42,6 @@
       <line x1="25" y1="0" x2="25" y2="50" stroke="#1A2332" stroke-width="0.3"/>
       <line x1="0" y1="25" x2="50" y2="25" stroke="#1A2332" stroke-width="0.3"/>
     </pattern>
-    <!-- Terminal dots -->
-    <circle id="dotRed" r="5" fill="#FF5F57"/>
-    <circle id="dotYellow" r="5" fill="#FFBD2E"/>
-    <circle id="dotGreen" r="5" fill="#28CA41"/>
   </defs>
 
   <rect width="1400" height="340" fill="url(#bg)" rx="12"/>
@@ -75,14 +74,22 @@
   <text x="440" y="222" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#71717A" letter-spacing="2">MODELS</text>
   <rect x="440" y="232" width="60" height="1" fill="#00D9FF" opacity="0.4"/>
 
-  <!-- Quick Start Code Card -->
-  <rect x="100" y="260" width="420" height="46" rx="8" fill="#0D1117" stroke="#21262D" stroke-width="1"/>
-  <!-- Terminal dots -->
-  <circle cx="118" cy="275" r="5" fill="#FF5F57"/>
-  <circle cx="133" cy="275" r="5" fill="#FFBD2E"/>
-  <circle cx="148" cy="275" r="5" fill="#28CA41"/>
-  <!-- Command text -->
-  <text x="168" y="289" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="13" font-weight="400" fill="#7D8590">$ pip install -r requirements.txt &amp;&amp; python start.py</text>
+  <!-- Quick Start Code Card — Terminal Style -->
+  <g filter="url(#cardShadow)">
+    <!-- Main card body -->
+    <rect x="100" y="258" width="480" height="52" rx="10" fill="#0D1117" stroke="#30363D" stroke-width="1"/>
+    <!-- Title bar -->
+    <rect x="100" y="258" width="480" height="22" rx="10" fill="#161B22"/>
+    <rect x="100" y="270" width="480" height="10" fill="#161B22"/>
+    <!-- Traffic light dots -->
+    <circle cx="118" cy="269" r="5" fill="#FF5F57"/>
+    <circle cx="133" cy="269" r="5" fill="#FFBD2E"/>
+    <circle cx="148" cy="269" r="5" fill="#28CA41"/>
+    <!-- "Terminal" label -->
+    <text x="175" y="273" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="500" fill="#8B949E">Terminal</text>
+    <!-- Command with prompt -->
+    <text x="118" y="297" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="14" font-weight="400" fill="#7D8590"><tspan fill="#00D9FF">$</tspan> pip install -r requirements.txt &amp;&amp; python start.py</text>
+  </g>
 
   <!-- Vertical divider -->
   <rect x="680" y="40" width="1" height="260" fill="#7B3FE4" opacity="0.15"/>
