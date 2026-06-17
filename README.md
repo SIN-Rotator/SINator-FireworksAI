@@ -212,6 +212,30 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
 
+---
+
+<!-- SIN AI BRANDING -->
 <p align="center">
-  <sub>Built by <a href="https://github.com/SIN-Rotator">SIN-Rotator</a>. MIT Licensed.</sub>
+  <a href="https://sin.ai">
+    <img src="https://img.shields.io/badge/⚡_SIN_AI-Enterprise_Agent_Platform-7B3FE4?style=for-the-badge&logo=github&logoColor=white&labelColor=0D1117" alt="SIN AI" />
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://sin.ai">
+    <img src="https://img.shields.io/badge/🌐_Website-sin.ai-00D9FF?style=flat-square&labelColor=0D1117" alt="Website" />
+  </a>
+  <a href="https://sin.ai/dashboard">
+    <img src="https://img.shields.io/badge/📊_Dashboard-Live-00D9FF?style=flat-square&labelColor=0D1117" alt="Dashboard" />
+  </a>
+  <a href="https://sin.ai/agents">
+    <img src="https://img.shields.io/badge/🤖_Agents-Autonomous-00D9FF?style=flat-square&labelColor=0D1117" alt="Agents" />
+  </a>
+  <a href="https://github.com/SIN-Rotator">
+    <img src="https://img.shields.io/badge/📦_GitHub-SIN--Rotator-00D9FF?style=flat-square&labelColor=0D1117" alt="GitHub" />
+  </a>
+</p>
+
+<p align="center">
+  <sub>Enterprise AI Agents die autonom arbeiten — powered by <a href="https://sin.ai"><strong>SIN AI</strong></a></sub>
 </p>
