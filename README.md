@@ -20,10 +20,10 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="#models">Models</a> &middot;
-  <a href="#api">API</a> &middot;
+  <a href="#quick-start">Quick Start</a> |
+  <a href="#features">Features</a> |
+  <a href="#models">Models</a> |
+  <a href="#api">API</a> |
   <a href="#contributing">Contributing</a>
 </p>
 
@@ -76,6 +76,10 @@ response = client.chat.completions.create(
 
 ## Live Pool Stats
 
+The pool currently manages **484 keys** across 10 proxies. Most keys are suspended (431) due to Fireworks spending caps, while **43 remain available** for active rotation:
+
+![Pool Status](./assets/pool-status.png)
+
 | Metric | Value |
 |--------|-------|
 | **Total Keys** | 484 |
@@ -83,10 +87,6 @@ response = client.chat.completions.create(
 | **Suspended** | 431 |
 | **Used** | 10 |
 | **Assigned** | 2 |
-
-<p align="center">
-  <img src="./assets/pool-status.png" alt="Pool Status Distribution" width="640" />
-</p>
 
 ## Models
 
@@ -107,9 +107,9 @@ response = client.chat.completions.create(
 | **MiniMax M3** | `accounts/fireworks/models/minimax-m3` | 512K | 64K |
 | **Qwen 3.7 Plus** | `accounts/fireworks/models/qwen3p7-plus` | 256K | 32K |
 
-<p align="center">
-  <img src="./assets/model-context.png" alt="Model Context Window Comparison" width="640" />
-</p>
+Context windows range from 128K to 1M tokens. DeepSeek V4 leads with 1M, while MiniMax M3 offers 512K for long-context tasks:
+
+![Model Context Windows](./assets/model-context.png)
 
 ### Usage
 
