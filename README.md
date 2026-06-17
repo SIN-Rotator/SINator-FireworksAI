@@ -27,6 +27,7 @@
   <a href="#what-is-sinator">What is SINator?</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="#features">Features</a> ·
+  <a href="#models">Models</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#use-cases">Use Cases</a> ·
   <a href="#api-reference">API</a> ·
@@ -39,7 +40,7 @@
 # SINator — Fireworks AI Key Pool
 
 <p align="center">
-  <em>Never hit a rate limit again. Automated key rotation pool for Fireworks AI — 484 keys, 10 proxies, one URL.</em>
+  <em>Never hit a rate limit again. 484 keys, 10 proxies, 12 models, one URL.</em>
 </p>
 
 ## What is SINator?
@@ -51,14 +52,24 @@
 
 **The solution:** SINator maintains a pool of hundreds of API keys, automatically rotates them on 429/401/403, and gives you **one URL** that never goes down — even if the Mac goes offline (Cloudflare Worker fallback).
 
+### Live Pool Stats
+
 | Metric | Value |
 |--------|-------|
 | **Total Keys** | 484 |
-| **Available** | ~93 |
+| **Available** | 41 |
+| **Suspended** | 431 |
+| **Used** | 10 |
+| **Leased** | 2 |
+| **Assigned** | 2 |
 | **Proxies** | 10 (:8888-:8897) |
 | **Router** | :9998 with auto-failover |
 | **Backend** | :8100 (FastAPI) |
 | **Key Generation** | ~180s per key (fully automated) |
+
+<p align="center">
+  <img src="./assets/pool-status.png" alt="SINator Pool Status — 484 keys distribution" width="640" />
+</p>
 
 ---
 
@@ -122,7 +133,7 @@ python3 scripts/pool-router.py
 | **Soft-Ownership** | Agents get dedicated keys (V19.14) with heartbeat | ✅ |
 | **Cloudflare Fallback** | When Mac goes offline, CF Worker takes over with D1 key rotation | ✅ |
 | **OpenAI-Compatible** | One URL works with opencode, Cursor, Continue, Python SDK, curl | ✅ |
-| **12 Fireworks Models** | DeepSeek V4, GLM 5.1, Kimi K2.6, Qwen 3.6, MiniMax M2.7, GPT-OSS 120B | ✅ |
+| **12 Fireworks Models** | DeepSeek V4, GLM 5.1/5.2, Kimi K2.6/K2.7, Qwen 3.6/3.7, MiniMax M2.7/M3, GPT-OSS | ✅ |
 | **Pool Dashboard** | Visual stats, key management, rotation trigger | ✅ |
 | **Frame-aware OTP** | Smart OTP extraction from GMX inbox with shadow DOM support | ✅ |
 | **1s Key-Retry** | No immediate 503 — 300 retries over 5 minutes before giving up | ✅ |
@@ -140,6 +151,73 @@ python3 scripts/pool-router.py
 | `suspended` | Blocked by Fireworks (401/403) |
 
 `available = total - used - suspended - assigned`
+
+</details>
+
+---
+
+## Models
+
+12 Fireworks AI models accessible through one endpoint:
+
+| Model | ID | Context | Output | Vision |
+|:------|:---|--------:|-------:|:------:|
+| **DeepSeek V4 Pro** | `accounts/fireworks/models/deepseek-v4-pro` | 1M | 64K | ✅ |
+| **DeepSeek V4 Flash** | `accounts/fireworks/models/deepseek-v4-flash` | 1M | 64K | ✅ |
+| **GLM 5.1** | `accounts/fireworks/models/glm-5p1` | 198K | 32K | ✅ |
+| **GLM 5.1 Fast** | `accounts/fireworks/routers/glm-5p1-fast` | 128K | 16K | ✅ |
+| **GLM 5.2** | `accounts/fireworks/models/glm-5p2` | 256K | 64K | ✅ |
+| **Kimi K2.6** | `accounts/fireworks/models/kimi-k2p6` | 256K | 32K | ✅ |
+| **Kimi K2.6 Turbo** | `accounts/fireworks/routers/kimi-k2p6-turbo` | 128K | 16K | ✅ |
+| **Kimi K2.7 Code** | `accounts/fireworks/models/kimi-k2p7-code` | 256K | 32K | ✅ |
+| **Kimi K2.7 Code Fast** | `accounts/fireworks/routers/kimi-k2p7-code-fast` | 128K | 16K | ✅ |
+| **MiniMax M2.7** | `accounts/fireworks/models/minimax-m2p7` | 192K | 32K | ✅ |
+| **MiniMax M3** | `accounts/fireworks/models/minimax-m3` | 512K | 64K | ✅ |
+| **Qwen 3.7 Plus** | `accounts/fireworks/models/qwen3p7-plus` | 256K | 32K | ✅ |
+
+<p align="center">
+  <img src="./assets/model-context.png" alt="Fireworks Model Context Windows Comparison" width="640" />
+</p>
+
+<details>
+<summary>Usage Examples</summary>
+
+### OpenCode
+
+```bash
+mkdir -p ~/.config/opencode
+curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config/main/opencode.json \
+  -o ~/.config/opencode/opencode.json
+```
+
+### Python / curl
+
+```python
+from openai import OpenAI
+client = OpenAI(
+    base_url="https://sinatorpool-router.delqhi.com/inference/v1",
+    api_key="<YOUR_API_KEY>",
+)
+
+response = client.chat.completions.create(
+    model="accounts/fireworks/models/deepseek-v4-pro",
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+```bash
+curl https://sinatorpool-router.delqhi.com/inference/v1/chat/completions \
+  -H "Authorization: Bearer <YOUR_API_KEY>" \
+  -d '{"model":"accounts/fireworks/models/minimax-m3","messages":[{"role":"user","content":"Hi"}]}'
+```
+
+### Hermes
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/config/fireworks-router.yaml \
+  -o ~/.hermes/config.yaml
+hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
+```
 
 </details>
 
@@ -187,7 +265,7 @@ flowchart TB
 ```
 
 <details>
-<summary>Detailed Architecture Breakdown</summary>
+<summary>Detailed Architecture + Key Rotation Logic</summary>
 
 ```
 Clients (opencode, Cursor, Continue, Python)
@@ -242,45 +320,6 @@ Alias-Rotation → Signup → OTP → API Key → Pool
 | `/api/v1/pool/agent-key` | POST | V19.14 — Soft-ownership key assignment |
 | `/api/v1/pool/agent-release` | POST | V19.14 — Agent releases key |
 | `/api/v1/pool/agent-heartbeat` | POST | V19.14 — Agent heartbeat |
-
-<details>
-<summary>Client Configuration Examples</summary>
-
-### OpenCode
-
-```bash
-mkdir -p ~/.config/opencode
-curl -fsSL https://raw.githubusercontent.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config/main/opencode.json \
-  -o ~/.config/opencode/opencode.json
-```
-
-12 models: DeepSeek V4 Pro/Flash, GLM 5.1/Fast, Kimi K2.5/2.6/Turbo, Qwen 3.6 Plus, MiniMax M2.5/2.7, GPT-OSS 120B/20B.
-
-### Python / curl
-
-```python
-from openai import OpenAI
-client = OpenAI(
-    base_url="https://sinatorpool-router.delqhi.com/inference/v1",
-    api_key="<YOUR_API_KEY>",
-)
-```
-
-```bash
-curl https://sinatorpool-router.delqhi.com/inference/v1/chat/completions \
-  -H "Authorization: Bearer <YOUR_API_KEY>" \
-  -d '{"model":"accounts/fireworks/models/gpt-oss-120b","messages":[{"role":"user","content":"Hi"}]}'
-```
-
-### Hermes
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle/main/config/fireworks-router.yaml \
-  -o ~/.hermes/config.yaml
-hermes auth add custom:fireworks --type api-key --api-key "$FIREWORKS_AI_API_KEY"
-```
-
-</details>
 
 ---
 
@@ -371,6 +410,9 @@ SINator-FireworksAI/
 ├── config/                 # Pool proxy configs
 │   ├── fireworks-pool1.yaml
 │   └── fireworks-router.yaml
+├── assets/                 # Charts and images
+│   ├── pool-status.png     # Live pool distribution chart
+│   └── model-context.png   # Model context comparison chart
 └── docs/                   # Architecture + troubleshooting
 ```
 
