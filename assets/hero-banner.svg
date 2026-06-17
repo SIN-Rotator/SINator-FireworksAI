@@ -39,8 +39,10 @@
       <line x1="25" y1="0" x2="25" y2="50" stroke="#1A2332" stroke-width="0.3"/>
       <line x1="0" y1="25" x2="50" y2="25" stroke="#1A2332" stroke-width="0.3"/>
     </pattern>
-    <!-- Animated flow dot -->
-    <circle id="flowDot" r="3" fill="#00D9FF" filter="url(#glow)"/>
+    <!-- Terminal dots -->
+    <circle id="dotRed" r="5" fill="#FF5F57"/>
+    <circle id="dotYellow" r="5" fill="#FFBD2E"/>
+    <circle id="dotGreen" r="5" fill="#28CA41"/>
   </defs>
 
   <rect width="1400" height="340" fill="url(#bg)" rx="12"/>
@@ -55,36 +57,32 @@
   <path d="M1388 328 L1388 295 M1388 328 L1355 328" stroke="#7B3FE4" stroke-width="2" opacity="0.5"/>
 
   <!-- LEFT SIDE: Title + Metrics -->
-  <!-- Title: SINator -->
   <text x="100" y="65" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="48" font-weight="600" fill="url(#titleGrad)" letter-spacing="-1">SINator</text>
-
-  <!-- Subtitle -->
   <text x="100" y="95" font-family="ui-sans-serif, system-ui, sans-serif" font-size="18" font-weight="400" fill="#71717A" letter-spacing="0.5">Fireworks AI Key Pool</text>
-
-  <!-- Accent underline -->
   <rect x="101" y="106" width="240" height="2" fill="url(#accent)" rx="1" opacity="0.6"/>
-
-  <!-- Tagline -->
   <text x="100" y="140" font-family="ui-sans-serif, system-ui, sans-serif" font-size="22" font-weight="500" fill="#00D9FF" letter-spacing="0.3">Never hit a rate limit again</text>
 
-  <!-- Quick start hint -->
-  <text x="100" y="300" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="13" font-weight="400" fill="#3F3F46">$ pip install -r requirements.txt &amp;&amp; python start.py</text>
-
   <!-- 3 Metric Cards — Clean, Minimalist -->
-  <!-- Card 1: 484 Keys -->
   <text x="100" y="200" font-family="ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" fill="#F4F4F5" letter-spacing="-1">484</text>
   <text x="100" y="222" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#71717A" letter-spacing="2">API KEYS</text>
   <rect x="100" y="232" width="60" height="1" fill="#7B3FE4" opacity="0.4"/>
 
-  <!-- Card 2: 10 Proxies -->
   <text x="280" y="200" font-family="ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" fill="#F4F4F5" letter-spacing="-1">10</text>
   <text x="280" y="222" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#71717A" letter-spacing="2">PROXIES</text>
   <rect x="280" y="232" width="60" height="1" fill="#A855F7" opacity="0.4"/>
 
-  <!-- Card 3: 12 Models -->
   <text x="440" y="200" font-family="ui-sans-serif, system-ui, sans-serif" font-size="42" font-weight="700" fill="#F4F4F5" letter-spacing="-1">12</text>
   <text x="440" y="222" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#71717A" letter-spacing="2">MODELS</text>
   <rect x="440" y="232" width="60" height="1" fill="#00D9FF" opacity="0.4"/>
+
+  <!-- Quick Start Code Card -->
+  <rect x="100" y="260" width="420" height="46" rx="8" fill="#0D1117" stroke="#21262D" stroke-width="1"/>
+  <!-- Terminal dots -->
+  <circle cx="118" cy="275" r="5" fill="#FF5F57"/>
+  <circle cx="133" cy="275" r="5" fill="#FFBD2E"/>
+  <circle cx="148" cy="275" r="5" fill="#28CA41"/>
+  <!-- Command text -->
+  <text x="168" y="289" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="13" font-weight="400" fill="#7D8590">$ pip install -r requirements.txt &amp;&amp; python start.py</text>
 
   <!-- Vertical divider -->
   <rect x="680" y="40" width="1" height="260" fill="#7B3FE4" opacity="0.15"/>
@@ -92,19 +90,16 @@
   <!-- RIGHT SIDE: Animated Architecture Flow -->
   <text x="720" y="60" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="600" fill="#52525B" letter-spacing="3">ARCHITECTURE</text>
 
-  <!-- Flow nodes with animated highlighting -->
   <!-- Clients -->
   <rect x="720" y="85" width="120" height="36" rx="8" fill="#0F1923" stroke="#00D9FF" stroke-width="1.5" stroke-opacity="0.5">
     <animate attributeName="stroke-opacity" values="0.3;0.8;0.3" dur="4s" begin="0s" repeatCount="indefinite"/>
   </rect>
   <text x="780" y="108" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" fill="#00D9FF">Clients</text>
 
-  <!-- Arrow 1 -->
   <line x1="780" y1="124" x2="780" y2="145" stroke="#3F3F46" stroke-width="2"/>
   <polygon points="776,142 780,148 784,142" fill="#3F3F46" opacity="0.6">
     <animate attributeName="opacity" values="0.3;0.9;0.3" dur="4s" begin="0.5s" repeatCount="indefinite"/>
   </polygon>
-  <!-- Animated flow dot -->
   <circle cx="780" cy="124" r="3" fill="#00D9FF" filter="url(#glow)" opacity="0">
     <animate attributeName="cy" values="124;145" dur="1s" begin="0.5s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;1;0" dur="1s" begin="0.5s" repeatCount="indefinite"/>
@@ -116,7 +111,6 @@
   </rect>
   <text x="780" y="173" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" fill="#A855F7">Router</text>
 
-  <!-- Arrow 2 -->
   <line x1="780" y1="189" x2="780" y2="210" stroke="#3F3F46" stroke-width="2"/>
   <polygon points="776,207 780,213 784,207" fill="#3F3F46" opacity="0.6">
     <animate attributeName="opacity" values="0.3;0.9;0.3" dur="4s" begin="1.5s" repeatCount="indefinite"/>
@@ -132,7 +126,6 @@
   </rect>
   <text x="780" y="238" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" fill="#00D9FF">10 Proxies</text>
 
-  <!-- Arrow 3 -->
   <line x1="780" y1="254" x2="780" y2="275" stroke="#3F3F46" stroke-width="2"/>
   <polygon points="776,272 780,278 784,272" fill="#3F3F46" opacity="0.6">
     <animate attributeName="opacity" values="0.3;0.9;0.3" dur="4s" begin="2.5s" repeatCount="indefinite"/>
@@ -148,7 +141,6 @@
   </rect>
   <text x="780" y="303" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="600" fill="#A855F7">Backend</text>
 
-  <!-- Horizontal arrow to Fireworks -->
   <line x1="845" y1="298" x2="895" y2="298" stroke="#3F3F46" stroke-width="2"/>
   <polygon points="892,294 898,298 892,302" fill="#3F3F46" opacity="0.6">
     <animate attributeName="opacity" values="0.3;0.9;0.3" dur="4s" begin="3.5s" repeatCount="indefinite"/>
@@ -164,7 +156,7 @@
   </rect>
   <text x="970" y="303" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#00D9FF">Fireworks AI</text>
 
-  <!-- Decorative hex grid (right side) -->
+  <!-- Decorative hex grid -->
   <rect x="1100" y="40" width="1" height="260" fill="#7B3FE4" opacity="0.1"/>
 
   <polygon points="1130,80 1142,74 1154,80 1154,92 1142,98 1130,92" fill="#7B3FE4" opacity="0.1" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.25"/>
@@ -177,21 +169,17 @@
   <polygon points="1200,136 1212,130 1224,136 1224,148 1212,154 1200,148" fill="#00D9FF" opacity="0.1" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.25"/>
   <polygon points="1147,164 1159,158 1171,164 1171,176 1159,182 1147,176" fill="#00D9FF" opacity="0.15" stroke="#00D9FF" stroke-width="0.8" stroke-opacity="0.35"/>
   <polygon points="1182,164 1194,158 1206,164 1206,176 1194,182 1182,176" fill="#7B3FE4" opacity="0.12" stroke="#7B3FE4" stroke-width="0.8" stroke-opacity="0.3"/>
-
-  <!-- Pulse ring -->
-  <circle cx="1159" cy="170" r="14" fill="none" stroke="#00D9FF" stroke-width="1" opacity="0.2">
-    <animate attributeName="r" values="14;26;14" dur="3s" repeatCount="indefinite"/>
-    <animate attributeName="opacity" values="0.25;0;0.25" dur="3s" repeatCount="indefinite"/>
-  </circle>
-
-  <!-- More hexes further right -->
   <polygon points="1260,80 1272,74 1284,80 1284,92 1272,98 1260,92" fill="#4F46E5" opacity="0.06" stroke="#4F46E5" stroke-width="0.5" stroke-opacity="0.15"/>
   <polygon points="1295,80 1307,74 1319,80 1319,92 1307,98 1295,92" fill="#7B3FE4" opacity="0.08" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.2"/>
   <polygon points="1277,108 1289,102 1301,108 1301,120 1289,126 1277,120" fill="#00D9FF" opacity="0.08" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.2"/>
   <polygon points="1260,136 1272,130 1284,136 1284,148 1272,154 1260,148" fill="#7B3FE4" opacity="0.08" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.2"/>
   <polygon points="1295,136 1307,130 1319,136 1319,148 1307,154 1295,148" fill="#00D9FF" opacity="0.08" stroke="#00D9FF" stroke-width="0.5" stroke-opacity="0.2"/>
 
-  <!-- Scanning line -->
+  <circle cx="1159" cy="170" r="14" fill="none" stroke="#00D9FF" stroke-width="1" opacity="0.2">
+    <animate attributeName="r" values="14;26;14" dur="3s" repeatCount="indefinite"/>
+    <animate attributeName="opacity" values="0.25;0;0.25" dur="3s" repeatCount="indefinite"/>
+  </circle>
+
   <rect x="0" y="0" width="1400" height="1" fill="#00D9FF" opacity="0.15">
     <animate attributeName="y" values="0;340;0" dur="12s" repeatCount="indefinite"/>
     <animate attributeName="opacity" values="0;0.25;0" dur="12s" repeatCount="indefinite"/>
