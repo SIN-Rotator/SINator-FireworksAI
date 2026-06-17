@@ -61,17 +61,17 @@
 
   <image href="./logo.png" x="60" y="50" width="100" height="100" filter="url(#logoGlow)"/>
 
-  <text x="185" y="85" font-family="Inter, -apple-system, 'SF Pro Display', 'Segoe UI', Helvetica, sans-serif" font-size="40" font-weight="700" fill="url(#textGrad)" letter-spacing="-0.5">SIN AI</text>
+  <text x="185" y="85" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="url(#textGrad)" letter-spacing="2">OpenSIN AI</text>
 
-  <rect x="186" y="94" width="90" height="2.5" fill="url(#accent)" rx="1" opacity="0.4"/>
+  <rect x="186" y="94" width="160" height="2" fill="url(#accent)" rx="1" opacity="0.35"/>
 
-  <text x="185" y="118" font-family="Inter, -apple-system, 'SF Pro Display', 'Segoe UI', Helvetica, sans-serif" font-size="15" font-weight="400" fill="#64748B" letter-spacing="0.3">Enterprise AI agents that work autonomously</text>
+  <text x="185" y="118" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="400" fill="#64748B" letter-spacing="0.5">Enterprise AI agents that work autonomously</text>
 
-  <text x="185" y="148" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#0099CC" letter-spacing="0.8">484 free API keys</text>
-  <text x="320" y="148" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#CBD5E1">·</text>
-  <text x="335" y="148" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#0099CC" letter-spacing="0.8">10-proxy auto-failover</text>
-  <text x="510" y="148" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="400" fill="#CBD5E1">·</text>
-  <text x="525" y="148" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#0099CC" letter-spacing="0.8">12 Fireworks models</text>
+  <text x="185" y="148" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#0099CC" letter-spacing="1">484 free API keys</text>
+  <text x="320" y="148" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#CBD5E1">·</text>
+  <text x="335" y="148" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#0099CC" letter-spacing="1">10-proxy auto-failover</text>
+  <text x="510" y="148" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="400" fill="#CBD5E1">·</text>
+  <text x="525" y="148" font-family="ui-sans-serif, system-ui, sans-serif" font-size="13" font-weight="500" fill="#0099CC" letter-spacing="1">12 Fireworks models</text>
 
   <polygon points="1050,55 1060,50 1070,55 1070,65 1060,70 1050,65" fill="#7B3FE4" opacity="0.05" stroke="#7B3FE4" stroke-width="0.5" stroke-opacity="0.2"/>
   <polygon points="1080,55 1090,50 1100,55 1100,65 1090,70 1080,65" fill="#0099CC" opacity="0.05" stroke="#0099CC" stroke-width="0.5" stroke-opacity="0.2"/>
