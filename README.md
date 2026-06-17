@@ -1,11 +1,5 @@
 <a name="readme-top"></a>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-banner.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="./assets/hero-banner-light.svg" />
-  <img src="./assets/hero-banner.svg" alt="SINator — Fireworks AI Key Pool" />
-</picture>
-
 <p align="center">
   <a href="./LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" />
@@ -32,6 +26,12 @@
   <a href="#api">API</a> |
   <a href="#contributing">Contributing</a>
 </p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="./assets/hero-banner.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="./assets/hero-banner-light.svg" />
+  <img src="./assets/hero-banner.svg" alt="SINator — Fireworks AI Key Pool" />
+</picture>
 
 ---
 
