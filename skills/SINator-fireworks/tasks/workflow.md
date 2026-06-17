@@ -17,8 +17,12 @@ Docs: ../SKILL.md
   - `python3 -m playwright install chromium`
 - [ ] Run rotation N times
   - `cd ~/dev/SINator-Fireworks-Rotator-v2 && python3 tools/rotate.py --debug`
-  - Each rotation takes 2-5 minutes (GMX + Fireworks signup + OTP)
+  - Each rotation takes ~3 minutes (GMX + Fireworks signup + OTP + onboarding)
   - Log output for debugging
+  - Onboarding flow: Page 1 (Account ID + First/Last Name + Terms → Continue) → Page 2 (Skip button)
+- [ ] Add each new key to v3 pool (REQUIRED — dashboard reads v3)
+  - `cd ~/dev/SIN-Rotator-SINator-FireworksAI && python3 -c "from agent_toolbox.core.pool_manager import PoolManager; PoolManager().add_key(api_key='fw_XXX', alias_email='alias@gmx.de', key_name='fw-XXX')"`
+  - rotate.py saves to v2 pool automatically, but v3 pool is what the dashboard reads
 - [ ] Verify keys in pool
   - Check pool stats show increased available count
   - E2E test through proxy

@@ -100,13 +100,35 @@ REQUEST ──► ASSESS POOL ──► GENERATE (if needed) ──► SYNC POOL
    ├── Click "Create Account"
    ├── OTP verify (URL from GMX inbox)
    ├── Login with credentials
-   ├── Onboarding skip
+   ├── Onboarding Page 1:
+   │   ├── Account ID (pre-filled by Fireworks, keep as-is)
+   │   ├── First Name → "Super" (4-strategy selector)
+   │   ├── Last Name → "Cheetah" (4-strategy selector)
+   │   ├── Terms checkbox → click
+   │   └── Continue button (EXACT match, no "Next")
+   ├── Onboarding Page 2:
+   │   └── Click "Skip" (bypasses use case selection)
    └── Create API key → fw_XXXXXXXX
 
 3. Save
-   ├── PoolManager.add_key(api_key, alias_email, key_name)
-   └── Written to data/fireworksai-pool.json
+   ├── PoolManager.add_key(api_key, alias_email, key_name) [v2 repo]
+   └── PoolManager.add_key(api_key, alias_email, key_name) [v3 repo — REQUIRED for dashboard]
 ```
+
+### Onboarding Details (2026-06-17 Fix)
+
+**First/Last Name — 4-strategy selector chain:**
+1. `input[name="firstName"]` / `input[name="lastName"]`
+2. `input[name="first"]` / `input[name="last"]`
+3. `input[placeholder*="First"]` / `input[placeholder*="Last"]`
+4. Label text lookup: find `<label>` with text "First Name"/"Last Name", set input value via JS + `dispatchEvent`
+
+**Page 2 — Skip button:**
+Page 2 shows use case checkboxes + two buttons: "Submit to get $5 Credits" and "Skip".
+Click **"Skip"** first (bypasses use case selection entirely). If Skip fails, try "Submit to get $5 Credits".
+
+**Page 1 — Continue button:**
+CRITICAL: Only match buttons with text EXACTLY "Continue". There is a carousel "Next slide" button that will steal the click if "Next" is used as fallback.
 
 ## Pool Logic
 
@@ -141,11 +163,21 @@ done
 ```
 
 ### Add Key to Pool
-```bash
-curl -X POST http://localhost:8100/api/v1/pool/add \
-  -H "Content-Type: application/json" \
-  -d '{"api_key":"fw_XXX","alias_email":"alias@gmx.de","key_name":"my-key"}'
+
+**Important:** Keys must be added to the **v3 repo's** PoolManager (the dashboard reads from v3's pool file). The v2 PoolManager writes to a different file.
+
+```python
+# Add to v3 pool (REQUIRED for dashboard to see the key)
+cd ~/dev/SIN-Rotator-SINator-FireworksAI
+python3 -c "
+from agent_toolbox.core.pool_manager import PoolManager
+pm = PoolManager()
+pm.add_key(api_key='fw_XXX', alias_email='alias@gmx.de', key_name='fw-XXX')
+print('Key added to v3 pool')
+"
 ```
+
+API keys are stored in macOS Keychain (not in the JSON file). The JSON file only contains a sentinel value.
 
 ### Service Management
 ```bash
@@ -201,6 +233,9 @@ Do NOT use `reasoning_effort` — it causes `ProviderInitError`.
 | Playwright "Executable doesn't exist" | Run `python3 -m playwright install chromium` |
 | 0 available keys | Run key generation (see above) |
 | Cloudflare Error 1033 | Tunnel down → restart `com.cloudflared.sinator` |
+| Onboarding name fields not filled | Use 4-strategy selector: `input[name]` → `input[placeholder]` → label text lookup (see Onboarding Details above) |
+| Onboarding Page 2 stuck | Click "Skip" button first (bypasses use case selection). Fallback: "Submit to get $5 Credits" |
+| Keys generated but not in dashboard | Add key to v3 pool via `PoolManager.add_key()` from v3 repo (not v2, not curl) |
 | GMX login fails (Playwright Chromium) | GMX blocks "Chrome for Testing" fingerprint → use real Chrome via CDP |
 | GMX login fails (real Chrome CDP) | Check consent iframe fix (see below) |
 | `prompt=none` blocks password field | DO NOT navigate to `prompt=login` — SPA shows password after Weiter, just wait |

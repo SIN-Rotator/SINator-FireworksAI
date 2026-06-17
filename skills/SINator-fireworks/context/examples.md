@@ -2,7 +2,7 @@
 
 Docs: ../SKILL.md
 
-## Example 1: Generate 20 New Keys
+## Example 1: Generate 5 New Keys
 
 ```bash
 # 1. Check current pool
@@ -13,15 +13,22 @@ python3 -m playwright install chromium
 
 # 3. Run batch generation
 cd ~/dev/SINator-Fireworks-Rotator-v2
-for i in $(seq 1 20); do
+for i in $(seq 1 5); do
   echo "=== Rotation #$i ==="
   python3 tools/rotate.py --debug 2>&1 | tee -a /tmp/sinator-batch.log
   sleep 5
 done
 
-# 4. Sync v2 pool to v3 pool (if needed)
-cp ~/dev/SINator-Fireworks-Rotator-v2/data/fireworksai-pool.json \
-   ~/dev/SIN-Rotator-SINator-FireworksAI/data/fireworksai-pool.json
+# 4. Add each new key to v3 pool (REQUIRED for dashboard)
+# rotate.py saves to v2 pool automatically, but dashboard reads v3.
+# Extract new key from log and add to v3:
+cd ~/dev/SIN-Rotator-SINator-FireworksAI
+python3 -c "
+from agent_toolbox.core.pool_manager import PoolManager
+pm = PoolManager()
+pm.add_key(api_key='fw_XXX', alias_email='new-key@gmx.de', key_name='fw-XXX')
+print('Key added to v3 pool')
+"
 
 # 5. Verify
 curl -s http://localhost:8100/api/v1/pool/stats | python3 -m json.tool
