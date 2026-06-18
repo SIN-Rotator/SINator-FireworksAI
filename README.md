@@ -1,5 +1,11 @@
 <a name="readme-top"></a>
 
+# SINator &mdash; Fireworks AI Key Pool
+
+<p align="center">
+  <em>Never hit a rate limit again. 484 keys, 10 proxies, 12 models, one URL.</em>
+</p>
+
 <p align="center">
   <a href="./LICENSE">
     <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License" />
@@ -13,10 +19,6 @@
   <a href="https://github.com/SIN-Rotator/SINator-FireworksAI/stargazers">
     <img src="https://img.shields.io/github/stars/SIN-Rotator/SINator-FireworksAI?style=social" alt="Stars" />
   </a>
-</p>
-
-<p align="center">
-  <em>Never hit a rate limit again. 484 keys, 10 proxies, 12 models, one URL.</em>
 </p>
 
 <p align="center">
@@ -34,8 +36,6 @@
 </picture>
 
 ---
-
-# SINator &mdash; Fireworks AI Key Pool
 
 An automated API key pool for Fireworks AI. It generates accounts via GMX email aliases, rotates keys on rate limits, and exposes a single OpenAI-compatible endpoint with 10-proxy auto-failover.
 
@@ -222,6 +222,6 @@ Distributed under the **MIT License**. See [LICENSE](LICENSE) for details.
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="./assets/sin-ai-banner.svg" />
     <source media="(prefers-color-scheme: light)" srcset="./assets/sin-ai-banner-light.svg" />
-    <img src="./assets/sin-ai-banner.svg" alt="SIN AI — Enterprise Agent Platform" />
+    <img src="./assets/sin-ai-banner.svg" alt="OpenSIN AI — SINator-FireworksAI" />
   </picture>
 </p>

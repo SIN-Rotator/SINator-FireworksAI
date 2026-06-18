@@ -78,10 +78,10 @@
   <text x="185" y="85" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="36" font-weight="500" fill="url(#textGrad)" letter-spacing="2">OpenSIN AI</text>
 
   <!-- Accent underline -->
-  <rect x="186" y="94" width="160" height="2" fill="url(#accent)" rx="1" opacity="0.5"/>
+  <rect x="186" y="94" width="180" height="2" fill="url(#accent)" rx="1" opacity="0.5"/>
 
-  <!-- Tagline (English, clean) -->
-  <text x="185" y="118" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="400" fill="#71717A" letter-spacing="0.5">Enterprise AI agents that work autonomously</text>
+  <!-- Tagline: GitHub repo name (identifies the repository) -->
+  <text x="185" y="118" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="400" fill="#71717A" letter-spacing="0.5">SINator-FireworksAI</text>
 
   <!-- Repo-specific benefits (individuell pro Repo) -->
   <text x="185" y="148" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#00D9FF" letter-spacing="1">484 free API keys</text>
