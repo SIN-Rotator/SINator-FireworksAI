@@ -394,6 +394,40 @@ All 6 navigation points in `fireworks_service.py` now call `_dismiss_cookie_cons
 | Keys in v2 pool not showing in dashboard | Sync v2→v3: compare `data/fireworksai-pool.json` by `id`/`alias_email`, copy missing entries |
 | Cookie consent banner blocks Fireworks clicks | Fixed (2026-06-18): 3-layer defense — see Cookie Consent Banner Fix above |
 | `rotate_sync.py` reports "Generation FAILED" but key was generated | Fixed (2026-06-18): was parsing stdout only, now parses stderr too (logging module writes to stderr) |
+| Onboarding Submit button does not complete onboarding | **BROKEN 2026-06-19** — see GitHub issue #1. React onClick fires but does NOT call `window.fetch()`. Bruteforced 12 endpoints × 6 body shapes × 3 methods = 216 attempts, all 404. Console error: "No visitor ID available. Load may have failed." |
+
+## Onboarding Submission Broken (2026-06-19)
+
+**STATUS: Cannot generate new keys until Fireworks restores onboarding completion.**
+See GitHub issue: https://github.com/SIN-Rotator/SINator-Fireworks-Rotator-v2/issues/1
+
+### Symptoms
+- "Submit to get $5 Credits" button visibly disables on click
+- React onClick IS invoked (`react_onclick: Submit to get $5 Credits` in logs)
+- Page stays on `/onboarding` indefinitely
+- No redirect, no api-key page reachable
+
+### Diagnosis (commit `c410a95`)
+- **Fetch interceptor installed BEFORE the Submit click captured NOTHING.** React's onClick does NOT issue any `window.fetch()` call.
+- 12 endpoint guesses (`/api/v1/users/me/onboarding{-complete,/complete,}`, `/api/v1/onboarding{...}`, `/api/onboarding`, etc.) × 6 body shapes × 3 methods = 216 attempted calls, **all 404**.
+- Console error: `JS_ERROR: No visitor ID available. Load may have failed.` (Fireworks's own Sentry client)
+- Network saw `2830f...&esurl=.../onboarding` analytics 200s, but no real onboarding state change.
+
+### Mitigations tried in code
+1. **25s + 30s + 60s waits after Submit click** — no effect.
+2. **Fetch interceptor before click** — captures the URL/method/body React tries to call → empty.
+3. **Bruteforce 216 endpoint × body × method combos** → all fail.
+4. **`form.requestSubmit()` and Enter-key fallback** → no effect.
+
+### What the team needs
+A DevTools Network-tab capture from a **manual** onboarding on `app.fireworks.ai` — specifically the XHR/fetch call that fires when "Submit to get $5 Credits" is clicked. We need the exact URL, method, headers, and body payload. Without this the rotator cannot progress past onboarding, and new API key generation is fully halted.
+
+### Workaround while blocked
+- Use already-generated v3 keys (`/Users/jeremy/dev/SIN-Rotator-SINator-FireworksAI/data/fireworksai-pool.json` still has 701 keys).
+- Do NOT attempt fresh rotations until issue #1 is unblocked.
+
+### Code changes committed
+- `c410a95` — feat: capture React fetch + bruteforce onboarding API endpoints (added fetch interceptor at start of Page 2 submission, expanded direct-fetch fallback to 12 endpoints × 6 body shapes × 3 methods).
 
 ## GMX Login Fix (2026-06-17)
 
