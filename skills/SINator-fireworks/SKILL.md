@@ -394,40 +394,83 @@ All 6 navigation points in `fireworks_service.py` now call `_dismiss_cookie_cons
 | Keys in v2 pool not showing in dashboard | Sync v2→v3: compare `data/fireworksai-pool.json` by `id`/`alias_email`, copy missing entries |
 | Cookie consent banner blocks Fireworks clicks | Fixed (2026-06-18): 3-layer defense — see Cookie Consent Banner Fix above |
 | `rotate_sync.py` reports "Generation FAILED" but key was generated | Fixed (2026-06-18): was parsing stdout only, now parses stderr too (logging module writes to stderr) |
-| Onboarding Submit button does not complete onboarding | **BROKEN 2026-06-19** — see GitHub issue #1. React onClick fires but does NOT call `window.fetch()`. Bruteforced 12 endpoints × 6 body shapes × 3 methods = 216 attempts, all 404. Console error: "No visitor ID available. Load may have failed." |
+| Onboarding Submit button does not complete onboarding | **RESOLVED 2026-06-20** — Fireworks fixed server-side. Rotator now uses 5s poll loop (max 60s). See "Timer Optimization" section below. |
 
-## Onboarding Submission Broken (2026-06-19)
+## Onboarding Submission (2026-06-19 → 2026-06-20)
 
-**STATUS: Cannot generate new keys until Fireworks restores onboarding completion.**
+**STATUS: RESOLVED.** Fireworks restored onboarding server-side on 2026-06-20. Rotator generates keys successfully again.
 See GitHub issue: https://github.com/SIN-Rotator/SINator-Fireworks-Rotator-v2/issues/1
 
-### Symptoms
-- "Submit to get $5 Credits" button visibly disables on click
-- React onClick IS invoked (`react_onclick: Submit to get $5 Credits` in logs)
-- Page stays on `/onboarding` indefinitely
-- No redirect, no api-key page reachable
+### What happened
+- 2026-06-19: Fireworks onboarding Submit button stopped triggering server-side completion. React onClick fired but no `window.fetch()` was captured. 216 endpoint bruteforce attempts all 404.
+- 2026-06-20: Fireworks fixed the issue. Rotator now successfully generates keys again (4/5 in test batch).
 
-### Diagnosis (commit `c410a95`)
-- **Fetch interceptor installed BEFORE the Submit click captured NOTHING.** React's onClick does NOT issue any `window.fetch()` call.
-- 12 endpoint guesses (`/api/v1/users/me/onboarding{-complete,/complete,}`, `/api/v1/onboarding{...}`, `/api/onboarding`, etc.) × 6 body shapes × 3 methods = 216 attempted calls, **all 404**.
-- Console error: `JS_ERROR: No visitor ID available. Load may have failed.` (Fireworks's own Sentry client)
-- Network saw `2830f...&esurl=.../onboarding` analytics 200s, but no real onboarding state change.
+### Code changes
+- `c410a95` — Fetch interceptor + 216-endpoint bruteforce (diagnostic, kept as fallback)
+- `7276566` — 5s poll loop replaces 25s blind sleep for onboarding redirect
+- `300ea73` — All remaining timers slashed (create_api_key 22s→6s, onboarding fallbacks 15s→4s, login 8s→3s)
 
-### Mitigations tried in code
-1. **25s + 30s + 60s waits after Submit click** — no effect.
-2. **Fetch interceptor before click** — captures the URL/method/body React tries to call → empty.
-3. **Bruteforce 216 endpoint × body × method combos** → all fail.
-4. **`form.requestSubmit()` and Enter-key fallback** → no effect.
+## Timer Optimization (2026-06-20, commits `7276566` + `300ea73`)
 
-### What the team needs
-A DevTools Network-tab capture from a **manual** onboarding on `app.fireworks.ai` — specifically the XHR/fetch call that fires when "Submit to get $5 Credits" is clicked. We need the exact URL, method, headers, and body payload. Without this the rotator cannot progress past onboarding, and new API key generation is fully halted.
+### Onboarding: 5s Poll Loop
+Replaced blind `sleep(25)` + 30×1s loop with **5s poll loop** (12 iterations, max 60s):
+```python
+for attempt in range(12):
+    await asyncio.sleep(5)
+    url = (await browser_get_url())["url"]
+    if 'onboarding' not in url:
+        break  # redirect detected
+```
 
-### Workaround while blocked
-- Use already-generated v3 keys (`/Users/jeremy/dev/SIN-Rotator-SINator-FireworksAI/data/fireworksai-pool.json` still has 701 keys).
-- Do NOT attempt fresh rotations until issue #1 is unblocked.
+### create_api_key Flow: 22s → 6s
+| Step | Before | After |
+|---|---|---|
+| Navigate to api-keys | 1.0s | 0.5s |
+| Login retry | 1.0s ×2 | 0.5s ×2 |
+| "Create API Key" click | 1.0s | 0.3s |
+| Retry navigate | 3.0s | 1.0s |
+| "API Key" menuitem | 1.0s | 0.3s |
+| Fill name | 0.3s | 0.1s |
+| Poll for fw_ key | 0.5s ×15 | 0.2s ×20 |
+| Close/Cancel | 1.0s | 0.3s |
+| **Total** | **~22.8s** | **~6.5s** |
 
-### Code changes committed
-- `c410a95` — feat: capture React fetch + bruteforce onboarding API endpoints (added fetch interceptor at start of Page 2 submission, expanded direct-fetch fallback to 12 endpoints × 6 body shapes × 3 methods).
+### All Timer Changes
+| File | Location | Before | After |
+|---|---|---|---|
+| fireworks_service.py | Onboarding poll | 25s + 30×1s | 12×5s |
+| fireworks_service.py | Final wait | 60×1s | 12×5s |
+| fireworks_service.py | Post-Skip diagnostic | 3s | 0s (removed) |
+| fireworks_service.py | JS button fallback | 2s | 0s (removed) |
+| fireworks_service.py | requestSubmit | 3s | 1s |
+| fireworks_service.py | Enter key fallback | 2s | 1s |
+| fireworks_service.py | Captured replay | 3s | 1s |
+| fireworks_service.py | Signup page load | 1s | 0.5s |
+| fireworks_service.py | Login page load | 1s | 0.5s |
+| fireworks_service.py | Email search retry | 2s | 1s |
+| fireworks_service.py | After email Enter | 1s | 0.5s |
+| fireworks_service.py | After password Enter | 2s | 1s |
+| fireworks_service.py | After Continue | 2s | 1s |
+| gmx_service.py | Page load | 5s | 2s |
+| gmx_service.py | Consent wait | 8s | 3s |
+| gmx_service.py | Redirect wait | 6s | 3s |
+| gmx_service.py | JS redirect | 5s | 2s |
+| rotate_sync.py | Between keys | 5s | 1s |
+| rotate.py | GMX page load | 3s | 1s |
+| rotate.py | OTP reload | 2s+3s | 1s+1s |
+
+### auto_sync → Backend Reload (commit `7276566`)
+**Problem:** `auto_sync.py` wrote new keys to v3 pool JSON but the backend didn't reload — app showed stale data.
+**Fix:**
+1. Added `POST /pool/reload` endpoint to v3 backend (`agent_toolbox/api/routes/pool.py`)
+2. `auto_sync.py` now calls `POST http://localhost:8100/api/v1/pool/reload` after every sync
+3. Backend reloads from disk immediately — new keys visible in app without restart
+
+### Pool Status (2026-06-20)
+- **707 total keys** in v3 pool
+- 701 suspended (credits exhausted)
+- 6 available (fresh)
+- Generate more with `python3 tools/rotate_sync.py N`
 
 ## GMX Login Fix (2026-06-17)
 
