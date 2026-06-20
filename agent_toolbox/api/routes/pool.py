@@ -440,6 +440,14 @@ async def pool_events():
     )
 
 
+@router.post("/reload")
+async def reload_pool():
+    """Reload the in-memory pool from disk. Called by auto_sync.py after v2→v3 sync."""
+    pool_mgr = get_pool_manager()
+    pool_mgr.reload()
+    return {"status": "success", "total": len(pool_mgr.pool)}
+
+
 @router.get("/health")
 async def check_pool_health(deep_check: bool = False):
     """
