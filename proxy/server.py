@@ -347,25 +347,51 @@ class PoolProxy:
             m[short] = mid
         return m
 
+    VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p6"
+    VISION_CAPABLE_MODELS = {
+        "accounts/fireworks/models/kimi-k2p6",
+        "accounts/fireworks/models/qwen3p6-plus",
+    }
+
+    @staticmethod
+    def _has_image_content(parsed: dict) -> bool:
+        """Check if any message in the request has image_url content."""
+        messages = parsed.get("messages", [])
+        if not isinstance(messages, list):
+            return False
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        return True
+        return False
+
     async def _normalize_request_body(self, body: Optional[bytes]) -> Optional[bytes]:
-        """Normalize model name in request body — expand short names to full paths."""
+        """Normalize model name in request body — expand short names and route vision requests."""
         if not body:
             return body
         try:
             parsed = json.loads(body)
         except Exception:
             return body
+
         model = parsed.get("model", "")
-        if not model or "/" in model:
-            return body
-        model_ids = self._load_all_model_ids()
-        alias_map = self._build_model_alias_map(model_ids)
-        full = alias_map.get(model)
-        if full and full != model:
-            parsed["model"] = full
-            logger.debug(f"Normalized model: {model} → {full}")
-            return json.dumps(parsed).encode()
-        return body
+        if model and "/" not in model:
+            model_ids = self._load_all_model_ids()
+            alias_map = self._build_model_alias_map(model_ids)
+            full = alias_map.get(model)
+            if full and full != model:
+                parsed["model"] = full
+                logger.debug(f"Normalized model: {model} → {full}")
+
+        if self._has_image_content(parsed):
+            current_model = parsed.get("model", "")
+            if current_model not in self.VISION_CAPABLE_MODELS:
+                logger.info(f"Vision request detected, routing {current_model} → {self.VISION_FALLBACK_MODEL}")
+                parsed["model"] = self.VISION_FALLBACK_MODEL
+
+        return json.dumps(parsed).encode()
 
     async def _handle_v1_models(self, request: web.Request) -> web.Response:
         """Return all Fireworks models from the models.dev cache.
