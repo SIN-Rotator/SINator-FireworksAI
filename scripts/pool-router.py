@@ -326,7 +326,7 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
-    VISION_CAPABLE_MODELS = None  # None = all models support vision
+    VISION_CAPABLE_MODELS = None  # None = all Fireworks serverless models support vision
     VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p7-code"
 
     @classmethod
