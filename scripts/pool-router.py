@@ -298,6 +298,9 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length) if content_length > 0 else None
 
+        if body:
+            body = self._route_vision_request(body)
+
         headers = {k: v for k, v in self.headers.items()}
 
         try:
@@ -322,6 +325,47 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Type", "application/json")
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
+
+    VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p6"
+    VISION_CAPABLE_MODELS = {
+        "accounts/fireworks/models/kimi-k2p6",
+        "accounts/fireworks/models/qwen3p6-plus",
+    }
+
+    @classmethod
+    def _route_vision_request(cls, body):
+        """If request has image_url content and model doesn't support vision,
+        swap to kimi-k2p6 (confirmed vision-capable on pool keys)."""
+        try:
+            parsed = json.loads(body)
+        except Exception:
+            return body
+
+        messages = parsed.get("messages", [])
+        if not isinstance(messages, list):
+            return body
+
+        has_image = False
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "image_url":
+                        has_image = True
+                        break
+            if has_image:
+                break
+
+        if not has_image:
+            return body
+
+        current_model = parsed.get("model", "")
+        if current_model in cls.VISION_CAPABLE_MODELS:
+            return body
+
+        print(f"[PoolRouter] Vision request → routing {current_model} → {cls.VISION_FALLBACK_MODEL}", flush=True)
+        parsed["model"] = cls.VISION_FALLBACK_MODEL
+        return json.dumps(parsed).encode()
 
 
 class ThreadedPoolServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
