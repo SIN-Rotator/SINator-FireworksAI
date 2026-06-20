@@ -34,6 +34,7 @@ from agent_toolbox.core.pool_manager import (
     get_pool_manager,
     register_sse_listener,
     unregister_sse_listener,
+    _emit_event,
 )
 from agent_toolbox.api.schemas import (
     PoolStatsResponse,
@@ -445,6 +446,14 @@ async def reload_pool():
     """Reload the in-memory pool from disk. Called by auto_sync.py after v2→v3 sync."""
     pool_mgr = get_pool_manager()
     pool_mgr.reload()
+    stats = pool_mgr.get_stats()
+    _emit_event("stats", {
+        "total": stats["total"],
+        "available": stats["available"],
+        "used": stats["used"],
+        "suspended": stats["suspended"],
+        "leased": stats["leased"],
+    })
     return {"status": "success", "total": len(pool_mgr.keys)}
 
 

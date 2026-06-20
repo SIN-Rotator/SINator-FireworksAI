@@ -139,6 +139,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('auth-token-display').textContent = token;
   loadDashboard();
   connectSSE();
+  setInterval(loadDashboard, 10000);
 });
 
 function connectSSE() {
