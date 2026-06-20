@@ -326,16 +326,14 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"error": str(e)}).encode())
 
-    VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p6"
-    VISION_CAPABLE_MODELS = {
-        "accounts/fireworks/models/kimi-k2p6",
-        "accounts/fireworks/models/qwen3p6-plus",
-    }
+    VISION_CAPABLE_MODELS = None  # None = all models support vision
 
     @classmethod
     def _route_vision_request(cls, body):
         """If request has image_url content and model doesn't support vision,
-        swap to kimi-k2p6 (confirmed vision-capable on pool keys)."""
+        swap to kimi-k2p6 (confirmed vision-capable on pool keys).
+        Currently ALL pool models support vision, so this is a no-op,
+        but the guard remains for future models that may not."""
         try:
             parsed = json.loads(body)
         except Exception:
@@ -357,6 +355,9 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
                 break
 
         if not has_image:
+            return body
+
+        if cls.VISION_CAPABLE_MODELS is None:
             return body
 
         current_model = parsed.get("model", "")

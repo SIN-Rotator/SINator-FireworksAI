@@ -348,10 +348,7 @@ class PoolProxy:
         return m
 
     VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p6"
-    VISION_CAPABLE_MODELS = {
-        "accounts/fireworks/models/kimi-k2p6",
-        "accounts/fireworks/models/qwen3p6-plus",
-    }
+    VISION_CAPABLE_MODELS = None  # None = all pool models support vision
 
     @staticmethod
     def _has_image_content(parsed: dict) -> bool:
