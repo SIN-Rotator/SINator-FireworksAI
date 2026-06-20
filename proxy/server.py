@@ -326,15 +326,15 @@ class PoolProxy:
                 "accounts/fireworks/models/deepseek-v4-flash",
                 "accounts/fireworks/models/deepseek-v4-pro",
                 "accounts/fireworks/models/glm-5p1",
+                "accounts/fireworks/models/glm-5p2",
                 "accounts/fireworks/models/gpt-oss-120b",
                 "accounts/fireworks/models/gpt-oss-20b",
-                "accounts/fireworks/models/kimi-k2p5",
-                "accounts/fireworks/models/kimi-k2p6",
+                "accounts/fireworks/models/kimi-k2p7-code",
                 "accounts/fireworks/models/minimax-m2p5",
                 "accounts/fireworks/models/minimax-m2p7",
                 "accounts/fireworks/models/qwen3p6-plus",
                 "accounts/fireworks/routers/glm-5p1-fast",
-                "accounts/fireworks/routers/kimi-k2p6-turbo",
+                "accounts/fireworks/routers/kimi-k2p7-code-fast",
             ]
 
     @staticmethod
@@ -347,7 +347,7 @@ class PoolProxy:
             m[short] = mid
         return m
 
-    VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p6"
+    VISION_FALLBACK_MODEL = "accounts/fireworks/models/kimi-k2p7-code"
     VISION_CAPABLE_MODELS = None  # None = all pool models support vision
 
     @staticmethod
