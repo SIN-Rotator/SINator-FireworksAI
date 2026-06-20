@@ -19,6 +19,42 @@ Manages the full lifecycle of Fireworks AI API keys: automated generation via GM
 ## Architecture
 
 ```
+┌─────────────────────────────────────────────────────┐
+│  SINator App (Tauri Desktop, /Applications/SINator.app)  │
+│  Reads from :8000 (proxied → :8100)                     │
+│  Shows: Pool stats, Backend health, Chat                │
+└──────────────────────┬──────────────────────────────────┘
+                       │ :8000 (app_proxy.py)
+                       ▼
+┌─────────────────────────────────────────────────────┐
+│  Toolbox Backend (:8100)                                │
+│  Pool CRUD, Key leasing, SSE events, Dashboard SPA     │
+│  Cloudflare: sinator.delqhi.com → :8100                 │
+└──────────────────────┬──────────────────────────────────┘
+                       │
+          ┌────────────┼────────────────┐
+          ▼            ▼                ▼
+   ┌──────────┐ ┌────────────┐  ┌──────────────┐
+   │ Rotator  │ │ Pool Router│  │ 10 Proxies   │
+   │ (v2 Mac) │ │ (:9998)    │  │ (:8888-8897) │
+   │ Generate │ │ Auto-      │  │ Auto Key     │
+   │ Keys     │ │ Failover   │  │ Swap on 429  │
+   └──────────┘ └────────────┘  └──────────────┘
+                   │                    │
+                   ▼                    ▼
+          Cloudflare: sinatorpool-router.delqhi.com → :9998
+```
+
+### Four Components
+
+| Component | What it does | Where |
+|---|---|---|
+| **Rotator** | Generates new Fireworks API keys via Playwright + GMX + Chrome CDP | Mac (v2 repo, `rotate_sync.py`) |
+| **Pool** | Stores all keys, manages status (available/suspended/used), serves stats | Public via `sinator.delqhi.com` (Cloudflare → :8100) |
+| **Auto Swapper** | Pool Router (:9998) + 10 Proxies (:8888-8897) — auto-failover on 429, silent key swap | Public via `sinatorpool-router.delqhi.com` (Cloudflare → :9998) |
+| **Dashboard App** | Tauri desktop app — shows live pool stats, backend health, chat | `/Applications/SINator.app` (reads :8000 → proxied to :8100) |
+
+```
 OpenCode CLI / Cursor / OpenAI Clients
     ↓ OpenAI Responses API (/v1/responses, /v1/chat/completions)
 Pool Router (:9998, aiohttp)         ← com.sinator.pool-router
@@ -41,11 +77,34 @@ Fireworks AI API (https://api.fireworks.ai)
 
 **Key insight:** Use v2 repo for key generation (rotate.py), v3 repo for pool/backend/proxy management.
 
+### SINator Desktop App (Tauri)
+
+The **SINator App** (`/Applications/SINator.app`, BundleID `com.sinator.dashboard`) is a Tauri desktop app that shows live pool stats, backend health, and chat interface.
+
+**The app reads from port 8000**, NOT port 8100. A proxy (`tools/app_proxy.py`) bridges port 8000 → 8100 so the app sees live data from the toolbox backend.
+
+| App reads | Proxied to | Purpose |
+|---|---|---|
+| `GET :8000/api/v1/pool/stats` | → :8100 | Pool stats (total/available/used/suspended) |
+| `GET :8000/health` | → :8100 | Backend health (Chrome/CUA status) |
+| `GET :8000/api/v1/config` | → :8100 | Config (GMX/Fireworks credentials) |
+
+**LaunchAgent:** `com.sinator.app-proxy` — auto-starts on login, KeepAlive.
+**Log:** `/tmp/sinator-app-proxy.log`
+
+When the app shows "Pool: Offline" or "Backend: Offline", the proxy is down. Fix:
+```bash
+launchctl load ~/Library/LaunchAgents/com.sinator.app-proxy.plist
+```
+
+**NEVER reference localhost URLs to the user. Always say "die SINator App" or "die App". The app IS the interface.**
+
 ### Services & Ports
 
 | Service | Port | LaunchAgent | Log |
 |---|---|---|---|
-| Backend | :8000 or :8100 | `com.sinator.backend` | `/tmp/sinator-backend.log` |
+| SINator App Proxy | :8000 | `com.sinator.app-proxy` | `/tmp/sinator-app-proxy.log` |
+| Toolbox Backend | :8100 | `com.sinator.backend` | `/tmp/sinator-backend.log` |
 | Pool Router | :9998 | `com.sinator.pool-router` | `/tmp/sinator-pool-router.log` |
 | Pool Proxys | :8888-8897 | `com.sinator.pool-proxy-{port}` | `/tmp/sinator-pool-proxy-{port}.log` |
 | Cloudflare Tunnel | — | `com.cloudflared.sinator` | `/tmp/cloudflared-sinator.log` |
@@ -62,6 +121,7 @@ Fireworks AI API (https://api.fireworks.ai)
 | `tools/rotate_sync.py` | **RECOMMENDED — automated: rotate.py + auto_sync.py in ONE command** |
 | `tools/auto_sync.py` | Sync v2→v3 pool + reset used flag |
 | `tools/batch_rotate.py` | DEPRECATED — has import issues. Use `rotate_sync.py` instead |
+| `tools/app_proxy.py` | Port 8000→8100 proxy for SINator App |
 | `tools/manage_services.sh` | Start/stop/restart all services |
 | `proxy/server.py` | Proxy server (per-port) |
 | `scripts/pool-router.py` | Load balancer + failover |
