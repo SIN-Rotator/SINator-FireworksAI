@@ -212,7 +212,7 @@ After running rotate_sync.py, expect this sequence:
 
 ```
 1. User Chrome (GMX)
-   ├── Login to GMX (nemotronv3@gmx.de)
+    ├── Login to GMX (aktuelle GMX-Email aus config)
    ├── Rotate alias → new@gmx.de alias
    └── Poll inbox for Fireworks OTP email
 
@@ -531,6 +531,55 @@ for attempt in range(12):
 - 701 suspended (credits exhausted)
 - 6 available (fresh)
 - Generate more with `python3 tools/rotate_sync.py N`
+
+## GMX-Account-Wechsel — Checkliste
+
+Beim Wechsel der GMX-Email (z.B. Account gebannt → neuer Account) müssen ALLE diese Stellen geändert werden:
+
+### 1. Shared Config (WICHTIGSTE)
+**Datei:** `/Users/jeremy/dev/data/config.json`
+```json
+{ "gmx_email": "jerosin@gmx.net", "gmx_password": "ZOE.jerry2024" }
+```
+Der `config_manager.py` lädt von diesem Pfad (shared über alle Repos hinweg), NICHT vom repo-lokalen `data/config.json`.
+
+### 2. Repo-lokale Config
+**Datei:** `/Users/jeremy/dev/SINator-Fireworks-Rotator-v2/data/config.json`
+Selber Inhalt wie shared config. Gitignored — ändern für Konsistenz, aber nicht aktiv gelesen.
+
+### 3. Code-Filter in gmx_service.py
+**Datei:** `agent_toolbox/core/gmx_service.py` — Zeilen ~764/767
+```python
+# ALT: 'nemotronv3@gmx.de' not in line
+# NEU: 'jerosin@gmx.net' not in line
+```
+Dieser Filter stellt sicher, dass die Login-Email nicht als Alias erkannt wird und gelöscht werden kann. Beim Account-Wechsel MUSS die Email hier aktualisiert werden.
+
+### 4. Chrome Cookies löschen
+Nach Account-Wechsel: Chrome (Profile 73) hat noch Session-Cookies vom alten Account. Diese müssen gelöscht werden, sonst loggt sich der Rotator automatisch mit dem alten Account ein.
+
+Chrome killen + neu starten mit:
+```bash
+pkill -f "Google Chrome" 2>/dev/null; sleep 2
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  "--remote-allow-origins=*" \
+  --user-data-dir="/Users/jeremy/Library/Application Support/Google Chrome" \
+  --profile-directory="Profile 73" \
+  --no-first-run --new-window "about:blank" &>/tmp/chrome-clear.log &
+```
+
+Dann via CDP die GMX-Cookies löschen (oder einfach `launchctl start com.sinator.chrome` für frischen Start).
+
+### 5. AGENTS.md (optional)
+Dokumentation in `/Users/jeremy/dev/SINator-Fireworks-Rotator-v2/AGENTS.md` aktualisieren (nur Doku, kein Code).
+
+### 6. Umgebungsvariable
+Prüfen ob `GMX_EMAIL` gesetzt ist:
+```bash
+echo $GMX_EMAIL
+```
+Überschreibt die config.json. Leeren (`""`) falls nicht benötigt.
 
 ## GMX Login Fix (2026-06-17)
 
