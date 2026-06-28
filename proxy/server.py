@@ -456,26 +456,25 @@ class PoolProxy:
                         reason = SWAP_REASONS.get(status, "unknown")
                         if status in MAYBE_DEAD_CODES:
                             # Prüfe Response-Body auf echte Dead-Keywords
-                            is_confirmed_dead = any(kw in error_text for kw in PERMANENT_ERROR_KEYWORDS)
-                            if is_confirmed_dead:
-                                logger.info(f"Confirmed dead via error body: {status} ({reason}) — matched keyword in response, swapping immediately")
-                                new_key = await self._swap_key(reason)
-                                if new_key and attempt < self.max_retries - 1:
-                                    headers["Authorization"] = f"Bearer {new_key['api_key']}"
-                                    return web.Response(
-                                        body=b'{"error":"key_swapped","message":"Pool key rotated, please retry","retry_after":1}',
-                                        status=503,
-                                        content_type="application/json",
-                                        headers={"Retry-After": "1"},
-                                    )
-                                return web.Response(body=error_body_bytes, status=status,
-                                                    content_type=fw_resp.headers.get("Content-Type", "application/json"))
-                            # Body-Keywords matchten nicht — zusätzlich via /models verifizieren
-                            models_dead = await self._verify_key_dead(key_info['api_key'])
-                            if not models_dead:
-                                logger.warning(f"Key got {status} but error body + /models don't confirm dead — retrying same key")
-                                await asyncio.sleep(2)
-                                continue
+                            keyword_match = any(kw in error_text for kw in PERMANENT_ERROR_KEYWORDS)
+                            if keyword_match:
+                                # V20: Even on keyword match, VERIFY before suspending.
+                                # Fireworks returns transient 401/403 with "suspended" in the
+                                # body during maintenance windows — this caused 25+ false
+                                # positive suspensions (confirmed by test_keys.py reactivation).
+                                verified_dead = await self._verify_key_dead(key_info['api_key'])
+                                if not verified_dead:
+                                    logger.warning(f"Key got {status} with keyword in body but /chat verify says ALIVE — transient error, retrying same key")
+                                    await asyncio.sleep(2)
+                                    continue
+                                logger.info(f"Confirmed dead via error body + verify: {status} ({reason}) — swapping")
+                            else:
+                                # Body-Keywords matchten nicht — zusätzlich via /chat verifizieren
+                                models_dead = await self._verify_key_dead(key_info['api_key'])
+                                if not models_dead:
+                                    logger.warning(f"Key got {status} but error body + /chat don't confirm dead — retrying same key")
+                                    await asyncio.sleep(2)
+                                    continue
                         logger.warning(f"Dead key: {status} ({reason}), swapping (attempt {attempt+1})...")
                         new_key = await self._swap_key(reason)
                         if new_key and attempt < self.max_retries - 1:
