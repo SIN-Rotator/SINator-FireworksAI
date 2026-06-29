@@ -214,6 +214,18 @@ class PoolProxy:
             cache.set_primary(result)
             return result
         
+        # 3. FAIL-SAFE: Pool empty for this agent_id → share any cached key
+        # from another agent. This handles the case where e.g. 5 keys are
+        # available but 10 agents are working — agents 6-10 share keys 1-5.
+        for cached_agent_id, cached_cache in self._session_caches.items():
+            if cached_agent_id == agent_id:
+                continue
+            cached_key = cached_cache.get_primary()
+            if cached_key:
+                logger.info(f"Pool empty for {agent_id}, sharing key from {cached_agent_id} (graceful degradation)")
+                cache.set_primary(cached_key)
+                return cached_key
+        
         return None
 
     @staticmethod

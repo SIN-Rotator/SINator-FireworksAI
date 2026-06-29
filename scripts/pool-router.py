@@ -69,6 +69,23 @@ AUTH_TOKEN = os.environ.get("SINATOR_AUTH_TOKEN", "").strip()
 _pool_failure_timestamps = {i: [] for i in range(len(POOLS))}
 _lock = threading.Lock()
 
+# V20: Per-request agent ID for per-agent key assignment.
+# Each request gets a unique x-agent-id so the proxy assigns a dedicated
+# Fireworks key per agent. When the pool runs low, the proxy falls back
+# to sharing keys (graceful degradation).
+_agent_counter = 0
+_agent_lock = threading.Lock()
+_NUM_AGENT_SLOTS = int(os.environ.get("POOL_ROUTER_AGENT_SLOTS", "40"))
+
+
+def _next_agent_id():
+    """Generate a round-robin agent ID for per-agent key isolation."""
+    global _agent_counter
+    with _agent_lock:
+        aid = f"ag-{_agent_counter % _NUM_AGENT_SLOTS}"
+        _agent_counter += 1
+    return aid
+
 
 def _get_recent_failures(idx):
     """Return number of failures in the last COOLDOWN_SECONDS window."""
@@ -302,6 +319,9 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             body = self._route_vision_request(body)
 
         headers = {k: v for k, v in self.headers.items()}
+        # V20: Inject per-request agent ID so proxies assign unique keys per agent.
+        # This enables 40 agents × 1 key each instead of 10 agents sharing 10 keys.
+        headers['x-agent-id'] = _next_agent_id()
 
         try:
             resp_body, status, resp_headers = self._try_pools(method, self.path, body, headers)
