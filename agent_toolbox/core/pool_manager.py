@@ -386,7 +386,8 @@ class PoolManager:
     def get_stats(self) -> Dict[str, Any]:
         """
         Generiert Pool-Statistiken.
-        available = total - used - suspended - leased (nur nicht-geleaste Keys)
+        available = total - used - suspended - leased - active_in_use
+        active_in_use = keys with active_consumers (agents actively using them)
         """
         self.reload()
         self.expire_leases()
@@ -399,7 +400,13 @@ class PoolManager:
                      and not k.get("suspended", False)
                      and k.get("leased_until") is not None
                      and k.get("leased_until") > now)
-        available = total - used - suspended - leased
+        # Keys actively in use by agents (assigned + has active_consumers)
+        active_in_use = sum(1 for k in self.keys
+                           if not k.get("used", False)
+                           and not k.get("suspended", False)
+                           and not (k.get("leased_until") is not None and k.get("leased_until") > now)
+                           and len(k.get("active_consumers", [])) > 0)
+        available = total - used - suspended - leased - active_in_use
 
         keys_list = []
         for k in self.keys:
@@ -433,6 +440,7 @@ class PoolManager:
             "used": used,
             "suspended": suspended,
             "leased": leased,
+            "active_in_use": active_in_use,
             "available": available,
             "assigned": sum(1 for k in self.keys if k.get("assigned_to") and not k.get("used") and not k.get("suspended")),
             "shared": sum(1 for k in self.keys if len(k.get("active_consumers", [])) > 1 and not k.get("used") and not k.get("suspended")),

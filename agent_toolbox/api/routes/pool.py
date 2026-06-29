@@ -66,6 +66,7 @@ async def get_pool_stats():
             used=stats["used"],
             suspended=stats.get("suspended", 0),
             leased=stats.get("leased", 0),
+            active_in_use=stats.get("active_in_use", 0),
             available=stats["available"],
             assigned=stats.get("assigned", 0),
             shared=stats.get("shared", 0),

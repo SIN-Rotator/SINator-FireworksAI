@@ -83,6 +83,7 @@
   <div class="stats-grid">
     <div class="stat-card"><div class="value" id="stat-total">—</div><div class="label">Total Keys</div></div>
     <div class="stat-card"><div class="value" id="stat-available">—</div><div class="label">Available</div></div>
+    <div class="stat-card" style="color:#22c55e"><div class="value" id="stat-active-in-use" style="color:#22c55e">—</div><div class="label">In Use</div></div>
     <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used</div></div>
     <div class="stat-card"><div class="value" id="stat-suspended">—</div><div class="label">Suspended</div></div>
     <div class="stat-card leased"><div class="value" id="stat-leased">—</div><div class="label">Leased</div></div>
@@ -165,10 +166,11 @@ function connectSSE() {
     evtSource.addEventListener('stats', (e) => {
       const d = JSON.parse(e.data);
       document.getElementById('stat-total').textContent = d.total || 0;
-      document.getElementById('stat-available').textContent = d.available || 0;
-      document.getElementById('stat-used').textContent = d.used || 0;
-      document.getElementById('stat-suspended').textContent = d.suspended || 0;
-      document.getElementById('stat-leased').textContent = d.leased || 0;
+      document.getElementById('stat-available').textContent = d.available ?? 0;
+      document.getElementById('stat-active-in-use').textContent = d.active_in_use ?? 0;
+      document.getElementById('stat-used').textContent = d.used ?? 0;
+      document.getElementById('stat-suspended').textContent = d.suspended ?? 0;
+      document.getElementById('stat-leased').textContent = d.leased ?? 0;
       document.getElementById('stat-assigned').textContent = d.assigned || 0;
       document.getElementById('stat-shared').textContent = d.shared || 0;
     });
@@ -222,7 +224,8 @@ async function loadDashboard() {
   try {
     const stats = await api('GET', '/pool/stats');
     document.getElementById('stat-total').textContent = stats.total || 0;
-    document.getElementById('stat-available').textContent = stats.available || 0;
+    document.getElementById('stat-available').textContent = stats.available ?? 0;
+    document.getElementById('stat-active-in-use').textContent = stats.active_in_use ?? 0;
     document.getElementById('stat-used').textContent = stats.used ?? 0;
     document.getElementById('stat-suspended').textContent = stats.suspended ?? 0;
     document.getElementById('stat-leased').textContent = stats.leased ?? 0;
