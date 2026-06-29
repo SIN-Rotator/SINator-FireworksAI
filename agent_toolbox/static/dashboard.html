@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('auth-token-display').textContent = token;
   loadDashboard();
   connectSSE();
-  setInterval(loadDashboard, 10000);
+  setInterval(loadDashboard, 3000);
 });
 
 function connectSSE() {
@@ -223,8 +223,9 @@ async function loadDashboard() {
     const stats = await api('GET', '/pool/stats');
     document.getElementById('stat-total').textContent = stats.total || 0;
     document.getElementById('stat-available').textContent = stats.available || 0;
-    document.getElementById('stat-used').textContent = stats.used || stats.suspended || 0;
-    document.getElementById('stat-leased').textContent = stats.leased || 0;
+    document.getElementById('stat-used').textContent = stats.used ?? 0;
+    document.getElementById('stat-suspended').textContent = stats.suspended ?? 0;
+    document.getElementById('stat-leased').textContent = stats.leased ?? 0;
     document.getElementById('stat-assigned').textContent = stats.assigned || 0;
     document.getElementById('stat-shared').textContent = stats.shared || 0;
     document.getElementById('stat-credits').textContent = '—';
