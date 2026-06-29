@@ -459,20 +459,25 @@ async def reload_pool():
 
 
 @router.get("/health")
-async def check_pool_health(deep_check: bool = False):
+async def check_pool_health(deep_check: bool = False, force: bool = False):
     """
-    Validiert ALLE Pool-Keys via Fireworks API.
-    Markiert gesperrte Keys (401/402/403/412) automatisch als used.
+    V22: Validiert ALLE Pool-Keys via Fireworks /chat/completions.
+    Markiert gesperrte Keys (401/402/403/412) automatisch als suspended.
+    Skips bereits suspendete Keys (unless force=true).
+    Nutzt Semaphor für rate-limiting (max 5 parallel).
 
     Query-Parameter:
       deep_check=false  — nur HTTP-Health-Check (schnell)
       deep_check=true   — zusätzlich CDP-Billing-Check für aktive Keys (langsam)
+      force=true        — auch bereits suspendete Keys nochmal prüfen
     """
     import httpx
     import asyncio
     import json
+    from datetime import datetime, timezone
     from pathlib import Path
     from agent_toolbox.core.keychain_store import retrieve_key as _retrieve_from_keychain, SENTINEL as _KC_SENTINEL
+    from agent_toolbox.core.pool_manager import get_pool_manager
 
     pool_path = Path("data/fireworksai-pool.json")
     if not pool_path.exists():
@@ -482,8 +487,15 @@ async def check_pool_health(deep_check: bool = False):
     if not all_keys:
         return {"status": "empty", "healthy": 0, "suspended": 0, "total": 0, "checked": []}
 
+    sem = asyncio.Semaphore(5)
+
     async def check_key(k: dict) -> dict:
         key_id = k.get("id", "?")
+        is_already_suspended = k.get("suspended", False)
+
+        if is_already_suspended and not force:
+            return {"key_id": key_id, "email": k.get("alias_email", "?"), "status": "skipped_suspended"}
+
         raw_api_key = k.get("api_key", "")
         if raw_api_key == _KC_SENTINEL:
             api_key = _retrieve_from_keychain(key_id) or ""
@@ -502,17 +514,23 @@ async def check_pool_health(deep_check: bool = False):
             return result
 
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get(
-                    "https://api.fireworks.ai/inference/v1/models",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                )
-                if r.status_code == 200:
-                    result["status"] = "healthy"
-                elif r.status_code in (401, 402, 403, 412):
-                    result["status"] = "suspended"
-                else:
-                    result["status"] = f"error_{r.status_code}"
+            async with sem:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    r = await client.post(
+                        "https://api.fireworks.ai/inference/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                        json={
+                            "model": "accounts/fireworks/models/deepseek-v4-flash",
+                            "messages": [{"role": "user", "content": "hi"}],
+                            "max_tokens": 1, "stream": False,
+                        },
+                    )
+                    if r.status_code == 200:
+                        result["status"] = "healthy"
+                    elif r.status_code in (401, 402, 403, 412):
+                        result["status"] = "suspended"
+                    else:
+                        result["status"] = f"error_{r.status_code}"
         except Exception as e:
             result["status"] = "error"
             result["error"] = str(e)[:100]
@@ -522,13 +540,27 @@ async def check_pool_health(deep_check: bool = False):
     results = await asyncio.gather(*[check_key(k) for k in all_keys])
     healthy = sum(1 for r in results if r["status"] == "healthy")
     suspended = sum(1 for r in results if r["status"] == "suspended")
+    skipped = sum(1 for r in results if r["status"] == "skipped_suspended")
     total_credits = sum(r.get("credits_remaining", 0) or 0 for r in results if r.get("credits_remaining"))
+
+    # Auto-mark newly found suspended keys in pool
+    pm = get_pool_manager()
+    newly_suspended = 0
+    for r, k in zip(results, all_keys):
+        if r["status"] == "suspended" and not k.get("suspended"):
+            pm.suspend_key(k["id"], reason="health_check_412")
+            newly_suspended += 1
+    if newly_suspended > 0:
+        pm.save()
+        logger.info(f"Health check: {newly_suspended} keys marked as suspended")
 
     return {
         "status": "success",
         "total": len(results),
         "healthy": healthy,
         "suspended": suspended,
+        "skipped_suspended": skipped,
+        "newly_suspended": newly_suspended,
         "total_credits_remaining": round(total_credits, 2),
         "checked": results,
     }

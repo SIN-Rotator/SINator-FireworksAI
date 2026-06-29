@@ -290,7 +290,10 @@ class PoolProxy:
     MAX_CONSECUTIVE_SWAPS = 2
 
     async def _verify_key_dead(self, api_key: str) -> bool:
-        """Verify key via lightweight chat request — more accurate than /models."""
+        """Verify key via lightweight chat request — more accurate than /models.
+        V22: Fail-closed — exceptions/timeouts treat key as dead to prevent
+        serving suspended accounts. False-positive suspension is preferable
+        to serving a dead key that blocks the user's request."""
         try:
             body = {
                 "model": "accounts/fireworks/models/deepseek-v4-flash",
@@ -302,7 +305,7 @@ class PoolProxy:
                 f"{self.fireworks_base}/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=body,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=10),
             ) as r:
                 if r.status == 200:
                     return False
@@ -310,8 +313,9 @@ class PoolProxy:
                 is_dead = any(kw in text.lower() for kw in PERMANENT_ERROR_KEYWORDS)
                 logger.debug(f"Key verification: HTTP {r.status}, dead={is_dead}, body={text[:120]}")
                 return is_dead
-        except Exception:
-            return False
+        except Exception as e:
+            logger.warning(f"Key verification failed (exception={type(e).__name__}): treating as dead (fail-closed)")
+            return True
 
     async def _handle_proxy(self, request: web.Request) -> web.Response:
         path = request.match_info.get("path", "")
@@ -467,19 +471,23 @@ class PoolProxy:
                                                 content_type=fw_resp.headers.get("Content-Type", "application/json"))
                         reason = SWAP_REASONS.get(status, "unknown")
                         if status in MAYBE_DEAD_CODES:
-                            # Prüfe Response-Body auf echte Dead-Keywords
                             keyword_match = any(kw in error_text for kw in PERMANENT_ERROR_KEYWORDS)
                             if keyword_match:
-                                # V20: Even on keyword match, VERIFY before suspending.
-                                # Fireworks returns transient 401/403 with "suspended" in the
-                                # body during maintenance windows — this caused 25+ false
-                                # positive suspensions (confirmed by test_keys.py reactivation).
-                                verified_dead = await self._verify_key_dead(key_info['api_key'])
-                                if not verified_dead:
-                                    logger.warning(f"Key got {status} with keyword in body but /chat verify says ALIVE — transient error, retrying same key")
-                                    await asyncio.sleep(2)
-                                    continue
-                                logger.info(f"Confirmed dead via error body + verify: {status} ({reason}) — swapping")
+                                if status == 412:
+                                    # V22: 412 + "suspended" = definitive Fireworks account suspension.
+                                    # NOT transient like 401/403 during maintenance windows.
+                                    # Skip verify — it would also get 412, wasting time.
+                                    logger.info(f"412 + keyword match = definitive suspension: {status} ({reason}) — swapping immediately")
+                                else:
+                                    # V20: 401/403 with keyword — VERIFY before suspending.
+                                    # Fireworks returns transient 401/403 with "suspended" in the
+                                    # body during maintenance windows.
+                                    verified_dead = await self._verify_key_dead(key_info['api_key'])
+                                    if not verified_dead:
+                                        logger.warning(f"Key got {status} with keyword in body but /chat verify says ALIVE — transient error, retrying same key")
+                                        await asyncio.sleep(2)
+                                        continue
+                                    logger.info(f"Confirmed dead via error body + verify: {status} ({reason}) — swapping")
                             else:
                                 # Body-Keywords matchten nicht — zusätzlich via /chat verifizieren
                                 models_dead = await self._verify_key_dead(key_info['api_key'])
