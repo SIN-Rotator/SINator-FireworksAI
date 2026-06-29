@@ -130,10 +130,15 @@ EOF
         ;;
 
     start)
-        launchctl kickstart gui/$(id -u)/com.sinator.backend 2>/dev/null || \
-            launchctl start com.sinator.backend 2>/dev/null || true
-        launchctl kickstart gui/$(id -u)/com.sinator.pool-router 2>/dev/null || \
-            launchctl start com.sinator.pool-router 2>/dev/null || true
+        # V20: Ensure plists are loaded before kickstart (bootout in stop unloads them)
+        launchctl load ~/Library/LaunchAgents/com.sinator.backend.plist 2>/dev/null || true
+        launchctl load ~/Library/LaunchAgents/com.sinator.pool-router.plist 2>/dev/null || true
+        for port in $(seq 8888 8897); do
+            launchctl load ~/Library/LaunchAgents/com.sinator.pool-proxy-${port}.plist 2>/dev/null || true
+        done
+        # Now kickstart (works because plist is loaded; harmless if already running)
+        launchctl kickstart gui/$(id -u)/com.sinator.backend 2>/dev/null || true
+        launchctl kickstart gui/$(id -u)/com.sinator.pool-router 2>/dev/null || true
         for port in $(seq 8888 8897); do
             launchctl kickstart gui/$(id -u)/com.sinator.pool-proxy-${port} 2>/dev/null || true
         done
