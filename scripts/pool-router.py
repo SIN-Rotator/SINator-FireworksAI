@@ -70,21 +70,25 @@ _pool_failure_timestamps = {i: [] for i in range(len(POOLS))}
 _lock = threading.Lock()
 
 # V20: Per-request agent ID for per-agent key assignment.
-# Each request gets a unique x-agent-id so the proxy assigns a dedicated
-# Fireworks key per agent. When the pool runs low, the proxy falls back
-# to sharing keys (graceful degradation).
-_agent_counter = 0
+# V21 FIX: Use source port from TCP connection as stable agent ID.
+# HTTP/1.1 keep-alive means each OpenCode session reuses one TCP connection,
+# so the source port is stable per session. Different sessions = different
+# ports = different keys. Same session = same port = same key (cache hit).
+# Old approach (round-robin per request) leased a new key for EVERY request,
+# wasting keys and breaking per-agent isolation.
 _agent_lock = threading.Lock()
 _NUM_AGENT_SLOTS = int(os.environ.get("POOL_ROUTER_AGENT_SLOTS", "40"))
 
 
-def _next_agent_id():
-    """Generate a round-robin agent ID for per-agent key isolation."""
-    global _agent_counter
-    with _agent_lock:
-        aid = f"ag-{_agent_counter % _NUM_AGENT_SLOTS}"
-        _agent_counter += 1
-    return aid
+def _agent_id_for_client(client_address) -> str:
+    """Generate a stable agent ID from the client's source port.
+    
+    With HTTP/1.1 keep-alive, each OpenCode session maintains one TCP
+    connection with a stable source port. This gives us per-session
+    key isolation without requiring clients to send custom headers.
+    """
+    port = client_address[1] if client_address else 0
+    return f"ag-port-{port}"
 
 
 def _get_recent_failures(idx):
@@ -132,6 +136,11 @@ def _pool_status():
 
 
 class PoolHandler(http.server.BaseHTTPRequestHandler):
+    # V21: Enable HTTP/1.1 keep-alive so Node.js clients (OpenCode @ai-sdk/openai)
+    # reuse the same TCP connection for multiple requests. This gives us a
+    # stable source port per session, which we use as the agent ID.
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, format, *args):
         print(f"[PoolRouter] {format % args}", flush=True)
 
@@ -319,9 +328,10 @@ class PoolHandler(http.server.BaseHTTPRequestHandler):
             body = self._route_vision_request(body)
 
         headers = {k: v for k, v in self.headers.items()}
-        # V20: Inject per-request agent ID so proxies assign unique keys per agent.
-        # This enables 40 agents × 1 key each instead of 10 agents sharing 10 keys.
-        headers['x-agent-id'] = _next_agent_id()
+        # V21: Use stable agent ID from client source port (HTTP/1.1 keep-alive).
+        # Falls back to round-robin only if no client address (shouldn't happen).
+        agent_id = _agent_id_for_client(self.client_address)
+        headers['x-agent-id'] = agent_id
 
         try:
             resp_body, status, resp_headers = self._try_pools(method, self.path, body, headers)
