@@ -83,7 +83,8 @@
   <div class="stats-grid">
     <div class="stat-card"><div class="value" id="stat-total">—</div><div class="label">Total Keys</div></div>
     <div class="stat-card"><div class="value" id="stat-available">—</div><div class="label">Available</div></div>
-    <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used / Suspended</div></div>
+    <div class="stat-card"><div class="value" id="stat-used">—</div><div class="label">Used</div></div>
+    <div class="stat-card"><div class="value" id="stat-suspended">—</div><div class="label">Suspended</div></div>
     <div class="stat-card leased"><div class="value" id="stat-leased">—</div><div class="label">Leased</div></div>
     <div class="stat-card assigned"><div class="value" id="stat-assigned">—</div><div class="label">Zugewiesen</div></div>
     <div class="stat-card shared"><div class="value" id="stat-shared">—</div><div class="label">Geteilt</div></div>
@@ -165,7 +166,8 @@ function connectSSE() {
       const d = JSON.parse(e.data);
       document.getElementById('stat-total').textContent = d.total || 0;
       document.getElementById('stat-available').textContent = d.available || 0;
-      document.getElementById('stat-used').textContent = d.used || d.suspended || 0;
+      document.getElementById('stat-used').textContent = d.used || 0;
+      document.getElementById('stat-suspended').textContent = d.suspended || 0;
       document.getElementById('stat-leased').textContent = d.leased || 0;
       document.getElementById('stat-assigned').textContent = d.assigned || 0;
       document.getElementById('stat-shared').textContent = d.shared || 0;
