@@ -120,7 +120,7 @@ class PoolProxy:
         cfg = load_config()
         self.port = cfg.get("proxy_port", 8888)
         self.fireworks_base = cfg.get("fireworks_base", FIREWORKS_BASE)
-        self.max_retries = cfg.get("max_retries", 3)
+        self.max_retries = cfg.get("max_retries", 10)
         self.pool_client = PoolClient(cfg.get("pool_api_url"))
         self.fw_session: Optional[aiohttp.ClientSession] = None
         # V19.10: Unique proxy ID — port + random suffix.
@@ -287,7 +287,7 @@ class PoolProxy:
         logger.info(f"Key swapped ({reason}): new key {key_info.get('key_id','?')[:8]}...")
         return key_info
 
-    MAX_CONSECUTIVE_SWAPS = 2
+    MAX_CONSECUTIVE_SWAPS = 10
 
     async def _verify_key_dead(self, api_key: str) -> bool:
         """Verify key via lightweight chat request — 2 attempts, generous timeout.
@@ -518,6 +518,15 @@ class PoolProxy:
                             headers["Authorization"] = f"Bearer {new_key['api_key']}"
                             logger.info(f"Silently retrying with new key: {new_key['key_name']}...")
                             continue
+                        if not new_key and attempt < self.max_retries - 1:
+                            logger.warning(f"Swap returned no key — retrying _ensure_key (attempt {attempt+1})")
+                            await asyncio.sleep(2)
+                            retry_key = await self._ensure_key_with_retry(agent_id=session_agent_id, max_attempts=3, delay=1.0)
+                            if retry_key:
+                                headers["Authorization"] = f"Bearer {retry_key['api_key']}"
+                                key_info = retry_key
+                                logger.info(f"Got replacement key via _ensure_key: {retry_key.get('key_name','?')}")
+                                continue
                         return web.Response(body=error_body_bytes, status=status,
                                             content_type=fw_resp.headers.get("Content-Type", "application/json"))
 
@@ -536,6 +545,15 @@ class PoolProxy:
                                 headers["Authorization"] = f"Bearer {new_key['api_key']}"
                                 logger.info(f"Silently retrying with new key after 429: {new_key['key_name']}...")
                                 continue
+                            if not new_key and attempt < self.max_retries - 1:
+                                logger.warning(f"429 swap returned no key — retrying _ensure_key (attempt {attempt+1})")
+                                await asyncio.sleep(2)
+                                retry_key = await self._ensure_key_with_retry(agent_id=session_agent_id, max_attempts=3, delay=1.0)
+                                if retry_key:
+                                    headers["Authorization"] = f"Bearer {retry_key['api_key']}"
+                                    key_info = retry_key
+                                    logger.info(f"Got replacement key via _ensure_key: {retry_key.get('key_name','?')}")
+                                    continue
                             return web.Response(body=error_text.encode(), status=429,
                                                 content_type="application/json")
                         # Transientes 429 — SOFORT an Client zurückgeben mit Retry-After
