@@ -3,7 +3,7 @@
 # SINator &mdash; Fireworks AI Key Pool
 
 <p align="center">
-  <em>Never hit a rate limit again. 484 keys, 10 proxies, 12 models, one URL.</em>
+  <em>Never hit a rate limit again. 1000+ keys, 10 proxies, VM auto-rotator, one URL.</em>
 </p>
 
 <p align="center">
@@ -37,11 +37,11 @@
 
 ---
 
-An automated API key pool for Fireworks AI. It generates accounts via GMX email aliases, rotates keys on rate limits, and exposes a single OpenAI-compatible endpoint with 10-proxy auto-failover.
+An automated API key pool for Fireworks AI. It generates accounts via GMX email aliases on an OCI VM with Playwright, rotates keys on rate limits, and exposes a single OpenAI-compatible endpoint with 10-proxy auto-failover.
 
 **The problem:** Fireworks AI enforces per-key rate limits and spending caps. Running multiple AI agents means you hit 429s constantly.
 
-**The solution:** SINator maintains a pool of hundreds of API keys, automatically rotates them on 429/401/403, and gives you one URL that never goes down &mdash; even if the Mac goes offline (Cloudflare Worker fallback).
+**The solution:** SINator maintains a pool of 1000+ API keys, automatically rotates them on 429/401/403/412, and gives you one URL that never goes down. An OCI VM auto-generates new keys every 10 minutes when the pool runs low.
 
 ## Quick Start
 
@@ -71,28 +71,28 @@ response = client.chat.completions.create(
 
 ## Features
 
-- **Automated Key Generation** &mdash; GMX alias rotation, Fireworks signup, OTP verification, API key extraction, all fully automated via Playwright CDP
+- **Automated Key Generation** &mdash; GMX alias rotation, Fireworks signup, OTP verification, API key extraction, all fully automated via Playwright CDP on OCI VM
+- **VM Auto-Rotator** &mdash; systemd timer fires every 10min, checks pool stats, generates 10 keys if available < 5
 - **10-Proxy Auto-Failover** &mdash; Router distributes across 10 proxies with automatic switch on errors
-- **Silent Key Swap** &mdash; On 429/401/403, proxy swaps key without the client ever noticing
-- **Soft-Ownership** &mdash; Agents get dedicated keys with heartbeat, so long conversations never break
+- **Fail-Closed Proxy** &mdash; `_verify_key_dead()` returns True on any exception (dead), 412 "suspended" triggers immediate swap
+- **Silent Key Swap** &mdash; On 429/401/403/412, proxy swaps key without the client ever noticing
+- **Crash Resilience** &mdash; Lock-file cleanup on boot, GMX session backup (hourly cron), login cooldown (60s), session-restore fallback
+- **Responsive Polling** &mdash; All fixed sleeps replaced with 0.2-0.3s polling — 45% faster per key (~80s vs 137s)
 - **Cloudflare Fallback** &mdash; When the Mac goes offline, a CF Worker with D1 database takes over automatically
 - **OpenAI-Compatible** &mdash; One URL works with opencode, Cursor, Continue, Python SDK, curl, any OpenAI client
 - **12 Fireworks Models** &mdash; DeepSeek V4, GLM 5.1/5.2, Kimi K2.6/K2.7, Qwen 3.6/3.7, MiniMax M2.7/M3
-- **1s Key-Retry** &mdash; No immediate 503 &mdash; 300 retries over 5 minutes before giving up
 
 ## Live Pool Stats
 
-The pool currently manages **484 keys** across 10 proxies. Most keys are suspended (431) due to Fireworks spending caps, while **43 remain available** for active rotation:
-
-![Pool Status](./assets/pool-status.png)
+The pool currently manages **1000+ keys** across 10 proxies. The OCI VM auto-rotator generates new keys every 10 minutes when available drops below 5. Fireworks suspends GMX-alias accounts within hours (spending limit), so the system is designed for continuous key churn.
 
 | Metric | Value |
 |--------|-------|
-| **Total Keys** | 484 |
-| **Available** | 43 |
-| **Suspended** | 431 |
-| **Used** | 10 |
-| **Assigned** | 2 |
+| **Total Keys** | 1000+ |
+| **Available** | Dynamic (auto-replenished) |
+| **Suspended** | ~98% (Fireworks spending caps) |
+| **Auto-Rotator** | Every 10min if available < 5 |
+| **Key Generation Time** | ~80s per key (polling-optimized) |
 
 ## Models
 
@@ -141,8 +141,10 @@ curl http://localhost:9998/inference/v1/chat/completions \
 2. **Existing chats** &mdash; always the creation key (state-mapping). Key swap would cause 401
 3. **429 on stateful** &mdash; passed through (key swap would cause 401)
 4. **401/403** &mdash; key marked "suspended", removed from rotation
-5. **Cooldown** &mdash; 60s default, then key available again
-6. **No key available** &mdash; 503 after 300 retries over 5 minutes
+5. **412 + "suspended"** &mdash; immediate swap, no verify needed (account suspended by Fireworks)
+6. **Exception in verify** &mdash; key treated as dead (fail-closed), swapped immediately
+7. **Cooldown** &mdash; 60s default, then key available again
+8. **No key available** &mdash; 503 after retries
 
 ## API
 
@@ -165,23 +167,48 @@ Full API docs at `http://localhost:8100/docs` (Swagger UI).
 ## Architecture
 
 ```
-Clients (opencode, Cursor, Continue, Python)
+OpenCode CLI / Cursor / OpenAI Clients
   |  OpenAI-compatible API (ONE URL)
   v
 Pool-Router (:9998, auto-failover)
   |  distributes across 10 proxies
   v
 Pool Proxys (:8888-:8897, silent key swap)
-  |  key rotation on 429/401/403, 1s retry
+  |  fail-closed verify, 412 immediate swap
   v
 Backend (:8100, FastAPI + PoolManager)
-  |  PoolManager + Keychain + Rotation-Orchestrator
+  |  PoolManager + Keychain + /pool/health
   v
-Chrome (Playwright CDP, single browser)
-  |  GMX + Fireworks automation
+OCI VM (sin-supabase, 92.5.60.87)
+  |  systemd timer every 10min
+  |  auto_keygen_vm.py → rotate_vm.py N
+  |  Chrome CDP :9222 on Xvfb :99
+  |  GMX alias → Fireworks signup → OTP → API key
+  |  Push to Mac backend via sinator.delqhi.com
   v
 Fireworks AI (api.fireworks.ai)
 ```
+
+### OCI VM Services
+
+| Service | Purpose |
+|:--------|:--------|
+| `sinator-xvfb.service` | Virtual display :99 |
+| `sinator-chromium.service` | Chrome CDP :9222, `Restart=always`, lock cleanup on boot |
+| `sinator-novnc.service` | noVNC web viewer :6080 for manual GMX login |
+| `sinator-auto-rotator.timer` | Fires every 10min |
+| `sinator-auto-rotator.service` | Checks pool, generates 10 keys if available < 5 |
+
+### Crash Recovery
+
+| Problem | Fix |
+|:--------|:---|
+| Stale lock file after reboot | `ExecStartPre` in chromium service cleans locks |
+| Lock file permission (root vs ubuntu) | `chmod 0666` on lock files |
+| GMX account blocked (too many logins) | 60s login cooldown + noVNC manual login |
+| GMX session lost (cookies deleted) | Hourly cron backup + `restore_gmx_session.sh` |
+| Concurrent rotator runs | `fcntl.flock` prevents, `ExecStartPre` removed from auto-rotator |
+| Proxy serving dead keys | Fail-closed `_verify_key_dead()`, 412 immediate swap |
 
 ## Deploy
 
@@ -198,19 +225,19 @@ Fireworks AI (api.fireworks.ai)
 
 | Repo | Function |
 |:-----|:---------|
-| **SINator-FireworksAI** (this) | Key pool + proxy + automation |
+| **SINator-FireworksAI** (this) | Key pool + proxy + backend (Mac) |
+| [SINator-Fireworks-Rotator-v2](https://github.com/SIN-Rotator/SINator-Fireworks-Rotator-v2) | VM key generation (OCI VM, Playwright) |
 | [SINator-dashboard](https://github.com/SIN-Rotator/SINator-dashboard) | Tauri dashboard + setup wizard |
 | [SINator-heypiggy](https://github.com/SIN-Rotator/SINator-heypiggy) | HeyPiggy account generator |
 | [OpenCode Config](https://github.com/OpenSIN-Code/SIN-Code-FireworksAI-OpenCode-Config) | opencode.json with 12 models |
-| [Hermes Bundle](https://github.com/SIN-Hermes-Bundles/SIN-Hermes-Provider-Bundle) | Hermes provider config |
 
 ## Contributing
 
 1. Fork the repository
-2. Create your branch (`git checkout -b feature/amazing-feature`)
+2. Work on `main` (no branches &mdash; this repo uses direct-to-main)
 3. Test your changes (`python -m pytest tests/ -v`)
-4. Commit and push
-5. Open a Pull Request
+4. Conventional commits (`fix:`, `feat:`, `perf:`)
+5. Push to `main`
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
