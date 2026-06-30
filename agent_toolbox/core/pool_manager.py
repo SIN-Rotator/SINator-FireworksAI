@@ -666,7 +666,8 @@ class PoolManager:
 
     def expire_leases(self) -> int:
         """
-        Expires all leases whose TTL has passed. Called automatically
+        Expires all leases whose TTL has passed OR whose active_consumers
+        list is empty (proxy crashed without releasing). Called automatically
         before lease_key() and in get_stats().
 
         Returns:
@@ -676,15 +677,24 @@ class PoolManager:
         expired = 0
         for key in self.keys:
             leased_until = key.get("leased_until")
-            if leased_until is not None and leased_until <= now:
-                key["leased_until"] = None
-                key["leased_to"] = None
-                key["lease_id"] = None
-                key["leased_at"] = None
-                expired += 1
+            if leased_until is not None:
+                # Expire if TTL passed
+                if leased_until <= now:
+                    key["leased_until"] = None
+                    key["leased_to"] = None
+                    key["lease_id"] = None
+                    key["leased_at"] = None
+                    expired += 1
+                # Also expire if no active consumers (proxy crashed)
+                elif not key.get("active_consumers"):
+                    key["leased_until"] = None
+                    key["leased_to"] = None
+                    key["lease_id"] = None
+                    key["leased_at"] = None
+                    expired += 1
         if expired > 0:
             self.save()
-            logger.info(f"Expired {expired} lease(s)")
+            logger.info(f"Expired {expired} stale lease(s) (TTL or no consumers)")
         return expired
 
     def get_leased_keys(self) -> List[Dict[str, Any]]:

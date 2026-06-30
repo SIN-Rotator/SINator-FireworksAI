@@ -537,7 +537,14 @@ async def check_pool_health(deep_check: bool = False, force: bool = False):
 
         return result
 
-    results = await asyncio.gather(*[check_key(k) for k in all_keys])
+    # Only check non-suspended keys (unless force=true) to avoid creating 1000+ coroutines
+    keys_to_check = [k for k in all_keys if not k.get("suspended") or force]
+    results = await asyncio.gather(*[check_key(k) for k in keys_to_check])
+    # Add skipped results for suspended keys not checked
+    if not force:
+        skipped_keys = [k for k in all_keys if k.get("suspended")]
+        for k in skipped_keys:
+            results.append({"key_id": k.get("id", "?"), "email": k.get("alias_email", "?"), "status": "skipped_suspended"})
     healthy = sum(1 for r in results if r["status"] == "healthy")
     suspended = sum(1 for r in results if r["status"] == "suspended")
     skipped = sum(1 for r in results if r["status"] == "skipped_suspended")
@@ -546,10 +553,14 @@ async def check_pool_health(deep_check: bool = False, force: bool = False):
     # Auto-mark newly found suspended keys in pool
     pm = get_pool_manager()
     newly_suspended = 0
-    for r, k in zip(results, all_keys):
-        if r["status"] == "suspended" and not k.get("suspended"):
-            pm.suspend_key(k["id"], reason="health_check_412")
-            newly_suspended += 1
+    for r in results:
+        if r["status"] == "suspended":
+            key_id = r.get("key_id")
+            try:
+                pm.suspend_key(key_id, reason="health_check_412")
+                newly_suspended += 1
+            except Exception:
+                pass  # Key may already be suspended
     if newly_suspended > 0:
         pm.save()
         logger.info(f"Health check: {newly_suspended} keys marked as suspended")
