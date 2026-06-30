@@ -290,32 +290,49 @@ class PoolProxy:
     MAX_CONSECUTIVE_SWAPS = 2
 
     async def _verify_key_dead(self, api_key: str) -> bool:
-        """Verify key via lightweight chat request — more accurate than /models.
-        V22: Fail-closed — exceptions/timeouts treat key as dead to prevent
-        serving suspended accounts. False-positive suspension is preferable
-        to serving a dead key that blocks the user's request."""
-        try:
-            body = {
-                "model": "accounts/fireworks/models/deepseek-v4-flash",
-                "messages": [{"role": "user", "content": "hi"}],
-                "max_tokens": 1,
-                "stream": False,
-            }
-            async with self.fw_session.post(
-                f"{self.fireworks_base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=body,
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as r:
-                if r.status == 200:
-                    return False
-                text = await r.text()
-                is_dead = any(kw in text.lower() for kw in PERMANENT_ERROR_KEYWORDS)
-                logger.debug(f"Key verification: HTTP {r.status}, dead={is_dead}, body={text[:120]}")
-                return is_dead
-        except Exception as e:
-            logger.warning(f"Key verification failed (exception={type(e).__name__}): treating as dead (fail-closed)")
-            return True
+        """Verify key via lightweight chat request — 2 attempts, generous timeout.
+        
+        V23: Fail-open on transient errors (timeout/connection). Only mark dead
+        on definitive Fireworks error with permanent keywords. Burning a working
+        key is WORSE than occasionally serving a dead key (which auto-swaps on
+        the real request anyway)."""
+        body = {
+            "model": "accounts/fireworks/models/deepseek-v4-flash",
+            "messages": [{"role": "user", "content": "hi"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+        
+        for attempt in range(2):
+            try:
+                async with self.fw_session.post(
+                    f"{self.fireworks_base}/chat/completions",
+                    headers=headers,
+                    json=body,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as r:
+                    if r.status == 200:
+                        logger.debug(f"Key verify attempt {attempt+1}: ALIVE (200)")
+                        return False
+                    text = await r.text()
+                    is_dead = any(kw in text.lower() for kw in PERMANENT_ERROR_KEYWORDS)
+                    logger.info(f"Key verify attempt {attempt+1}: HTTP {r.status}, dead={is_dead}, body={text[:120]}")
+                    if is_dead:
+                        return True  # Definitive: "suspended", "revoked", etc.
+                    if r.status in (502, 503, 504):
+                        # Transient Fireworks error — NOT dead, retry
+                        if attempt == 0:
+                            await asyncio.sleep(2)
+                            continue
+                    return False  # Non-permanent error → assume alive
+            except (asyncio.TimeoutError, aiohttp.ClientError, OSError) as e:
+                logger.warning(f"Key verify attempt {attempt+1}: {type(e).__name__} — {'retrying' if attempt == 0 else 'assuming alive'}")
+                if attempt == 0:
+                    await asyncio.sleep(2)
+                    continue
+                return False  # Transient failure → do NOT burn the key
+        return False  # Both attempts failed transiently → assume alive
 
     async def _handle_proxy(self, request: web.Request) -> web.Response:
         path = request.match_info.get("path", "")
@@ -499,13 +516,8 @@ class PoolProxy:
                         new_key = await self._swap_key(reason)
                         if new_key and attempt < self.max_retries - 1:
                             headers["Authorization"] = f"Bearer {new_key['api_key']}"
-                            # Key wurde intern getauscht — sag dem Client er soll retryen
-                            return web.Response(
-                                body=b'{"error":"key_swapped","message":"Pool key rotated, please retry","retry_after":1}',
-                                status=503,
-                                content_type="application/json",
-                                headers={"Retry-After": "1"},
-                            )
+                            logger.info(f"Silently retrying with new key: {new_key['key_name']}...")
+                            continue
                         return web.Response(body=error_body_bytes, status=status,
                                             content_type=fw_resp.headers.get("Content-Type", "application/json"))
 
@@ -522,13 +534,8 @@ class PoolProxy:
                             new_key = await self._swap_key("rate_limited_permanent")
                             if new_key and attempt < self.max_retries - 1:
                                 headers["Authorization"] = f"Bearer {new_key['api_key']}"
-                                # Intern getauscht — Client retryen
-                                return web.Response(
-                                    body=b'{"error":"key_rotated","message":"Rate limit reached, key rotated. Retry now.","retry_after":1}',
-                                    status=503,
-                                    content_type="application/json",
-                                    headers={"Retry-After": "1"},
-                                )
+                                logger.info(f"Silently retrying with new key after 429: {new_key['key_name']}...")
+                                continue
                             return web.Response(body=error_text.encode(), status=429,
                                                 content_type="application/json")
                         # Transientes 429 — SOFORT an Client zurückgeben mit Retry-After
