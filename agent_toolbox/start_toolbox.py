@@ -87,8 +87,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"🧹 V19.10 Lease-Cleanup loop started ({LEASE_CLEANUP_INTERVAL}s interval)")
 
     # ── V19.14 Stale Consumer Cleanup ────────────────────────────────────────
-    CONSUMER_CLEANUP_INTERVAL = 120  # 2 minutes — agents that died without releasing
-    CONSUMER_TIMEOUT = 300           # 5 minutes — stale threshold
+    CONSUMER_CLEANUP_INTERVAL = 60  # 1 minute — agents that died without releasing
+    CONSUMER_TIMEOUT = 120           # 2 minutes — stale threshold
 
     async def _cleanup_stale_consumers_loop():
         """V19.14: Remove consumers that haven't heartbeated in 5 minutes."""

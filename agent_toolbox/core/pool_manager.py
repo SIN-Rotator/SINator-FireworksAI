@@ -386,8 +386,9 @@ class PoolManager:
     def get_stats(self) -> Dict[str, Any]:
         """
         Generiert Pool-Statistiken.
-        available = total - used - suspended - leased - active_in_use
-        active_in_use = keys with active_consumers (agents actively using them)
+        available = total - used - suspended - leased
+        active_in_use is a separate metric (keys with active_consumers) —
+        it does NOT reduce available because sharing is intentional.
         """
         self.reload()
         self.expire_leases()
@@ -400,13 +401,13 @@ class PoolManager:
                      and not k.get("suspended", False)
                      and k.get("leased_until") is not None
                      and k.get("leased_until") > now)
-        # Keys actively in use by agents (assigned + has active_consumers)
+        # Keys actively in use by agents — informational only, does NOT reduce available
         active_in_use = sum(1 for k in self.keys
                            if not k.get("used", False)
                            and not k.get("suspended", False)
                            and not (k.get("leased_until") is not None and k.get("leased_until") > now)
                            and len(k.get("active_consumers", [])) > 0)
-        available = total - used - suspended - leased - active_in_use
+        available = total - used - suspended - leased
 
         keys_list = []
         for k in self.keys:
